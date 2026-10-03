@@ -55,4 +55,84 @@ public class DlcLoadFileTests
         Assert.Null(backup);
         Assert.Single(DlcLoadFile.Read(tmp.Path).EnabledMods);
     }
+
+    [Fact]
+    public void Write_leaves_no_temp_file()
+    {
+        using var tmp = new TempDir();
+
+        DlcLoadFile.Write(tmp.Path, new DlcLoad(["mod/x.mod"], []), Path.Combine(tmp.Path, "b"));
+
+        Assert.Empty(Directory.GetFiles(tmp.Path, "*.tmp"));
+        Assert.Equal(new[] { "mod/x.mod" }, DlcLoadFile.Read(tmp.Path).EnabledMods);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(" 	 ")]
+    public void Empty_or_whitespace_file_reads_as_empty(string content)
+    {
+        using var tmp = new TempDir();
+        tmp.Write("dlc_load.json", content);
+
+        var load = DlcLoadFile.Read(tmp.Path);
+
+        Assert.Empty(load.EnabledMods);
+        Assert.Empty(load.DisabledDlcs);
+    }
+
+    [Theory]
+    [InlineData("{not json")]
+    [InlineData("[]")]
+    [InlineData("{\"enabled_mods\":[1]}")]
+    public void Malformed_file_throws_InvalidDataException_naming_path(string content)
+    {
+        using var tmp = new TempDir();
+        tmp.Write("dlc_load.json", content);
+
+        var ex = Assert.Throws<InvalidDataException>(() => DlcLoadFile.Read(tmp.Path));
+
+        Assert.Contains(Path.Combine(tmp.Path, "dlc_load.json"), ex.Message);
+    }
+
+    [Fact]
+    public void Null_or_missing_properties_read_as_empty_lists()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("dlc_load.json", "{\"enabled_mods\":null}");
+
+        var load = DlcLoadFile.Read(tmp.Path);
+
+        Assert.Empty(load.EnabledMods);
+        Assert.Empty(load.DisabledDlcs);
+    }
+
+    [Fact]
+    public void Utf8_bom_file_reads_fine()
+    {
+        using var tmp = new TempDir();
+        var bytes = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(System.Text.Encoding.UTF8.GetBytes("{\"enabled_mods\":[\"mod/a.mod\"]}")).ToArray();
+        File.WriteAllBytes(Path.Combine(tmp.Path, "dlc_load.json"), bytes);
+
+        Assert.Equal(new[] { "mod/a.mod" }, DlcLoadFile.Read(tmp.Path).EnabledMods);
+    }
+
+    [Fact]
+    public void Back_to_back_writes_create_distinct_backups()
+    {
+        using var tmp = new TempDir();
+        var original = "{\"disabled_dlcs\":[],\"enabled_mods\":[\"mod/old.mod\"]}";
+        tmp.Write("dlc_load.json", original);
+        var backups = Path.Combine(tmp.Path, "backups");
+
+        var b1 = DlcLoadFile.Write(tmp.Path, new DlcLoad(["mod/1.mod"], []), backups);
+        var b2 = DlcLoadFile.Write(tmp.Path, new DlcLoad(["mod/2.mod"], []), backups);
+
+        Assert.NotNull(b1);
+        Assert.NotNull(b2);
+        Assert.NotEqual(b1, b2);
+        Assert.Equal(2, Directory.GetFiles(backups).Length);
+        Assert.Equal(original, File.ReadAllText(b1));
+    }
 }
