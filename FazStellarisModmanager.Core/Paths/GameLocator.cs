@@ -19,18 +19,53 @@ public static class GameLocator
     public static string? SteamPath()
     {
         if (!OperatingSystem.IsWindows()) return null;
-        return Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) as string;
+        try
+        {
+            return Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) as string;
+        }
+        catch (System.Security.SecurityException)
+        {
+            return null;
+        }
     }
 
     /// <summary>All Steam library roots: the Steam install plus everything in libraryfolders.vdf.</summary>
     public static IReadOnlyList<string> SteamLibraries()
     {
         var steam = SteamPath();
-        if (steam is null) return [];
-        var libs = new List<string> { steam };
-        var vdf = Path.Combine(steam, "steamapps", "libraryfolders.vdf");
-        if (File.Exists(vdf)) libs.AddRange(ParseLibraryFolders(File.ReadAllText(vdf)));
-        return libs.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (string.IsNullOrWhiteSpace(steam)) return [];
+        string? vdfText = null;
+        try
+        {
+            var vdf = Path.Combine(steam, "steamapps", "libraryfolders.vdf");
+            if (File.Exists(vdf)) vdfText = File.ReadAllText(vdf);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            vdfText = null;
+        }
+        return BuildLibraries(steam, vdfText);
+    }
+
+    /// <summary>Pure core of <see cref="SteamLibraries"/>: Steam root plus vdf paths, normalized, de-duplicated, bad entries skipped.</summary>
+    public static IReadOnlyList<string> BuildLibraries(string? steamPath, string? vdfText)
+    {
+        if (string.IsNullOrWhiteSpace(steamPath)) return [];
+        var candidates = new List<string> { steamPath };
+        if (vdfText is not null) candidates.AddRange(ParseLibraryFolders(vdfText));
+        return candidates
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(TryFullPath)
+            .OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    // Steam writes forward-slash paths in the registry; GetFullPath normalizes them to backslashes.
+    private static string? TryFullPath(string path)
+    {
+        try { return Path.GetFullPath(path); }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
     }
 
     public static bool IsGameDir(string dir) => File.Exists(Path.Combine(dir, "checksum_manifest.txt"));

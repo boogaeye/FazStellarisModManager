@@ -57,4 +57,41 @@ public class GameLocatorTests
 
         Assert.Equal(@"D:\SteamLibrary\steamapps\workshop\content\281990", dir);
     }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("  ")]
+    public void BuildLibraries_is_empty_without_steam_path(string? steamPath)
+    {
+        Assert.Empty(GameLocator.BuildLibraries(steamPath, "\"path\"  \"D:\\\\SteamLibrary\""));
+    }
+
+    [Fact]
+    public void BuildLibraries_normalizes_dedupes_and_skips_blank()
+    {
+        var vdf = "\"path\"  \"C:\\\\Program Files (x86)\\\\Steam\"\n\"path\"  \"D:\\\\SteamLibrary\"\n\"path\"  \"\"\n";
+
+        var libs = GameLocator.BuildLibraries("c:/program files (x86)/steam", vdf);
+
+        Assert.Equal(
+            new[] { @"c:\program files (x86)\steam", @"D:\SteamLibrary" },
+            libs,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildLibraries_skips_paths_with_invalid_chars()
+    {
+        var vdf = "\"path\"  \"C:\\\\bad\0name\"\n\"path\"  \"D:\\\\SteamLibrary\"";
+
+        var libs = GameLocator.BuildLibraries("C:/Steam", vdf);
+
+        Assert.Equal(new[] { @"C:\Steam", @"D:\SteamLibrary" }, libs, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ParseLibraryFolders_of_empty_text_is_empty()
+    {
+        Assert.Empty(GameLocator.ParseLibraryFolders(""));
+    }
 }
