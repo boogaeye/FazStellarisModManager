@@ -120,4 +120,36 @@ public class TechTreeServiceTests
         Assert.False(File.Exists(oldPng));
         Assert.True(File.Exists(freshPng));
     }
+
+    [Fact]
+    public async Task Prewarms_unlock_and_bonus_icons()
+    {
+        var fake = new FakeInstall();
+        using var _cleanup = fake;
+        fake.Write("lib/steamapps/common/Stellaris/common/technology/00_t.txt", "tech_a = { area = physics start_tech = yes modifier = { army_damage_mult = 0.05 } }\n");
+        fake.Write("lib/steamapps/common/Stellaris/common/component_templates/00_c.txt",
+            "weapon_component_template = { key = \"LASER_X\" icon = \"GFX_laser_x\" icon_frame = 2 prerequisites = { \"tech_a\" } }\n");
+        fake.Write("lib/steamapps/common/Stellaris/interface/x.gfx",
+            "spriteTypes = { spriteType = { name = \"GFX_laser_x\" texturefile = \"gfx/interface/icons/ship_parts/laser.dds\" noOfFrames = 2 } }\n");
+        void Dds(string rel, byte[] bytes)
+        {
+            var path = Path.Combine(fake.GameDir, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllBytes(path, bytes);
+        }
+        Dds("gfx/interface/icons/ship_parts/laser.dds", DdsBuilder.Bgra32(2, 1, (1, 1, 1, 255), (2, 2, 2, 255)));
+        Dds("gfx/interface/icons/modifiers/mod_army_damage_mult.dds", DdsBuilder.Bgra32(1, 1, (3, 3, 3, 255)));
+        var paths = new AppPaths(fake.DataDir);
+        SettingsStore.Save(paths.Settings, new AppSettings(UserDir: fake.UserDir));
+        var tree = new TechTreeService(new ModManagerService(paths, _ => fake.GameDir));
+
+        await tree.BuildAsync(tree.Choices()[0]);
+        await tree.IconsReady;
+
+        var db = tree.Current!.Database;
+        var unlock = Assert.Single(db.Unlocks("tech_a"));
+        Assert.StartsWith("data:image/png;base64,", tree.UnlockIconUri(unlock));
+        var bonus = Assert.Single(db.Techs["tech_a"].Details.Bonuses);
+        Assert.StartsWith("data:image/png;base64,", tree.BonusIconUri(bonus));
+    }
 }

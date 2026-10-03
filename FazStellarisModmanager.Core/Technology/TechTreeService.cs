@@ -105,19 +105,61 @@ public sealed class TechTreeService
     /// <summary>PNG data URI for a tech's icon in the current tree, or null.</summary>
     public string? IconUri(Tech tech) => _current?.Icons.TryGetValue(tech.IconKey, out var u) == true ? u : null;
 
+    /// <summary>PNG data URI for an unlock's icon in the current tree, or null (memo lookup, no IO).</summary>
+    public string? UnlockIconUri(Unlock unlock) => _current?.Icons.TryGetValue(UnlockKey(unlock), out var u) == true ? u : null;
+
+    /// <summary>PNG data URI for a stat bonus icon in the current tree, or null (memo lookup, no IO).</summary>
+    public string? BonusIconUri(StatBonus bonus) => _current?.Icons.TryGetValue(BonusKey(bonus), out var u) == true ? u : null;
+
+    static string UnlockKey(Unlock u) => $"u:{u.KindFolder}/{u.Id}";
+
+    static string BonusKey(StatBonus b) => b.IsNegative ? $"m:{b.Key}:neg" : $"m:{b.Key}";
+
     async Task PrewarmAsync(TechTree tree, CancellationToken ct)
     {
         try
         {
-            var keys = tree.Database.Techs.Values.Select(t => t.IconKey)
-                .Where(k => !string.IsNullOrEmpty(k))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            var done = 0;
-            await Parallel.ForEachAsync(keys, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, (key, token) =>
+            var db = tree.Database;
+            // One listing of every .dds under gfx per source, instead of a stat call per source per icon.
+            var gfxFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in tree.Sources)
             {
-                if (_icons.DataUri(tree.Sources, key) is { } uri) tree.Icons[key] = uri;
-                Report($"Loading icons… {Interlocked.Increment(ref done)}/{keys.Count}", force: false);
+                try
+                {
+                    foreach (var f in s.Files("gfx", ".dds")) gfxFiles.Add(f.Replace((char)92, '/'));
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { }
+            }
+            bool Exists(string path) => gfxFiles.Contains(path.Replace((char)92, '/'));
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var work = new List<(string Key, Func<IconRef?> Resolve)>();
+            foreach (var t in db.Techs.Values)
+                if (!string.IsNullOrEmpty(t.IconKey) && seen.Add(t.IconKey))
+                {
+                    var key = t.IconKey;
+                    work.Add((key, () => IconResolver.ForTech(key)));
+                }
+            foreach (var u in db.AllUnlocks)
+                if (seen.Add(UnlockKey(u)))
+                {
+                    var unlock = u;
+                    work.Add((UnlockKey(u), () => IconResolver.ForUnlock(unlock.Icon, unlock.IconFrame, unlock.KindFolder, unlock.Id, db.Sprites, Exists)));
+                }
+            foreach (var b in db.Techs.Values.SelectMany(t => t.Details.Bonuses))
+                if (seen.Add(BonusKey(b)))
+                {
+                    var bonus = b;
+                    work.Add((BonusKey(b), () => IconResolver.ForBonus(bonus, Exists)));
+                }
+
+            var done = 0;
+            await Parallel.ForEachAsync(work, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, (item, token) =>
+            {
+                var icon = item.Resolve();
+                var uri = icon is null ? null : _icons.DataUri(tree.Sources, icon);
+                if (uri is not null) tree.Icons[item.Key] = uri;
+                Report($"Loading icons… {Interlocked.Increment(ref done)}/{work.Count}", force: false);
                 return ValueTask.CompletedTask;
             });
         }
