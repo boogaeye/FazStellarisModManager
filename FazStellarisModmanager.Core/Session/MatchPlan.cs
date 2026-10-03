@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Library;
 using FazStellarisModmanager.Core.Lists;
@@ -42,9 +43,12 @@ public sealed record MatchPlan(
             else manual.Add(e);
         }
 
-        // Host-provided DLC names are not trusted: keep only descriptors this machine actually has.
+        // Host-provided entries are untrusted: keep only well-formed "dlc/<folder>/<file>.dlc" paths. Not limited to
+        // DLCs enabled here (mine.Dlcs), or a DLC already disabled on this PC would be dropped and get re-enabled.
         var disabled = hostList.DisabledDlcs
-            .Where(d => mine.Dlcs.Any(m => string.Equals(m.Descriptor, d, StringComparison.OrdinalIgnoreCase)))
+            .Select(d => d.Replace('\\', '/'))
+            .Where(IsDlcDescriptor)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         foreach (var u in diff.Dlcs.Where(d => d.Status == UnitStatus.Extra))
         {
@@ -61,4 +65,8 @@ public sealed record MatchPlan(
             changed.Where(u => ModKeys.WorkshopId(u.Key) is null).ToList(),
             diff.Dlcs.Where(d => d.Status == UnitStatus.Missing).ToList());
     }
+
+    static readonly Regex DlcDescriptor = new(@"^dlc/[^/:*?""<>|]+/[^/:*?""<>|]+\.dlc$", RegexOptions.IgnoreCase);
+
+    static bool IsDlcDescriptor(string path) => path.Length <= 200 && !path.Contains("..") && DlcDescriptor.IsMatch(path);
 }

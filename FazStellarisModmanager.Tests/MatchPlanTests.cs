@@ -100,17 +100,15 @@ public class MatchPlanTests
     }
 
     [Fact]
-    public void Host_disabled_dlcs_not_present_here_are_dropped()
+    public void Host_disabled_dlcs_must_be_well_formed_descriptor_paths()
     {
-        var host = new ModList("Host list", [], ["dlc/evil.dlc", "dlc/dlc001_x/dlc001.dlc"]);
-        var mine = TestSnapshots.Machine("M") with
-        {
-            Dlcs = [new ModSnapshot("dlc:dlc001", "DLC 1", "dlc/dlc001_x/dlc001.dlc", null, null, null, "", 0, [])],
-        };
+        var host = new ModList("Host list", [],
+            ["dlc/evil.dlc", "../../Windows/x.dlc", "dlc/a/../../b.dlc", "C:/x/dlc/a/b.dlc", "dlc/dlc001_x/dlc001.dlc", @"dlc\dlc002_y\dlc002.dlc"]);
 
-        var plan = MatchPlan.Create(host, Diff(), [], mine);
+        // dlc002 is not enabled here (maybe already disabled): it must still be kept, or applying would re-enable it.
+        var plan = MatchPlan.Create(host, Diff(), [], TestSnapshots.Machine("M"));
 
-        Assert.Equal(new[] { "dlc/dlc001_x/dlc001.dlc" }, plan.ToApply.DisabledDlcs);
+        Assert.Equal(new[] { "dlc/dlc001_x/dlc001.dlc", "dlc/dlc002_y/dlc002.dlc" }, plan.ToApply.DisabledDlcs);
     }
 
     [Fact]
