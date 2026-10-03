@@ -1,0 +1,59 @@
+@page "/settings"
+@inject ModManagerService Manager
+
+<h1>Settings</h1>
+
+<div class="form">
+    <label>
+        Stellaris install folder (leave empty to auto-detect)
+        <input @bind="gameDir" placeholder="@(detected.GameDir ?? "not found — enter the folder containing stellaris.exe")" />
+    </label>
+    <label>
+        Stellaris documents folder (contains dlc_load.json; leave empty for default)
+        <input @bind="userDir" placeholder="@detected.UserDir" />
+    </label>
+    <label>
+        Player name (shown to other players in sessions)
+        <input @bind="playerName" placeholder="@Environment.MachineName" />
+    </label>
+    <div><button class="primary" @onclick="Save">Save</button></div>
+</div>
+
+<p class="status">
+    Game: @(detected.GameDir ?? "not found")<br />
+    Workshop: @(detected.WorkshopDir ?? "-")<br />
+    App data: @Manager.Paths.Root
+</p>
+@if (message is not null)
+{
+    <p class="status @(error ? "error" : "")">@message</p>
+}
+
+@code {
+    string? gameDir, userDir, playerName, message;
+    bool error;
+    ResolvedPaths detected = new("", null, null);
+
+    protected override void OnInitialized()
+    {
+        (gameDir, userDir, playerName) = (Manager.Settings.GameDir, Manager.Settings.UserDir, Manager.Settings.PlayerName);
+        detected = Manager.Resolve();
+    }
+
+    void Save()
+    {
+        try
+        {
+            Manager.UpdateSettings(new AppSettings(Blank(gameDir), Blank(userDir), Blank(playerName)));
+            detected = Manager.Resolve();
+            error = detected.GameDir is null;
+            message = error ? "Saved, but no Stellaris install was found at that folder." : "Saved.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            (error, message) = (true, ex.Message);
+        }
+    }
+
+    static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+}

@@ -12,6 +12,7 @@ public partial class MainWindow : Window
 #if DEBUG
         services.AddBlazorWebViewDeveloperTools();
 #endif
+        AppServices.Register(services, Environment.GetCommandLineArgs());
         Resources.Add("services", services.BuildServiceProvider());
         InitializeComponent();
     }
