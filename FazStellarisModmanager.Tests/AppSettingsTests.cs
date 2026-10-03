@@ -44,4 +44,8 @@ public class AppSettingsTests
 
         Assert.Equal(new AppSettings(), SettingsStore.Load(file));
     }
+
+    [Fact]
+    public void Icons_path_is_under_root() =>
+        Assert.Equal(@"C:\data\icons", new AppPaths(@"C:\data").Icons);
 }
