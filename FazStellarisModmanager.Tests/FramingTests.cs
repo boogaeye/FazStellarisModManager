@@ -107,4 +107,20 @@ public class FramingTests
     [Fact]
     public async Task Malformed_json_throws_invalid_data() =>
         await Assert.ThrowsAsync<InvalidDataException>(() => Framing.ReadAsync(new MemoryStream(FrameOf(Gzip("{not json")))));
+
+    [Fact]
+    public async Task Frames_above_the_per_call_cap_throw_invalid_data()
+    {
+        var ms = new MemoryStream();
+        await Framing.WriteAsync(ms, new Bye("x"));
+        ms.Position = 0;
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => Framing.ReadAsync(ms, maxFrameBytes: 4));
+    }
+
+    [Theory]
+    [InlineData("{\"type\":\"hello\"}")]
+    [InlineData("{\"type\":\"welcome\"}")]
+    public async Task Incomplete_messages_throw_invalid_data(string json) =>
+        await Assert.ThrowsAsync<InvalidDataException>(() => Framing.ReadAsync(new MemoryStream(FrameOf(Gzip(json)))));
 }

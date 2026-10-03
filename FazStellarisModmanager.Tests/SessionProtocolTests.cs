@@ -10,6 +10,9 @@ public class SessionProtocolTests
     [InlineData("1.2.3.4", "1.2.3.4", SessionProtocol.DefaultPort)]
     [InlineData(" myhost:1234 ", "myhost", 1234)]
     [InlineData("10.0.0.5:27015", "10.0.0.5", 27015)]
+    [InlineData("::1", "::1", 27015)]
+    [InlineData("[::1]", "::1", 27015)]
+    [InlineData("[::1]:5000", "::1", 5000)]
     public void Parses_addresses(string input, string host, int port) =>
         Assert.Equal((host, port), SessionProtocol.ParseAddress(input));
 
@@ -20,6 +23,10 @@ public class SessionProtocolTests
     [InlineData("host:0")]
     [InlineData("host:70000")]
     [InlineData("host:abc")]
+    [InlineData("host:")]
+    [InlineData("http://x")]
+    [InlineData("host:+80")]
+    [InlineData("[::1")]
     public void Rejects_bad_addresses(string input) =>
         Assert.Throws<ArgumentException>(() => SessionProtocol.ParseAddress(input));
 
@@ -32,6 +39,15 @@ public class SessionProtocolTests
         Assert.Equal(PlayerStatus.Mismatch, SessionProtocol.StatusFor(ModDiffer.Diff(host, TestSnapshots.Machine("B", "ugc:1"))));
         var withWarnings = TestSnapshots.Machine("C", "ugc:1", "ugc:2") with { Warnings = ["  [unreadable] x"] };
         Assert.Equal(PlayerStatus.Unreliable, SessionProtocol.StatusFor(ModDiffer.Diff(host, withWarnings)));
+    }
+
+    [Fact]
+    public void Missing_mod_with_warnings_is_a_mismatch()
+    {
+        var host = TestSnapshots.Machine("H", "ugc:1", "ugc:2");
+        var mine = TestSnapshots.Machine("C", "ugc:1") with { Warnings = ["  [unreadable] x"] };
+
+        Assert.Equal(PlayerStatus.Mismatch, SessionProtocol.StatusFor(ModDiffer.Diff(host, mine)));
     }
 
     [Fact]

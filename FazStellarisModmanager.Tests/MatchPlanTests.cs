@@ -2,6 +2,8 @@ using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Library;
 using FazStellarisModmanager.Core.Lists;
 using FazStellarisModmanager.Core.Session;
+using FazStellarisModmanager.Core.Snapshots;
+using FazStellarisModmanager.Tests.TestUtil;
 
 namespace FazStellarisModmanager.Tests;
 
@@ -27,7 +29,7 @@ public class MatchPlanTests
         ], ["dlc/dlc001_x/dlc001.dlc"]);
         var library = new[] { Installed("local:a.mod", "mod/a.mod", "My A"), Installed("ugc:1", "mod/ugc_1.mod", "My One") };
 
-        var plan = MatchPlan.Create(host, Diff(), library);
+        var plan = MatchPlan.Create(host, Diff(), library, TestSnapshots.Machine("M"));
 
         Assert.Equal(new[] { "mod/ugc_1.mod", "mod/a.mod" }, plan.ToApply.Mods.Select(m => m.DescriptorRel));
         Assert.Equal(new[] { "My One", "My A" }, plan.ToApply.Mods.Select(m => m.Name));
@@ -43,7 +45,7 @@ public class MatchPlanTests
         var host = new ModList("Host list", [new("ugc:1", "One", "mod/ugc_1.mod", "1"), new("local:a.mod", "A", "mod/a.mod", null)], []);
         var library = new[] { Installed("ugc:1", "mod/ugc_1.mod", "One"), Installed("local:a.mod", "mod/a.mod", "A") };
 
-        var plan = MatchPlan.Create(host, Diff(Changed("ugc:1"), Changed("local:a.mod")), library);
+        var plan = MatchPlan.Create(host, Diff(Changed("ugc:1"), Changed("local:a.mod")), library, TestSnapshots.Machine("M"));
 
         Assert.Equal(new[] { "ugc:1" }, plan.NeedsWorkshopUpdate.Select(u => u.Key));
         Assert.Equal(new[] { "local:a.mod" }, plan.DiffersLocally.Select(u => u.Key));
@@ -55,9 +57,48 @@ public class MatchPlanTests
     {
         var host = new ModList("Host list", [new("ugc:1", "One", "mod/ugc_1.mod", "1")], []);
 
-        var plan = MatchPlan.Create(host, Diff(), [Installed("UGC:1", "mod/ugc_1.mod", "One")]);
+        var plan = MatchPlan.Create(host, Diff(), [Installed("UGC:1", "mod/ugc_1.mod", "One")], TestSnapshots.Machine("M"));
 
         Assert.True(plan.IsComplete);
         Assert.Single(plan.ToApply.Mods);
+    }
+
+    [Fact]
+    public void Repeated_host_keys_are_applied_once()
+    {
+        var host = new ModList("Host list", [new("ugc:1", "One", "mod/ugc_1.mod", "1"), new("UGC:1", "One again", "mod/ugc_1.mod", "1")], []);
+
+        var plan = MatchPlan.Create(host, Diff(), [Installed("ugc:1", "mod/ugc_1.mod", "One")], TestSnapshots.Machine("M"));
+
+        Assert.Single(plan.ToApply.Mods);
+    }
+
+    static UnitDiff Dlc(string key, UnitStatus status) => new(key, key, null, status, 1, 1, false, null, null, null);
+
+    [Fact]
+    public void Extra_dlcs_here_are_added_to_the_disabled_list()
+    {
+        var host = new ModList("Host list", [], ["dlc/dlc001_x/dlc001.dlc"]);
+        var mine = TestSnapshots.Machine("M") with
+        {
+            Dlcs = [new ModSnapshot("dlc:dlc002", "Extra DLC", "dlc/dlc002_x/dlc002.dlc", null, null, null, "", 0, [])],
+        };
+        var diff = Diff() with { Dlcs = [Dlc("DLC:dlc002", UnitStatus.Extra)] };
+
+        var plan = MatchPlan.Create(host, diff, [], mine);
+
+        Assert.Equal(new[] { "dlc/dlc001_x/dlc001.dlc", "dlc/dlc002_x/dlc002.dlc" }, plan.ToApply.DisabledDlcs);
+    }
+
+    [Fact]
+    public void Missing_dlcs_are_reported_and_make_the_plan_incomplete()
+    {
+        var host = new ModList("Host list", [], []);
+        var diff = Diff() with { Dlcs = [Dlc("dlc:dlc003", UnitStatus.Missing)] };
+
+        var plan = MatchPlan.Create(host, diff, [], TestSnapshots.Machine("M"));
+
+        Assert.Equal(new[] { "dlc:dlc003" }, plan.NeedsDlc.Select(u => u.Key));
+        Assert.False(plan.IsComplete);
     }
 }
