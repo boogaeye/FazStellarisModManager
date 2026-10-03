@@ -17,6 +17,7 @@ public static class DdsDecoder
     {
         if (dds.Length < HeaderSize || dds[0] != (byte)'D' || dds[1] != (byte)'D' || dds[2] != (byte)'S' || dds[3] != (byte)' ')
             throw new InvalidDataException("Not a DDS file.");
+        if (I32(dds, 4) != 124 || I32(dds, 76) != 32) throw new InvalidDataException("Not a DDS file.");
         var flags = I32(dds, 8);
         var height = I32(dds, 12);
         var width = I32(dds, 16);
@@ -41,7 +42,7 @@ public static class DdsDecoder
         {
             var bpp = bitCount / 8;
             var pitchField = I32(dds, 20);
-            var pitch = (flags & 0x8) != 0 && pitchField >= width * bpp ? pitchField : width * bpp;
+            var pitch = (flags & 0x80000) == 0 && (flags & 0x8) != 0 && pitchField >= width * bpp ? pitchField : width * bpp;
             var alphaMask = (pfFlags & 0x1) != 0 ? U32(dds, 104) : 0u;
             return (width, height, DecodeMasked(data, width, height, bpp, pitch, U32(dds, 92), U32(dds, 96), U32(dds, 100), alphaMask));
         }
@@ -77,7 +78,7 @@ public static class DdsDecoder
         var shift = BitOperations.TrailingZeroCount(mask);
         var max = mask >> shift;
         var value = (px & mask) >> shift;
-        return (byte)(max == 255 ? value : value * 255 / max);
+        return (byte)(max == 255 ? value : (ulong)value * 255 / max);
     }
 
     static byte[] DecodeBlocks(ReadOnlySpan<byte> data, int w, int h, int blockBytes, BlockDecoder decode)

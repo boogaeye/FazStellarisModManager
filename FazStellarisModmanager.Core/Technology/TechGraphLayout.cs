@@ -16,6 +16,14 @@ public static class TechGraphLayout
 {
     public const int MaxPerColumn = 25;
 
+    /// <summary>
+    /// Builds the focus graph: prerequisites in negative columns, dependents in positive columns, <paramref name="depth"/> clamped to 1..3.
+    /// Edges are drawn only from a prerequisite in a column further left to a dependent further right. Links between techs in the same
+    /// column, or pointing toward the focus, are not drawn (the focus view shows the shortest-distance placement). Edges may span more
+    /// than one column (e.g. from -2 to +1), so renderers should route long edges around the nodes.
+    /// Columns are capped at <see cref="MaxPerColumn"/>; members with no shown neighbour in the nearer column are dropped, and
+    /// everything hidden for either reason is counted in a single <see cref="GraphMore"/> per column.
+    /// </summary>
     public static TechGraph Build(TechDatabase db, string focus, int depth)
     {
         if (!db.Techs.TryGetValue(focus, out var focusTech)) throw new ArgumentException($"Unknown technology '{focus}'.", nameof(focus));
@@ -46,16 +54,16 @@ public static class TechGraphLayout
                     return rows.Count == 0 ? double.MaxValue : rows.Average();
                 }
 
-                var ordered = members
+                var candidates = members.Where(k => Barycenter(k) != double.MaxValue).ToList();
+                var ordered = candidates
                     .OrderBy(Barycenter)
                     .ThenBy(k => db.Techs[k].Name, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(k => k, StringComparer.Ordinal)
                     .ToList();
-                if (ordered.Count > MaxPerColumn)
-                {
-                    more.Add(new GraphMore(c, ordered.Count - MaxPerColumn));
-                    ordered = ordered.Take(MaxPerColumn).ToList();
-                }
+                if (ordered.Count > MaxPerColumn) ordered = ordered.Take(MaxPerColumn).ToList();
+                var hiddenTotal = members.Count - ordered.Count;
+                if (hiddenTotal > 0) more.Add(new GraphMore(c, hiddenTotal));
+                if (ordered.Count == 0) break;
                 for (int i = 0; i < ordered.Count; i++) centred[ordered[i]] = i - (ordered.Count - 1) / 2.0;
                 columns[c] = ordered;
             }

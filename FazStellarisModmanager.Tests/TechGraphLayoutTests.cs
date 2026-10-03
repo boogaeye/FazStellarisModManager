@@ -82,4 +82,25 @@ public class TechGraphLayoutTests
 
         Assert.Throws<ArgumentException>(() => TechGraphLayout.Build(db, "nope", 2));
     }
+
+    [Fact]
+    public void Capped_columns_leave_no_orphans()
+    {
+        var sb = new System.Text.StringBuilder().AppendLine("root = { area = physics }");
+        for (int i = 0; i < 30; i++) sb.AppendLine($"k{i:00} = {{ area = physics prerequisites = {{ \"root\" }} }}");
+        for (int i = 0; i < 30; i++) sb.AppendLine($"m{i:00} = {{ area = physics prerequisites = {{ \"k{i:00}\" }} }}");
+        var (db, cleanup) = Db(sb.ToString());
+        using var _ = cleanup;
+
+        var g = TechGraphLayout.Build(db, "root", depth: 2);
+
+        string[] Col(int c) => g.Nodes.Where(n => n.Column == c).OrderBy(n => n.Row).Select(n => n.Key).ToArray();
+        var ks = Enumerable.Range(0, 25).Select(i => $"k{i:00}").ToArray();
+        Assert.Equal(ks, Col(1));
+        Assert.Equal(ks.Select(k => "m" + k[1..]).Order(StringComparer.Ordinal), Col(2).Order(StringComparer.Ordinal));
+        Assert.Contains(new GraphMore(1, 5), g.More);
+        Assert.Contains(new GraphMore(2, 5), g.More);
+        Assert.Equal(2, g.More.Count);
+        foreach (var m in Col(2)) Assert.Contains(g.Edges, e => e.To == m);
+    }
 }

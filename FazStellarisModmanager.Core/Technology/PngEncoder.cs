@@ -11,7 +11,9 @@ public static class PngEncoder
 
     public static byte[] Encode(int width, int height, ReadOnlySpan<byte> rgba)
     {
-        if (rgba.Length < width * height * 4) throw new ArgumentException("Not enough pixel data.", nameof(rgba));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        if (rgba.Length < (long)width * height * 4) throw new ArgumentException("Not enough pixel data.", nameof(rgba));
         using var png = new MemoryStream();
         png.Write([137, 80, 78, 71, 13, 10, 26, 10]);
 

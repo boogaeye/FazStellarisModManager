@@ -79,4 +79,49 @@ public class DdsAndPngTests
         z.CopyTo(raw);
         Assert.Equal(new byte[] { 0, 255, 0, 0, 255 }, raw.ToArray());
     }
+
+    [Theory]
+    [InlineData(0xFFFFFFFFu, 255)]
+    [InlineData(0x80000000u, 127)]
+    public void Full_width_mask_does_not_overflow(uint pixel, int expectedR)
+    {
+        var dds = DdsBuilder.Bgra32(1, 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(dds.AsSpan(92), 0xFFFFFFFFu);
+        BinaryPrimitives.WriteUInt32LittleEndian(dds.AsSpan(96), 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(dds.AsSpan(100), 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(dds.AsSpan(104), 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(dds.AsSpan(128), pixel);
+
+        var rgba = DdsDecoder.Decode(dds).Rgba;
+
+        Assert.InRange(rgba[0], expectedR - 1, expectedR + 1);
+    }
+
+    [Fact]
+    public void Linear_size_flag_ignores_pitch_field()
+    {
+        var dds = DdsBuilder.Bgra32(2, 1, (1, 2, 3, 4), (5, 6, 7, 8));
+        BinaryPrimitives.WriteInt32LittleEndian(dds.AsSpan(8), 0x1007 | 0x80000);
+        BinaryPrimitives.WriteInt32LittleEndian(dds.AsSpan(20), 8 * 1000); // linear size, not a pitch
+        var (_, _, rgba) = DdsDecoder.Decode(dds);
+        Assert.Equal(new byte[] { 5, 6, 7, 8 }, Px(rgba, 1));
+    }
+
+    [Fact]
+    public void Bad_header_sizes_are_rejected()
+    {
+        var a = DdsBuilder.Bgra32(1, 1);
+        BinaryPrimitives.WriteInt32LittleEndian(a.AsSpan(4), 100);
+        Assert.Throws<InvalidDataException>(() => DdsDecoder.Decode(a));
+        var b = DdsBuilder.Bgra32(1, 1);
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(76), 16);
+        Assert.Throws<InvalidDataException>(() => DdsDecoder.Decode(b));
+    }
+
+    [Fact]
+    public void Png_rejects_non_positive_dimensions()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => PngEncoder.Encode(0, 1, new byte[4]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PngEncoder.Encode(1, -1, new byte[4]));
+    }
 }
