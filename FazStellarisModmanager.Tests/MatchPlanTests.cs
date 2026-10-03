@@ -29,7 +29,12 @@ public class MatchPlanTests
         ], ["dlc/dlc001_x/dlc001.dlc"]);
         var library = new[] { Installed("local:a.mod", "mod/a.mod", "My A"), Installed("ugc:1", "mod/ugc_1.mod", "My One") };
 
-        var plan = MatchPlan.Create(host, Diff(), library, TestSnapshots.Machine("M"));
+        // mine must own the host's disabled DLC, otherwise it is dropped (host DLC names are not trusted).
+        var mine = TestSnapshots.Machine("M") with
+        {
+            Dlcs = [new ModSnapshot("dlc:dlc001", "DLC 1", "dlc/dlc001_x/dlc001.dlc", null, null, null, "", 0, [])],
+        };
+        var plan = MatchPlan.Create(host, Diff(), library, mine);
 
         Assert.Equal(new[] { "mod/ugc_1.mod", "mod/a.mod" }, plan.ToApply.Mods.Select(m => m.DescriptorRel));
         Assert.Equal(new[] { "My One", "My A" }, plan.ToApply.Mods.Select(m => m.Name));
@@ -81,13 +86,31 @@ public class MatchPlanTests
         var host = new ModList("Host list", [], ["dlc/dlc001_x/dlc001.dlc"]);
         var mine = TestSnapshots.Machine("M") with
         {
-            Dlcs = [new ModSnapshot("dlc:dlc002", "Extra DLC", "dlc/dlc002_x/dlc002.dlc", null, null, null, "", 0, [])],
+            Dlcs =
+            [
+                new ModSnapshot("dlc:dlc001", "DLC 1", "DLC/dlc001_x/dlc001.dlc", null, null, null, "", 0, []),
+                new ModSnapshot("dlc:dlc002", "Extra DLC", "dlc/dlc002_x/dlc002.dlc", null, null, null, "", 0, []),
+            ],
         };
         var diff = Diff() with { Dlcs = [Dlc("DLC:dlc002", UnitStatus.Extra)] };
 
         var plan = MatchPlan.Create(host, diff, [], mine);
 
         Assert.Equal(new[] { "dlc/dlc001_x/dlc001.dlc", "dlc/dlc002_x/dlc002.dlc" }, plan.ToApply.DisabledDlcs);
+    }
+
+    [Fact]
+    public void Host_disabled_dlcs_not_present_here_are_dropped()
+    {
+        var host = new ModList("Host list", [], ["dlc/evil.dlc", "dlc/dlc001_x/dlc001.dlc"]);
+        var mine = TestSnapshots.Machine("M") with
+        {
+            Dlcs = [new ModSnapshot("dlc:dlc001", "DLC 1", "dlc/dlc001_x/dlc001.dlc", null, null, null, "", 0, [])],
+        };
+
+        var plan = MatchPlan.Create(host, Diff(), [], mine);
+
+        Assert.Equal(new[] { "dlc/dlc001_x/dlc001.dlc" }, plan.ToApply.DisabledDlcs);
     }
 
     [Fact]

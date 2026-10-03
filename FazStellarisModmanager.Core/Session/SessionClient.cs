@@ -98,15 +98,15 @@ public sealed class SessionClient : IAsyncDisposable
 
     async Task SendAsync(SessionMessage message, CancellationToken ct)
     {
-        var frame = Framing.Encode(message);
-        await _writeLock.WaitAsync(ct);
+        var frame = await Task.Run(() => Framing.Encode(message)).ConfigureAwait(false);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(WriteTimeout);
             try
             {
-                await _stream.WriteAsync(frame, timeout.Token);
+                await Framing.WriteFrameAsync(_stream, frame, timeout.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

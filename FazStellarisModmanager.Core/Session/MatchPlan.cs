@@ -42,7 +42,10 @@ public sealed record MatchPlan(
             else manual.Add(e);
         }
 
-        var disabled = hostList.DisabledDlcs.ToList();
+        // Host-provided DLC names are not trusted: keep only descriptors this machine actually has.
+        var disabled = hostList.DisabledDlcs
+            .Where(d => mine.Dlcs.Any(m => string.Equals(m.Descriptor, d, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
         foreach (var u in diff.Dlcs.Where(d => d.Status == UnitStatus.Extra))
         {
             var dlc = mine.Dlcs.FirstOrDefault(d => string.Equals(d.Key, u.Key, StringComparison.OrdinalIgnoreCase));

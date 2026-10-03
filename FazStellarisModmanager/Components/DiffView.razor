@@ -34,6 +34,21 @@
     [Parameter, EditorRequired] public DiffResult Diff { get; set; } = default!;
     [Parameter] public string Who { get; set; } = "you";
 
+    const int MaxUnits = 200;
+    const int MaxFiles = 50;
+
+    DiffResult? _renderedDiff;
+    string? _renderedWho;
+
+    // Parameters usually arrive as the same references; skip the (large) re-render unless they changed.
+    protected override bool ShouldRender()
+    {
+        if (ReferenceEquals(_renderedDiff, Diff) && ReferenceEquals(_renderedWho, Who)) return false;
+        _renderedDiff = Diff;
+        _renderedWho = Who;
+        return true;
+    }
+
     int BaseCount => Diff.BaseFiles.Changed.Count + Diff.BaseFiles.OnlyInTarget.Count + Diff.BaseFiles.OnlyInMine.Count;
 
     RenderFragment Section(string title, List<UnitDiff> units) =>
@@ -42,7 +57,7 @@
             {
                 <h3>@title (@units.Count)</h3>
                 <ul>
-                    @foreach (var u in units)
+                    @foreach (var u in units.Take(MaxUnits))
                     {
                         <li>
                             <span class="name">@u.Name</span> <span class="badge">@u.Key</span>
@@ -51,13 +66,20 @@
                                 <details>
                                     <summary>@f.Changed.Count changed, @f.OnlyInTarget.Count only on host, @f.OnlyInMine.Count only on @Who</summary>
                                     <ul class="files">
-                                        @foreach (var p in f.Changed.Take(50)) { <li>~ @p</li> }
-                                        @foreach (var p in f.OnlyInTarget.Take(50)) { <li>- @p</li> }
-                                        @foreach (var p in f.OnlyInMine.Take(50)) { <li>+ @p</li> }
+                                        @foreach (var p in f.Changed.Take(MaxFiles)) { <li>~ @p</li> }
+                                        @if (f.Changed.Count > MaxFiles) { <li>… and @(f.Changed.Count - MaxFiles) more</li> }
+                                        @foreach (var p in f.OnlyInTarget.Take(MaxFiles)) { <li>- @p</li> }
+                                        @if (f.OnlyInTarget.Count > MaxFiles) { <li>… and @(f.OnlyInTarget.Count - MaxFiles) more</li> }
+                                        @foreach (var p in f.OnlyInMine.Take(MaxFiles)) { <li>+ @p</li> }
+                                        @if (f.OnlyInMine.Count > MaxFiles) { <li>… and @(f.OnlyInMine.Count - MaxFiles) more</li> }
                                     </ul>
                                 </details>
                             }
                         </li>
+                    }
+                    @if (units.Count > MaxUnits)
+                    {
+                        <li>… and @(units.Count - MaxUnits) more</li>
                     }
                 </ul>
             }

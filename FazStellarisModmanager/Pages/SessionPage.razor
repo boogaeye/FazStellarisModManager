@@ -15,12 +15,12 @@
             <h2>Host a session</h2>
             <p class="status">Friends join with your IP address and this port. They must be able to reach it: forward the port on your router, or use Hamachi, ZeroTier or Tailscale.</p>
             <label>Port <input type="number" min="1" max="65535" @bind="hostPort" /></label>
-            <div><button class="primary" @onclick="Host" disabled="@busy">Host</button></div>
+            <div><button class="primary" @onclick="Host" disabled="@Session.IsBusy">Host</button></div>
         </section>
         <section class="panel pad">
             <h2>Join a session</h2>
             <label>Host address <input @bind="joinAddress" placeholder="203.0.113.5 or 203.0.113.5:27015" /></label>
-            <div><button class="primary" @onclick="Join" disabled="@busy">Join</button></div>
+            <div><button class="primary" @onclick="Join" disabled="@Session.IsBusy">Join</button></div>
         </section>
     </div>
 }
@@ -35,12 +35,12 @@ else
         {
             <span>Connected to <b>@Session.HostAddress</b></span>
         }
-        <button @onclick="Rescan" disabled="@busy">Rescan my mods</button>
+        <button @onclick="Rescan" disabled="@Session.IsBusy">Rescan my mods</button>
         @if (Session.Role == SessionRole.Client)
         {
-            <button class="primary" @onclick="Match" disabled="@(busy || Session.MyDiff is null || Session.MyDiff.IsMatch)">Match host</button>
+            <button class="primary" @onclick="Match" disabled="@(Session.IsBusy || Session.MyDiff is null || Session.MyDiff.IsMatch)">Match host</button>
         }
-        @if (busy)
+        @if (Session.IsBusy)
         {
             <button @onclick="Session.CancelCurrent">Cancel</button>
         }
@@ -50,14 +50,20 @@ else
     <table class="roster">
         <thead><tr><th>Player</th><th>Status</th><th>Compared with host</th></tr></thead>
         <tbody>
-            @foreach (var p in Session.Players)
+            @{ var players = Session.Players; var isHost = Session.Role == SessionRole.Host; }
+            @foreach (var p in players.Take(MaxRosterRows))
             {
                 var player = p;
-                <tr class="@(player.Id == selectedId ? "selected" : "")" @onclick="() => selectedId = player.Id">
-                    <td>@player.Name@(player.IsHost ? " (host)" : "")</td>
+                var you = isHost ? player.IsHost : player.Id == Session.MyPlayerId;
+                <tr class="@(player.Id == selectedId ? "selected" : "")" @onclick="() => { if (isHost) selectedId = player.Id; }" style="@(isHost ? "cursor:pointer" : null)">
+                    <td>@Trunc(player.Name)@(player.IsHost ? " (host)" : "")@(you ? " (you)" : "")</td>
                     <td><span class="badge @StatusClass(player.Status)">@StatusText(player)</span></td>
                     <td>@(player.IsHost ? "" : player.Summary?.ToString() ?? "")</td>
                 </tr>
+            }
+            @if (players.Count > MaxRosterRows)
+            {
+                <tr><td colspan="3">… and @(players.Count - MaxRosterRows) more</td></tr>
             }
         </tbody>
     </table>
@@ -69,7 +75,7 @@ else
     }
     else if (Session.Role == SessionRole.Host && selectedId is not null && Session.DiffFor(selectedId) is { } theirs)
     {
-        <h2>@(Session.Players.FirstOrDefault(p => p.Id == selectedId)?.Name ?? "Player") compared with you</h2>
+        <h2>@Trunc(Session.Players.FirstOrDefault(p => p.Id == selectedId)?.Name ?? "Player") compared with you</h2>
         <DiffView Diff="theirs" Who="they" />
     }
     else if (Session.Role == SessionRole.Host)
@@ -81,7 +87,7 @@ else
     {
         <section class="panel pad">
             <h2>Match host result</h2>
-            <p>Wrote the host's list (@plan.ToApply.Mods.Count installed mods, in the host's order) to dlc_load.json.</p>
+            <p>Wrote the host's list (@plan.ToApply.Mods.Count installed mods, in the host's order) to dlc_load.json.@(Session.LastBackupPath is { } backup ? " Backup: " + System.IO.Path.GetFileName(backup) : "")</p>
             @if (plan.NeedsWorkshopInstall.Count > 0)
             {
                 <p class="status error">Not installed. Subscribe to these on the Steam Workshop, then click Rescan my mods:</p>
@@ -125,7 +131,7 @@ else
     string joinAddress = "";
     string? selectedId;
     string? status;
-    bool busy;
+    SessionRole prevRole;
     bool error;
     IReadOnlyList<string> addresses = [];
 
@@ -135,7 +141,17 @@ else
         addresses = SessionProtocol.LocalAddresses();
     }
 
-    void OnSessionChanged() => _ = InvokeAsync(StateHasChanged);
+    void OnSessionChanged() => _ = InvokeAsync(() =>
+    {
+        // The session ended on its own (host stopped, network lost): the old status no longer applies.
+        if (prevRole != SessionRole.None && Session.Role == SessionRole.None && Session.LastDisconnectReason is not null)
+        {
+            status = null;
+            selectedId = null;
+        }
+        prevRole = Session.Role;
+        StateHasChanged();
+    });
 
     public void Dispose() => Session.Changed -= OnSessionChanged;
 
@@ -173,7 +189,6 @@ else
 
     async Task RunAsync(Func<Task<string?>> action)
     {
-        busy = true;
         (status, error) = (null, false);
         try
         {
@@ -189,11 +204,12 @@ else
         {
             (status, error) = (ex.Message, true);
         }
-        finally
-        {
-            busy = false;
-        }
     }
+
+    const int MaxRosterRows = 64;
+    const int MaxText = 60;
+
+    static string Trunc(string? text) => text is null || text.Length <= MaxText ? text ?? "" : text[..MaxText] + "…";
 
     static string StatusClass(PlayerStatus s) => s switch
     {
@@ -208,7 +224,7 @@ else
         PlayerStatus.Ready => "✔ Ready",
         PlayerStatus.Mismatch => "✖ Differs",
         PlayerStatus.Unreliable => "⚠ Check warnings",
-        PlayerStatus.Busy => p.Activity ?? "Busy…",
+        PlayerStatus.Busy => p.Activity is { } a ? Trunc(a) : "Busy…",
         _ => "Waiting for scan…",
     };
 }

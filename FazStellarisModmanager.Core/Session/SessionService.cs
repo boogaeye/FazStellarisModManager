@@ -23,6 +23,8 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
     volatile string? _activity;
     volatile string? _lastDisconnectReason;
     volatile CancellationTokenSource? _opCts;
+    volatile string? _lastBackupPath;
+    int _busyCount;
     long _lastProgressRaise;
     HashCache? _cache;
 
@@ -36,6 +38,15 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
 
     public IReadOnlyList<PlayerInfo> Players => _host?.Players ?? _client?.Roster ?? [];
     public MatchPlan? LastPlan => _lastPlan;
+
+    /// <summary>The dlc_load.json backup written by the last Match host (null if none was needed or written).</summary>
+    public string? LastBackupPath => _lastBackupPath;
+
+    /// <summary>This player's id on the host (null when hosting or not in a session).</summary>
+    public string? MyPlayerId => _client?.PlayerId;
+
+    /// <summary>True while any operation is running or waiting for its turn.</summary>
+    public bool IsBusy => Volatile.Read(ref _busyCount) > 0;
 
     /// <summary>What the current operation is doing (e.g. the scan's progress); null when idle.</summary>
     public string? Activity => _activity;
@@ -82,9 +93,16 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
         try
         {
             ct.ThrowIfCancellationRequested();
+            var lastTarget = client.Target;
             client.Changed += () =>
             {
                 if (!ReferenceEquals(_client, client)) return;
+                if (!ReferenceEquals(lastTarget, client.Target))
+                {
+                    lastTarget = client.Target; // the host's target changed: the old plan no longer describes it
+                    _lastPlan = null;
+                    _lastBackupPath = null;
+                }
                 RecomputeDiff();
                 RaiseChanged();
             };
@@ -113,6 +131,8 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
     /// <summary>Rescans this machine. As host, pushes the new list to everyone; as client, sends the new snapshot.</summary>
     public Task RescanAsync(CancellationToken ct = default) => Exclusive(async ct =>
     {
+        _lastPlan = null;
+        _lastBackupPath = null;
         ModList? hostList = null;
         if (_host is not null)
         {
@@ -135,19 +155,36 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
         var client = _client ?? throw new InvalidOperationException("Not connected to a host.");
         var mine = MySnapshot ?? throw new InvalidOperationException("Your mods have not been scanned yet.");
         var target = client.Target; // one target for the whole match
-        var diff = ModDiffer.Diff(target.HostSnapshot, mine);
+        var diff = await Task.Run(() => ModDiffer.Diff(target.HostSnapshot, mine), CancellationToken.None);
         await client.SendBusyAsync("Matching host…", CancellationToken.None);
-        SetActivity("Applying the host's mod list…");
-        await manager.RefreshLibraryAsync();
-        var plan = MatchPlan.Create(target.HostList, diff, manager.Library, mine);
-        ct.ThrowIfCancellationRequested();
-        if (!client.IsConnected || !ReferenceEquals(_client, client)) throw new InvalidOperationException("The host has disconnected.");
-        manager.Apply(plan.ToApply);
-        _lastPlan = plan;
-        var snapshot = await ScanAsync(ct);
-        RecomputeDiff();
-        await client.SendSnapshotAsync(snapshot, CancellationToken.None);
-        return plan;
+        var applied = false;
+        try
+        {
+            SetActivity("Applying the host's mod list…");
+            await manager.RefreshLibraryAsync();
+            var plan = await Task.Run(() => MatchPlan.Create(target.HostList, diff, manager.Library, mine), CancellationToken.None);
+            ct.ThrowIfCancellationRequested();
+            if (!client.IsConnected || !ReferenceEquals(_client, client)) throw new InvalidOperationException("The host has disconnected.");
+            _lastBackupPath = manager.Apply(plan.ToApply);
+            applied = true;
+            _lastPlan = plan;
+            var snapshot = await ScanAsync(ct);
+            RecomputeDiff();
+            await client.SendSnapshotAsync(snapshot, CancellationToken.None);
+            return plan;
+        }
+        catch (Exception ex)
+        {
+            // Never leave the host showing "Matching host…": put our last known snapshot back.
+            if (_mySnapshot is { } last)
+            {
+                try { await client.SendSnapshotAsync(last, CancellationToken.None); }
+                catch { /* best effort */ }
+            }
+            if (applied)
+                throw new InvalidOperationException($"Applied the host's list, but the rescan did not finish: {ex.Message}. Click Rescan my mods.", ex);
+            throw;
+        }
     }, ct);
 
     /// <summary>Cancels the running operation, if any; it throws OperationCanceledException to its caller.</summary>
@@ -176,6 +213,7 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
         _myDiff = null;
         _hostAddress = null;
         _lastPlan = null;
+        _lastBackupPath = null;
         if (host is not null)
         {
             host.RosterChanged -= RaiseChanged;
@@ -192,6 +230,7 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
         _myDiff = null;
         _hostAddress = null;
         _lastPlan = null;
+        _lastBackupPath = null;
         _lastDisconnectReason = reason;
         RaiseChanged();
         _ = client.DisposeAsync().AsTask();
@@ -225,12 +264,20 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
 
     async Task<T> Exclusive<T>(Func<CancellationToken, Task<T>> action, CancellationToken ct)
     {
-        await _op.WaitAsync(ct);
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _opCts = cts;
+        Interlocked.Increment(ref _busyCount);
+        RaiseChanged();
+        var acquired = false;
         try
         {
-            try { return await action(cts.Token); }
+            await _op.WaitAsync(ct).ConfigureAwait(false);
+            acquired = true;
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _opCts = cts;
+            try
+            {
+                // On the thread pool, so scanning, diffing and encoding never run on the caller's (UI) context.
+                return await Task.Run(() => action(cts.Token), CancellationToken.None).ConfigureAwait(false);
+            }
             finally
             {
                 _opCts = null;
@@ -239,7 +286,8 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
         }
         finally
         {
-            _op.Release();
+            if (acquired) _op.Release();
+            Interlocked.Decrement(ref _busyCount);
             RaiseChanged();
         }
     }

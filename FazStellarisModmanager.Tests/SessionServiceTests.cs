@@ -53,6 +53,23 @@ public class SessionServiceTests
     }
 
     [Fact]
+    public async Task Cancelled_match_does_not_leave_the_host_showing_busy()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/ugc_111.mod\",\"mod/local.mod\"]");
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]");
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+        client.Session.Changed += () =>
+        {
+            if (client.Session.Activity?.StartsWith("Applying") == true) client.Session.CancelCurrent();
+        };
+
+        await Assert.ThrowsAnyAsync<Exception>(() => client.Session.MatchHostAsync());
+
+        await Wait.Until(() => host.Session.Players.Any(p => p.Name == "Cli" && p.Status != PlayerStatus.Busy), "host sees client not busy");
+    }
+
+    [Fact]
     public async Task Host_rescan_pushes_the_new_list_to_clients()
     {
         await using var host = new Rig("Hosty", "[\"mod/local.mod\"]");

@@ -38,8 +38,14 @@ public static class Framing
 
     public static async Task WriteAsync(Stream stream, SessionMessage message, CancellationToken ct = default)
     {
-        await stream.WriteAsync(Encode(message), ct);
-        await stream.FlushAsync(ct);
+        var frame = await Task.Run(() => Encode(message), ct).ConfigureAwait(false);
+        await WriteFrameAsync(stream, frame, ct).ConfigureAwait(false);
+    }
+
+    public static async Task WriteFrameAsync(Stream stream, byte[] frame, CancellationToken ct = default)
+    {
+        await stream.WriteAsync(frame, ct).ConfigureAwait(false);
+        await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
     /// <summary>Bodies are read in chunks of this size so memory follows the bytes actually received, not the claimed length.</summary>

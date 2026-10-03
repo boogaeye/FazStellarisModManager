@@ -92,8 +92,27 @@ public sealed class SessionHost : IAsyncDisposable
     /// <summary>Starts listening. Throws SocketException if the port is in use.</summary>
     public void Start(int port, IPAddress? address = null)
     {
-        _listener = new TcpListener(address ?? IPAddress.Any, port);
-        _listener.Start();
+        if (address is not null)
+        {
+            _listener = new TcpListener(address, port);
+            _listener.Start();
+        }
+        else
+        {
+            try
+            {
+                _listener = new TcpListener(IPAddress.IPv6Any, port);
+                _listener.Server.DualMode = true;
+                _listener.Start();
+            }
+            catch (SocketException)
+            {
+                // IPv6 unavailable (or the port is taken: the IPv4 attempt then reports that).
+                _listener?.Stop();
+                _listener = new TcpListener(IPAddress.Any, port);
+                _listener.Start();
+            }
+        }
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
         _acceptLoop = AcceptLoopAsync(_cts.Token);
     }
