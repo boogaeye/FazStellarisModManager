@@ -78,6 +78,7 @@ sealed class DirectorySource(string name, string root, bool isBaseGame) : Conten
 sealed class ZipSource : ContentSource
 {
     readonly ZipArchive _zip;
+    volatile bool _disposed;
     readonly Dictionary<string, ZipArchiveEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
 
     public ZipSource(string name, string path) : base(name, isBaseGame: false)
@@ -110,14 +111,22 @@ sealed class ZipSource : ContentSource
             .ToList();
     }
 
-    public override bool Exists(string relativePath) => TryGet(relativePath, out _);
+    void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+
+    public override bool Exists(string relativePath)
+    {
+        ThrowIfDisposed();
+        return TryGet(relativePath, out _);
+    }
 
     // ZipArchive is not thread-safe, so copy the entry out under a lock.
     public override Stream Open(string relativePath)
     {
+        ThrowIfDisposed();
         if (!TryGet(relativePath, out var entry)) throw new FileNotFoundException("Not in archive.", relativePath);
         lock (_zip)
         {
+            ThrowIfDisposed();
             using var s = entry.Open();
             var copy = new MemoryStream();
             s.CopyTo(copy);
@@ -128,9 +137,17 @@ sealed class ZipSource : ContentSource
 
     public override string Stamp(string relativePath)
     {
+        ThrowIfDisposed();
         if (!TryGet(relativePath, out var entry)) throw new FileNotFoundException("Not in archive.", relativePath);
         return $"{entry.Length}:{entry.LastWriteTime.UtcTicks}";
     }
 
-    public override void Dispose() => _zip.Dispose();
+    public override void Dispose()
+    {
+        lock (_zip)
+        {
+            _disposed = true;
+            _zip.Dispose();
+        }
+    }
 }

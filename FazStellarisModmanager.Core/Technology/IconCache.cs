@@ -1,15 +1,12 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace FazStellarisModmanager.Core.Technology;
 
-/// <summary>Finds tech icons across sources (last wins), converts DDS to PNG once, and serves data URIs.</summary>
+/// <summary>Stateless decoder: finds tech icons across sources (last wins), converts DDS to PNG once (disk cache), returns data URIs. Does IO, so never call it on the UI thread.</summary>
 public sealed class IconCache(string directory)
 {
     public const string IconFolder = "gfx/interface/icons/technologies";
-
-    readonly ConcurrentDictionary<string, string?> _memory = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>"data:image/png;base64,…" for the icon, or null if no source has it or it can't be decoded.</summary>
     public string? DataUri(IReadOnlyList<ContentSource> sources, string iconKey)
@@ -18,15 +15,38 @@ public sealed class IconCache(string directory)
         var rel = $"{IconFolder}/{iconKey}.dds";
         try
         {
-            var source = sources.LastOrDefault(s => s.Exists(rel));
-            if (source is null) return null;
-            var id = $"{source.Name}|{rel}|{source.Stamp(rel)}";
-            return _memory.GetOrAdd(id, _ => Load(source, rel, id));
+            for (var i = sources.Count - 1; i >= 0; i--)
+            {
+                var source = sources[i];
+                if (!source.Exists(rel)) continue;
+                var id = $"{source.Name}|{rel}|{source.Stamp(rel)}";
+                return Load(source, rel, id);
+            }
+            return null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return null;
         }
+    }
+
+    /// <summary>Deletes cached PNGs not used (written or touched) within <paramref name="maxAge"/>. Errors are ignored.</summary>
+    public void Prune(TimeSpan maxAge)
+    {
+        try
+        {
+            if (!Directory.Exists(directory)) return;
+            var cutoff = DateTime.UtcNow - maxAge;
+            foreach (var file in Directory.EnumerateFiles(directory, "*.png"))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(file) < cutoff) File.Delete(file);
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { }
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { }
     }
 
     string? Load(ContentSource source, string rel, string id)
@@ -38,6 +58,8 @@ public sealed class IconCache(string directory)
             if (File.Exists(path))
             {
                 png = File.ReadAllBytes(path);
+                try { File.SetLastWriteTimeUtc(path, DateTime.UtcNow); }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { }
             }
             else
             {
@@ -57,7 +79,7 @@ public sealed class IconCache(string directory)
             }
             return "data:image/png;base64," + Convert.ToBase64String(png);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return null;
         }
