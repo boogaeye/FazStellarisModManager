@@ -90,4 +90,28 @@ public class HashingTests
 
         Assert.Equal(0, HashCache.Load(cachePath).Count);
     }
+
+    [Fact]
+    public void Malformed_cache_entries_are_dropped()
+    {
+        using var tmp = new TempDir();
+        var cachePath = tmp.Write("hashcache.json", "{\"C:/a\": null, \"C:/b\": {}, \"C:/c\": {\"Size\":1,\"MtimeTicks\":1,\"Md5\":\"900150983cd24fb0d6963f7d28e17f72\"}}");
+
+        Assert.Equal(1, HashCache.Load(cachePath).Count);
+    }
+
+    [Fact]
+    public void HashCache_rehashes_when_only_mtime_changes()
+    {
+        using var tmp = new TempDir();
+        var file = tmp.Write("f.txt", "abc");
+        var cache = HashCache.InMemory();
+        cache.GetMd5(file, out _);
+
+        File.WriteAllText(file, "xyz"); // same size
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddMinutes(5));
+
+        Assert.Equal("d16fb36f0911f878998c136191af705e", cache.GetMd5(file, out _));
+        Assert.Equal(2, cache.Misses);
+    }
 }

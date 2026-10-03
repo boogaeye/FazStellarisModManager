@@ -31,7 +31,8 @@ public sealed class HashCache
             {
                 var data = JsonSerializer.Deserialize<Dictionary<string, HashCacheEntry>>(File.ReadAllText(file));
                 if (data is not null)
-                    foreach (var (k, v) in data) entries[k] = v;
+                    foreach (var (k, v) in data)
+                        if (v?.Md5 is { Length: 32 }) entries[k] = v; // drop malformed entries from a hand-edited file
             }
             catch (JsonException)
             {
