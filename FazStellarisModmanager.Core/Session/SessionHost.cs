@@ -366,7 +366,8 @@ public sealed class SessionHost : IAsyncDisposable
     {
         try
         {
-            while (true)
+            // No retry loop: whoever changed an input after we read it (a new snapshot or host target)
+            // runs its own Rediff afterwards, and that one commits. Retrying here could be starved by a spamming peer.
             {
                 MachineSnapshot host;
                 MachineSnapshot? mine;
@@ -382,7 +383,7 @@ public sealed class SessionHost : IAsyncDisposable
 
                 lock (_gate)
                 {
-                    if (!ReferenceEquals(host, _hostSnapshot) || !ReferenceEquals(mine, p.Snapshot)) continue;
+                    if (!ReferenceEquals(host, _hostSnapshot) || !ReferenceEquals(mine, p.Snapshot)) return; // stale: the newer change re-diffs
                     p.Diff = diff;
                     p.Summary = summary;
                     if (diff is null)

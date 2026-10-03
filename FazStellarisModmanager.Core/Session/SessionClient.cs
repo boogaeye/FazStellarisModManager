@@ -127,7 +127,7 @@ public sealed class SessionClient : IAsyncDisposable
         var reason = "The host closed the connection.";
         try
         {
-            while (await Framing.ReadAsync(_stream, _cts.Token) is { } message)
+            while (await Framing.ReadAsync(_stream, _cts.Token, bodyTimeout: TimeSpan.FromSeconds(60)) is { } message)
             {
                 switch (message)
                 {
