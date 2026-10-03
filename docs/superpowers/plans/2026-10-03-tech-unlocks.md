@@ -18,7 +18,7 @@
   - `IconCache` crops frames.
   - `TechTreeService` prewarms unlock and bonus icons after the tech icons.
 
-The UI gains `Components/ScriptView.razor` and `Components/TechDetails.razor`, and the Tech page becomes three columns.
+The UI gains `Components/ScriptView.razor` and `Components/TechSidebar.razor`, and the Tech page becomes three columns.
 
 **Tech Stack:** .NET 10, C#, Blazor Hybrid (WPF), xUnit.
 
@@ -70,7 +70,7 @@ FazStellarisModmanager.Core/Technology/
   TechDatabase.cs            (+ Tech.Details, Unlocks(), AllUnlocks, Sprites)
   TechTreeService.cs         (+ UnlockIconUri, BonusIconUri, prewarm all icons)
 FazStellarisModmanager/
-  Components/ScriptView.razor, Components/TechDetails.razor
+  Components/ScriptView.razor, Components/TechSidebar.razor
   Pages/TechPage.razor, wwwroot/css/site.css   (modified: 3 columns, sidebar)
 FazStellarisModmanager.Tests/
   ScriptPrintingTests.cs, TechDetailsTests.cs, SpriteIconTests.cs, UnlockScannerTests.cs
@@ -1272,7 +1272,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 7: Sidebar UI
 
 **Files:**
-- Create: `FazStellarisModmanager/Components/ScriptView.razor`, `FazStellarisModmanager/Components/TechDetails.razor`
+- Create: `FazStellarisModmanager/Components/ScriptView.razor`, `FazStellarisModmanager/Components/TechSidebar.razor`
 - Modify: `FazStellarisModmanager/Pages/TechPage.razor`, `FazStellarisModmanager/wwwroot/css/site.css`
 
 - [ ] **Step 1: Create `FazStellarisModmanager/Components/ScriptView.razor`**
@@ -1301,7 +1301,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 }
 ```
 
-- [ ] **Step 2: Create `FazStellarisModmanager/Components/TechDetails.razor`**
+- [ ] **Step 2: Create `FazStellarisModmanager/Components/TechSidebar.razor`**
 
 ```razor
 @using System.Globalization
@@ -1476,7 +1476,7 @@ Read the file first. Then:
             <aside class="tech-sidebar">
                 @if (selectedKey is not null && db.Techs.TryGetValue(selectedKey, out var side))
                 {
-                    <TechDetails Tech="side" Database="db" Tree="Tree" OnSelect="key => selectedKey = key" />
+                    <TechSidebar Tech="side" Database="db" Tree="Tree" OnSelect="key => selectedKey = key" />
                 }
                 else
                 {
