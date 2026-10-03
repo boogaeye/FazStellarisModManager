@@ -66,4 +66,53 @@ public class ModLibraryTests
         Assert.Equal(Path.Combine(fake.UserDir, "mod", "local"), local.ContentPath);
         Assert.Equal("111", mods.Single(m => m.Key == "local:8cde_copy.mod").RemoteId);
     }
+
+    [Fact]
+    public void Scan_skips_locked_descriptor_and_reports_it()
+    {
+        using var fake = new FakeInstall();
+        var locked = fake.Write("user/mod/locked.mod", "name=\"Locked\"\npath=\"mod/locked\"\n");
+        using var hold = new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var errors = new List<string>();
+
+        var mods = ModLibrary.Scan(fake.UserDir, errors);
+
+        Assert.Equal(new[] { "local:local.mod" }, mods.Select(m => m.Key));
+        var error = Assert.Single(errors);
+        Assert.StartsWith("mod/locked.mod:", error);
+    }
+
+    [Fact]
+    public void Ensure_continues_past_locked_item_and_leaves_no_tmp_files()
+    {
+        using var fake = new FakeInstall();
+        var inner = fake.Write("lib/steamapps/workshop/content/281990/050/descriptor.mod", "name=\"Locked\"\n");
+        fake.Write("lib/steamapps/workshop/content/281990/333/descriptor.mod", "name=\"Third\"\n");
+        using var hold = new FileStream(inner, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var errors = new List<string>();
+
+        var created = ModLibrary.EnsureWorkshopDescriptors(fake.UserDir, fake.WorkshopDir, errors);
+
+        Assert.Equal(new[] { "mod/ugc_111.mod", "mod/ugc_333.mod" }, created);
+        var error = Assert.Single(errors);
+        Assert.StartsWith("mod/ugc_050.mod:", error);
+        Assert.Empty(Directory.GetFiles(Path.Combine(fake.UserDir, "mod"), "*.tmp"));
+    }
+
+    [Fact]
+    public void Zipped_workshop_item_gets_archive_descriptor()
+    {
+        using var fake = new FakeInstall();
+        fake.Write("lib/steamapps/workshop/content/281990/222/descriptor.mod", "name=\"Zipped\"\narchive=\"old.zip\"\n");
+        fake.Write("lib/steamapps/workshop/content/281990/222/old.zip", "zip");
+
+        ModLibrary.EnsureWorkshopDescriptors(fake.UserDir, fake.WorkshopDir);
+
+        var d = ModDescriptor.Load(Path.Combine(fake.UserDir, "mod", "ugc_222.mod"));
+        var expected = Path.GetFullPath(Path.Combine(fake.WorkshopDir, "222")).Replace('\\', '/') + "/old.zip";
+        Assert.Equal(expected, d.Archive);
+        Assert.Null(d.Path);
+        var mod = ModLibrary.Scan(fake.UserDir).Single(m => m.Key == "ugc:222");
+        Assert.Equal(Path.GetFullPath(expected), mod.ContentPath);
+    }
 }
