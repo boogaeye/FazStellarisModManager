@@ -49,12 +49,17 @@ public sealed class TechDatabase
     public const string VariablesFolder = "common/scripted_variables";
 
     readonly Dictionary<string, IReadOnlyList<string>> _dependents;
+    readonly IReadOnlyDictionary<string, IReadOnlyList<Unlock>> _unlocks;
 
-    TechDatabase(Dictionary<string, Tech> techs, Dictionary<string, IReadOnlyList<string>> dependents, List<string> warnings, List<string> sourceNames)
+    TechDatabase(Dictionary<string, Tech> techs, Dictionary<string, IReadOnlyList<string>> dependents, List<string> warnings, List<string> sourceNames,
+        IReadOnlyDictionary<string, IReadOnlyList<Unlock>> unlocks, SpriteIndex sprites)
     {
         Techs = techs;
         _dependents = dependents;
         Warnings = warnings;
+        _unlocks = unlocks;
+        Sprites = sprites;
+        AllUnlocks = unlocks.Values.SelectMany(l => l).DistinctBy(u => u.KindFolder + "|" + u.Id, StringComparer.OrdinalIgnoreCase).ToList();
         SourceNames = sourceNames;
         Categories = techs.Values.Select(t => t.Category).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
         Tiers = techs.Values.Select(t => t.Tier).OfType<int>().Distinct().Order().ToList();
@@ -71,6 +76,14 @@ public sealed class TechDatabase
 
     /// <summary>Techs that list <paramref name="key"/> as a prerequisite, ordinal-sorted.</summary>
     public IReadOnlyList<string> Dependents(string key) => _dependents.TryGetValue(key, out var list) ? list : [];
+
+    /// <summary>Things in common/ that require the tech (excluding other techs), sorted by kind then name.</summary>
+    public IReadOnlyList<Unlock> Unlocks(string techKey) => _unlocks.TryGetValue(techKey, out var list) ? list : [];
+
+    /// <summary>Every distinct unlock object (an object unlocked by several techs appears once).</summary>
+    public IReadOnlyList<Unlock> AllUnlocks { get; }
+
+    public SpriteIndex Sprites { get; }
 
     public int Count(TechArea? area) => area is null ? Techs.Count : Techs.Values.Count(t => t.Area == area);
 
@@ -174,6 +187,10 @@ public sealed class TechDatabase
 
         progress?.Report("Reading localisation…");
         var loc = Localisation.Load(sources, warnings);
+        progress?.Report("Finding what each technology unlocks…");
+        var unlocks = UnlockScanner.Scan(sources, loc, warnings, ct);
+        progress?.Report("Reading sprite definitions…");
+        var sprites = SpriteIndex.Build(sources, warnings, ct);
 
         var techs = new Dictionary<string, Tech>(StringComparer.OrdinalIgnoreCase);
         var annotationCache = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
@@ -213,7 +230,7 @@ public sealed class TechDatabase
             .Where(n => techs.Values.Any(t => t.Source.SourceName == n)).ToList();
         return new TechDatabase(techs,
             dependents.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value.Order(StringComparer.Ordinal).ToList(), StringComparer.OrdinalIgnoreCase),
-            warnings, sourceNames);
+            warnings, sourceNames, unlocks, sprites);
     }
 
     static Dictionary<string, FileWinner> Winners(IReadOnlyList<ContentSource> sources, string folder, bool topLevelOnly)
