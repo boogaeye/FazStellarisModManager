@@ -105,4 +105,69 @@ public class TechDatabaseTests
         Assert.Equal("earlier warning", db.Warnings[0]);
         Assert.Contains("00_t.txt", db.Warnings[1]);
     }
+
+    static (TempDir Tmp, List<ContentSource> Sources) Dirs(params (string Name, bool Base, (string Rel, string Text)[] Files)[] defs)
+    {
+        var tmp = new TempDir();
+        var list = new List<ContentSource>();
+        for (var i = 0; i < defs.Length; i++)
+        {
+            foreach (var (rel, text) in defs[i].Files) tmp.Write($"s{i}/common/technology/{rel}", text);
+            tmp.Mkdir($"s{i}/common/technology");
+            list.Add(ContentSource.FromPath(defs[i].Name, Path.Combine(tmp.Path, $"s{i}"), defs[i].Base));
+        }
+        return (tmp, list);
+    }
+
+    [Fact]
+    public void Load_order_is_ascii_on_lowercased_paths()
+    {
+        const string def = "tech_a = { area = physics tier = 1 cost = {0} } ";
+        var (tmp, sources) = Dirs(
+            ("Base game", true, [("00_a.txt", def.Replace("{0}", "1"))]),
+            ("Mod", false, [("Zz_late.txt", def.Replace("{0}", "2"))]));
+        using (tmp) {
+            var db = TechDatabase.Build(sources);
+            Assert.Equal(("Mod", "2"), (db.Techs["tech_a"].Source.SourceName, db.Techs["tech_a"].Cost));
+            foreach (var s in sources) s.Dispose();
+        }
+
+        var (tmp2, sources2) = Dirs(
+            ("Base game", true, [("a_x.txt", "tech_q = { area = physics tier = 1 cost = 1 } ")]),
+            ("Mod", false, [("Aa.txt", "tech_q = { area = physics tier = 1 cost = 2 } ")]));
+        using (tmp2) {
+            var db = TechDatabase.Build(sources2);
+            Assert.Equal("Mod", db.Techs["tech_q"].Source.SourceName);
+            foreach (var s in sources2) s.Dispose();
+        }
+    }
+
+    [Fact]
+    public void Redefinition_in_same_file_is_not_an_override()
+    {
+        var (tmp, sources) = Dirs(("Base game", true, [("00_z.txt",
+            "tech_z = { area = physics tier = 1 cost = 1 } tech_z = { area = physics tier = 1 cost = 2 } ")]));
+        using (tmp) {
+            var db = TechDatabase.Build(sources);
+            Assert.Equal("2", db.Techs["tech_z"].Cost);
+            Assert.Empty(db.Techs["tech_z"].Overridden);
+            foreach (var s in sources) s.Dispose();
+        }
+    }
+
+    [Fact]
+    public void PathFromStart_prefers_real_start_techs()
+    {
+        var (tmp, sources) = Dirs(("Base game", true, [("00_p.txt", """
+            t1 = { area = physics tier = 0 cost = 1 start_tech = yes }
+            t2 = { area = physics tier = 1 cost = 1 prerequisites = { "t1" } }
+            orphan = { area = physics tier = 1 cost = 1 prerequisites = { "missing_mod_tech" } }
+            t3 = { area = physics tier = 2 cost = 1 prerequisites = { "t2" "orphan" } }
+            """)]));
+        using (tmp) {
+            var db = TechDatabase.Build(sources);
+            Assert.Equal(new[] { "t1", "t2", "t3" }, db.PathFromStart("t3").Select(t => t.Key));
+            foreach (var s in sources) s.Dispose();
+        }
+    }
 }

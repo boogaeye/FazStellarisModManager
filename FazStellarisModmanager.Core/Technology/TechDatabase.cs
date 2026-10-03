@@ -95,27 +95,39 @@ public sealed class TechDatabase
             .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>Shortest prerequisite chain from a starting tech (start_tech or no known prerequisites) to the tech, start first.</summary>
+    /// <summary>
+    /// Shortest prerequisite chain to the tech, start first. Prefers the nearest real start_tech; if none is reachable,
+    /// the nearest tech without known prerequisites; if neither exists (a cycle), just the tech itself.
+    /// </summary>
     public IReadOnlyList<Tech> PathFromStart(string key)
     {
         if (!Techs.TryGetValue(key, out var target)) return [];
         var cameFrom = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase) { [target.Key] = null };
         var queue = new Queue<string>([target.Key]);
+        string? firstRoot = null;
         while (queue.Count > 0)
         {
             var current = Techs[queue.Dequeue()];
             var prereqs = current.Prerequisites.Where(Techs.ContainsKey).Select(p => Techs[p].Key).ToList();
-            if (current.IsStart || prereqs.Count == 0)
-            {
-                var path = new List<Tech>();
-                for (string? k = current.Key; k is not null; k = cameFrom[k]) path.Add(Techs[k]);
-                return path;
-            }
+            if (current.IsStart) return PathTo(current.Key, cameFrom);
+            if (prereqs.Count == 0) firstRoot ??= current.Key;
             foreach (var p in prereqs)
                 if (cameFrom.TryAdd(p, current.Key)) queue.Enqueue(p);
         }
-        return [target];
+        return firstRoot is null ? [target] : PathTo(firstRoot, cameFrom);
     }
+
+    List<Tech> PathTo(string from, Dictionary<string, string?> cameFrom)
+    {
+        var path = new List<Tech>();
+        for (string? k = from; k is not null; k = cameFrom[k]) path.Add(Techs[k]);
+        return path;
+    }
+
+    // Stellaris loads files in ASCII order and modders use lowercase names, so lowercasing first
+    // makes "Zz_x" and "zz_x" sort the same.
+    internal static readonly IComparer<string> LoadOrder =
+        Comparer<string>.Create((a, b) => string.CompareOrdinal(a.ToLowerInvariant(), b.ToLowerInvariant()));
 
     sealed record FileWinner(ContentSource Source, string Rel, List<(ContentSource Source, string Rel)> Replaced);
 
@@ -128,13 +140,13 @@ public sealed class TechDatabase
         var variableFiles = Winners(sources, VariablesFolder, topLevelOnly: false);
 
         var globals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var f in variableFiles.Values.OrderBy(f => f.Rel, StringComparer.Ordinal))
+        foreach (var f in variableFiles.Values.OrderBy(f => f.Rel, LoadOrder))
             if (TryRead(f.Source, f.Rel, warnings) is { } text)
                 foreach (var (k, v) in ScriptedVariables.Parse(text)) globals[k] = v;
 
         var defs = new Dictionary<string, (TechDefinition Def, TechSourceRef Src, Dictionary<string, string> Locals)>(StringComparer.OrdinalIgnoreCase);
         var overridden = new Dictionary<string, List<TechSourceRef>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var f in techFiles.Values.OrderBy(f => f.Rel, StringComparer.Ordinal))
+        foreach (var f in techFiles.Values.OrderBy(f => f.Rel, LoadOrder))
         {
             ct.ThrowIfCancellationRequested();
             progress?.Report($"Reading {f.Source.Name}: {f.Rel}");
@@ -152,7 +164,7 @@ public sealed class TechDatabase
             foreach (var def in TechParser.Parse(text))
             {
                 if (!overridden.TryGetValue(def.Key, out var list)) overridden[def.Key] = list = [];
-                if (defs.TryGetValue(def.Key, out var previous)) list.Add(previous.Src);
+                if (defs.TryGetValue(def.Key, out var previous) && previous.Src != src) list.Add(previous.Src);
                 foreach (var (r, keys) in replaced)
                     if (keys.Contains(def.Key)) list.Add(r);
                 defs[def.Key] = (def, src, locals);
