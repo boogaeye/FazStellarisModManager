@@ -104,4 +104,26 @@ public class ModManagerServiceTests
 
         Assert.Contains("Settings", ex.Message);
     }
+
+    [Fact]
+    public async Task RefreshLibraryAsync_returns_the_same_keys()
+    {
+        using var fake = new FakeInstall();
+        var svc = Create(fake);
+
+        var lib = await svc.RefreshLibraryAsync();
+
+        Assert.Equal(new[] { "local:local.mod", "ugc:111" }, lib.Select(m => m.Key));
+    }
+
+    [Fact]
+    public void ImportCurrent_throws_InvalidDataException_on_corrupt_dlc_load()
+    {
+        using var fake = new FakeInstall();
+        var svc = Create(fake);
+        svc.RefreshLibrary();
+        fake.Write("user/dlc_load.json", "{not json");
+
+        Assert.Throws<InvalidDataException>(() => svc.ImportCurrent("Current"));
+    }
 }
