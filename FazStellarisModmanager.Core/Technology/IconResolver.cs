@@ -15,7 +15,7 @@ public static class IconResolver
 
     /// <summary>
     /// 1) "GFX_…" -> sprite (frame = icon_frame, default 1, clamped). 2) a path ("/" or ".dds") as written.
-    /// 3) a bare name -> sprite GFX_name, else icons/<kind folder>/name.dds. 4) no icon -> icons/<kind folder>/<id>.dds.
+    /// 3) a bare name -> sprite GFX_name, else icons/&lt;kind folder&gt;/name.dds. 4) no icon -> icons/&lt;kind folder&gt;/&lt;id&gt;.dds.
     /// </summary>
     public static IconRef? ForUnlock(string? icon, int? iconFrame, string kindFolder, string id, SpriteIndex sprites, Func<string, bool> exists)
     {
@@ -26,7 +26,7 @@ public static class IconResolver
         return FromSprite(sprites.Find("GFX_" + icon), iconFrame) ?? Existing($"{Icons}/{kindFolder}/{icon}.dds", exists);
     }
 
-    /// <summary>icons/modifiers/mod_<key>.dds, or its _negative variant for a negative value when that file exists.</summary>
+    /// <summary>icons/modifiers/mod_&lt;key&gt;.dds, or its _negative variant for a negative value when that file exists.</summary>
     public static IconRef? ForBonus(StatBonus bonus, Func<string, bool> exists) =>
         (bonus.IsNegative ? Existing($"{Icons}/modifiers/mod_{bonus.Key}_negative.dds", exists) : null)
         ?? Existing($"{Icons}/modifiers/mod_{bonus.Key}.dds", exists);
