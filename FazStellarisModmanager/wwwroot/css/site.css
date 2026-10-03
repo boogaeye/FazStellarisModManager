@@ -104,7 +104,7 @@ label.inline { display: inline-flex; gap: .4rem; align-items: center; color: var
 .tech-detail .tags { display: flex; gap: .3rem; flex-wrap: wrap; margin: .3rem 0; }
 .tag { font-size: .72rem; padding: .05rem .45rem; border-radius: 4px; background: var(--panel-2); color: var(--muted); }
 .tag.rare { color: #b98cff; } .tag.danger { color: var(--danger); } .tag.dlc { color: var(--accent); }
-.tech-detail .desc { margin: .3rem 0; color: var(--text); }
+.tech-detail .desc { margin: .3rem 0; color: var(--text); white-space: pre-line; }
 .muted { color: var(--muted); }
 .link { color: var(--accent); cursor: pointer; }
 .warnings { color: var(--warn); }

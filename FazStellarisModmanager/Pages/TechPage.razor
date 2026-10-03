@@ -14,6 +14,10 @@
             </select>
         </label>
         <button @onclick="Build" disabled="@Tree.IsBuilding">Rebuild</button>
+        @if (Tree.Current is { } shown)
+        {
+            <span class="status">Showing: @shown.Label</span>
+        }
         @if (Tree.Progress is { } progress)
         {
             <span class="status">@progress</span>
@@ -44,7 +48,7 @@
         </div>
 
         <div class="filters">
-            <input class="search" placeholder="Search name or id…" @bind="search" @bind:event="oninput" />
+            <input class="search" placeholder="Search name or id…" @bind="searchInput" @bind:event="oninput" @bind:after="SearchChanged" />
             <select @bind="tierText">
                 <option value="">Tier: all</option>
                 @foreach (var t in db.Tiers)
@@ -80,7 +84,7 @@
                 @foreach (var t in results.Take(MaxRows))
                 {
                     var tech = t;
-                    <div class="tech-row @(tech.Key == selectedKey ? "sel" : "")" @onclick="() => selectedKey = tech.Key">
+                    <div @key="tech.Key" class="tech-row @(tech.Key == selectedKey ? "sel" : "")" @onclick="() => selectedKey = tech.Key">
                         <TechIcon Uri="@Tree.IconUri(tech)" Size="24" />
                         <div class="grow">
                             <div class="name">@tech.Name</div>
@@ -160,7 +164,7 @@
 </div>
 
 @code {
-    const int MaxRows = 300;
+    const int MaxRows = 200;
 
     static readonly (string Label, TechArea? Area)[] Tabs =
         [("All", null), ("Physics", TechArea.Physics), ("Society", TechArea.Society), ("Engineering", TechArea.Engineering)];
@@ -168,12 +172,13 @@
     IReadOnlyList<TechTreeChoice> choices = [];
     int choiceIndex;
     TechArea? tab;
-    string search = "", tierText = "", category = "", source = "";
+    string search = "", searchInput = "", tierText = "", category = "", source = "";
     bool rare, dangerous, repeatable, starting, changed;
     string? selectedKey;
     int depth = 2;
     string? status;
     bool error;
+    CancellationTokenSource? searchCts;
 
     TechFilter Filter => new(
         search,
@@ -192,15 +197,39 @@
             choiceIndex = Math.Max(0, choices.ToList().FindIndex(c => c.Label == current.Label));
             selectedKey = current.Database.Techs.Values.FirstOrDefault(t => t.IsStart)?.Key;
         }
-        else
+        else if (!Tree.IsBuilding)
         {
             await Build();
         }
     }
 
-    void OnTreeChanged() => _ = InvokeAsync(StateHasChanged);
+    void OnTreeChanged() => _ = InvokeAsync(() =>
+    {
+        if (selectedKey is null && Tree.Current is { } current)
+            selectedKey = current.Database.Techs.Values.FirstOrDefault(t => t.IsStart)?.Key;
+        StateHasChanged();
+    });
 
-    public void Dispose() => Tree.Changed -= OnTreeChanged;
+    async Task SearchChanged()
+    {
+        searchCts?.Cancel();
+        searchCts?.Dispose();
+        var cts = searchCts = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(200, cts.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        search = searchInput;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Tree.Changed -= OnTreeChanged;
+        searchCts?.Cancel();
+        searchCts?.Dispose();
+    }
 
     async Task Build()
     {
@@ -215,11 +244,19 @@
             status = $"{db.Techs.Count} technologies from {Tree.Current.Sources.Count} sources.";
             if (selectedKey is null || !db.Techs.ContainsKey(selectedKey))
                 selectedKey = db.Techs.Values.FirstOrDefault(t => t.IsStart)?.Key ?? db.Techs.Keys.FirstOrDefault();
+            if (tierText.Length > 0 && !db.Tiers.Any(t => t.ToString(CultureInfo.InvariantCulture) == tierText)) tierText = "";
+            if (category.Length > 0 && !db.Categories.Contains(category, StringComparer.OrdinalIgnoreCase)) category = "";
+            if (source.Length > 0 && !db.SourceNames.Contains(source)) source = "";
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException
-                                   or InvalidDataException or OperationCanceledException or ObjectDisposedException)
+                                   or InvalidDataException or OperationCanceledException or ObjectDisposedException or ArgumentException)
         {
             (status, error) = (ex.Message, true);
+            if (Tree.Current is { } cur)
+            {
+                var idx = choices.ToList().FindIndex(c => c.Label == cur.Label);
+                if (idx >= 0) choiceIndex = idx;
+            }
         }
     }
 

@@ -116,7 +116,7 @@ public sealed class TechTreeService
             var done = 0;
             await Parallel.ForEachAsync(keys, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, (key, token) =>
             {
-                tree.Icons[key] = _icons.DataUri(tree.Sources, key);
+                if (_icons.DataUri(tree.Sources, key) is { } uri) tree.Icons[key] = uri;
                 Report($"Loading icons… {Interlocked.Increment(ref done)}/{keys.Count}", force: false);
                 return ValueTask.CompletedTask;
             });

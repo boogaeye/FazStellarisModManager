@@ -6,6 +6,7 @@ namespace FazStellarisModmanager.Core.Technology;
 /// <summary>Stateless decoder: finds tech icons across sources (last wins), converts DDS to PNG once (disk cache), returns data URIs. Does IO, so never call it on the UI thread.</summary>
 public sealed class IconCache(string directory)
 {
+    const int MaxIconSize = 64;
     public const string IconFolder = "gfx/interface/icons/technologies";
 
     /// <summary>"data:image/png;base64,…" for the icon, or null if no source has it or it can't be decoded.</summary>
@@ -37,11 +38,13 @@ public sealed class IconCache(string directory)
         {
             if (!Directory.Exists(directory)) return;
             var cutoff = DateTime.UtcNow - maxAge;
-            foreach (var file in Directory.EnumerateFiles(directory, "*.png"))
+            var tmpCutoff = DateTime.UtcNow - TimeSpan.FromDays(1);
+            foreach (var file in Directory.EnumerateFiles(directory, "*.png").Concat(Directory.EnumerateFiles(directory, "*.tmp")))
             {
                 try
                 {
-                    if (File.GetLastWriteTimeUtc(file) < cutoff) File.Delete(file);
+                    var limit = file.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) ? tmpCutoff : cutoff;
+                    if (File.GetLastWriteTimeUtc(file) < limit) File.Delete(file);
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException) { }
             }
@@ -71,6 +74,7 @@ public sealed class IconCache(string directory)
                     dds = buffer.ToArray();
                 }
                 var (w, h, rgba) = DdsDecoder.Decode(dds);
+                if (w > MaxIconSize || h > MaxIconSize) (w, h, rgba) = Downscale(w, h, rgba, MaxIconSize);
                 png = PngEncoder.Encode(w, h, rgba);
                 Directory.CreateDirectory(directory);
                 var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -83,5 +87,33 @@ public sealed class IconCache(string directory)
         {
             return null;
         }
+    }
+
+    /// <summary>Box/area-averages RGBA down to fit within max x max, keeping the aspect ratio.</summary>
+    static (int W, int H, byte[] Rgba) Downscale(int w, int h, byte[] rgba, int max)
+    {
+        var scale = Math.Min((double)max / w, (double)max / h);
+        var w2 = Math.Max(1, (int)Math.Round(w * scale));
+        var h2 = Math.Max(1, (int)Math.Round(h * scale));
+        var result = new byte[w2 * h2 * 4];
+        for (int y = 0; y < h2; y++)
+        {
+            int y0 = (int)((long)y * h / h2), y1 = Math.Max(y0 + 1, (int)((long)(y + 1) * h / h2));
+            for (int x = 0; x < w2; x++)
+            {
+                int x0 = (int)((long)x * w / w2), x1 = Math.Max(x0 + 1, (int)((long)(x + 1) * w / w2));
+                long r = 0, g = 0, b = 0, a = 0;
+                var n = (y1 - y0) * (x1 - x0);
+                for (int yy = y0; yy < y1; yy++)
+                    for (int xx = x0; xx < x1; xx++)
+                    {
+                        var p = (yy * w + xx) * 4;
+                        r += rgba[p]; g += rgba[p + 1]; b += rgba[p + 2]; a += rgba[p + 3];
+                    }
+                var o = (y * w2 + x) * 4;
+                result[o] = (byte)(r / n); result[o + 1] = (byte)(g / n); result[o + 2] = (byte)(b / n); result[o + 3] = (byte)(a / n);
+            }
+        }
+        return (w2, h2, result);
     }
 }

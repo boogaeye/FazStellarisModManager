@@ -36,6 +36,20 @@ public class IconCacheTests
     }
 
     [Fact]
+    public void Oversized_icons_are_downscaled_to_64()
+    {
+        using var tmp = new TempDir();
+        var pixels = new (byte R, byte G, byte B, byte A)[128 * 128];
+        for (int i = 0; i < pixels.Length; i++) pixels[i] = (10, 200, 30, 255);
+        using var s = Source(tmp, "base", DdsBuilder.Bgra32(128, 128, pixels));
+        var uri = new IconCache(Path.Combine(tmp.Path, "cache")).DataUri([s], "tech_a");
+
+        var png = Convert.FromBase64String(uri!["data:image/png;base64,".Length..]);
+        static int BE(byte[] b, int o) => (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3];
+        Assert.Equal((64, 64), (BE(png, 16), BE(png, 20)));
+    }
+
+    [Fact]
     public void The_last_source_with_the_icon_wins()
     {
         using var tmp = new TempDir();

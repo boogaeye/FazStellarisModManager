@@ -79,7 +79,7 @@ public static class TechGraphLayout
                 if (db.Techs.TryGetValue(p, out var pre) && columnOf.TryGetValue(pre.Key, out var pc) && pc < n.Column)
                     edges.Add(new GraphEdge(pre.Key, n.Key));
 
-        return new TechGraph(focusTech.Key, nodes, edges, more, columns.Keys.Min(), columns.Keys.Max(), columns.Values.Max(l => l.Count));
+        return new TechGraph(focusTech.Key, nodes, edges, more, columns.Keys.Concat(more.Select(m => m.Column)).Min(), columns.Keys.Concat(more.Select(m => m.Column)).Max(), columns.Values.Max(l => l.Count));
     }
 
     static void Expand(TechDatabase db, Dictionary<string, int> column, string focus, int depth, int dir, Func<string, IEnumerable<string>> next)

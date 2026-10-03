@@ -103,4 +103,20 @@ public class TechGraphLayoutTests
         Assert.Equal(2, g.More.Count);
         foreach (var m in Col(2)) Assert.Contains(g.Edges, e => e.To == m);
     }
+
+    [Fact]
+    public void A_fully_hidden_column_still_counts_toward_min_and_max()
+    {
+        var sb = new System.Text.StringBuilder().AppendLine("root = { area = physics }");
+        for (int i = 0; i < 30; i++) sb.AppendLine($"k{i:00} = {{ area = physics prerequisites = {{ \"root\" }} }}");
+        sb.AppendLine("m = { area = physics prerequisites = { \"k29\" } }");
+        var (db, cleanup) = Db(sb.ToString());
+        using var _ = cleanup;
+
+        var g = TechGraphLayout.Build(db, "root", depth: 2);
+
+        Assert.DoesNotContain(g.Nodes, n => n.Column == 2);
+        Assert.Contains(new GraphMore(2, 1), g.More);
+        Assert.Equal((0, 2), (g.MinColumn, g.MaxColumn));
+    }
 }
