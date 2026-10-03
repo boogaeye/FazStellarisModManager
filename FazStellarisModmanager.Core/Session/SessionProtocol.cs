@@ -56,6 +56,22 @@ public static class SessionProtocol
     public static PlayerStatus StatusFor(DiffResult d) =>
         !d.IsMatch ? PlayerStatus.Mismatch : !d.IsReliable ? PlayerStatus.Unreliable : PlayerStatus.Ready;
 
+    /// <summary>TCP keepalive so a peer that vanished without closing (power loss, NAT timeout) is noticed within about a minute.</summary>
+    internal static void EnableKeepAlive(Socket socket)
+    {
+        try
+        {
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 30);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 5);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+        }
+        catch (Exception ex) when (ex is SocketException or PlatformNotSupportedException or ObjectDisposedException)
+        {
+            // Best effort: older OSes lack some of these options.
+        }
+    }
+
     /// <summary>This PC's IPv4 addresses, to tell friends where to connect.</summary>
     public static IReadOnlyList<string> LocalAddresses()
     {

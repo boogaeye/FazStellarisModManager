@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text.Json;
@@ -41,10 +42,15 @@ public static class Framing
         await stream.FlushAsync(ct);
     }
 
+    /// <summary>Bodies are read in chunks of this size so memory follows the bytes actually received, not the claimed length.</summary>
+    const int ChunkBytes = 64 * 1024;
+
     /// <summary>Reads one message. Returns null when the peer closed the connection cleanly between frames.</summary>
+    /// <param name="bodyTimeout">When set, the body must arrive within this time once its header has been read.</param>
     /// <exception cref="EndOfStreamException">The connection closed mid-frame.</exception>
     /// <exception cref="InvalidDataException">The frame is oversized, not gzip, not JSON, incomplete, or an unknown message type.</exception>
-    public static async Task<SessionMessage?> ReadAsync(Stream stream, CancellationToken ct = default, int maxFrameBytes = MaxFrameBytes)
+    /// <exception cref="TimeoutException">The body did not arrive within <paramref name="bodyTimeout"/>.</exception>
+    public static async Task<SessionMessage?> ReadAsync(Stream stream, CancellationToken ct = default, int maxFrameBytes = MaxFrameBytes, TimeSpan? bodyTimeout = null)
     {
         var header = new byte[4];
         var got = await stream.ReadAtLeastAsync(header, 4, throwOnEndOfStream: false, ct);
@@ -53,11 +59,37 @@ public static class Framing
         var length = BinaryPrimitives.ReadInt32LittleEndian(header);
         if (length <= 0 || length > maxFrameBytes) throw new InvalidDataException($"Invalid frame length {length}.");
 
-        var body = new byte[length];
-        await stream.ReadExactlyAsync(body, ct);
+        using var body = new MemoryStream(Math.Min(length, ChunkBytes));
+        using (var bodyCts = bodyTimeout is null ? null : CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            if (bodyCts is not null) bodyCts.CancelAfter(bodyTimeout!.Value);
+            var token = bodyCts?.Token ?? ct;
+            var buffer = ArrayPool<byte>.Shared.Rent(ChunkBytes);
+            try
+            {
+                var remaining = length;
+                while (remaining > 0)
+                {
+                    var n = await stream.ReadAsync(buffer.AsMemory(0, Math.Min(remaining, ChunkBytes)), token);
+                    if (n == 0) throw new EndOfStreamException("Connection closed mid-frame.");
+                    body.Write(buffer, 0, n);
+                    remaining -= n;
+                }
+            }
+            catch (OperationCanceledException) when (bodyCts is { IsCancellationRequested: true } && !ct.IsCancellationRequested)
+            {
+                throw new TimeoutException($"Message not received within {bodyTimeout!.Value.TotalSeconds:0} seconds.");
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
+        body.Position = 0;
         try
         {
-            using var gz = new GZipStream(new MemoryStream(body), CompressionMode.Decompress);
+            using var gz = new GZipStream(body, CompressionMode.Decompress, leaveOpen: true);
             using var limited = new LimitedReadStream(gz, MaxJsonBytes);
             return await JsonSerializer.DeserializeAsync<SessionMessage>(limited, Json, ct) ?? throw new InvalidDataException("Empty message.");
         }
