@@ -1,4 +1,223 @@
 @page "/"
+@inject ModManagerService Manager
 
-<h1>Mods</h1>
-<p>Coming soon.</p>
+<div class="mods-page">
+    <section class="panel">
+        <header>
+            <h2>Installed (@Manager.Library.Count)</h2>
+            <input class="search" placeholder="Search…" @bind="filter" @bind:event="oninput" />
+            <button @onclick="Refresh">Rescan</button>
+        </header>
+        <ul class="mod-list">
+            @foreach (var m in FilteredLibrary)
+            {
+                var inList = current.Any(e => SameKey(e.Key, m.Key));
+                <li class="@(inList ? "in-list" : "")">
+                    <span class="badge @m.Source.ToString().ToLowerInvariant()">@(m.Source == ModSource.Workshop ? "Workshop" : "Local")</span>
+                    <span class="name" title="@m.DescriptorRel">@m.Name</span>
+                    @if (!inList)
+                    {
+                        <button class="small" @onclick="() => Add(m)">Add →</button>
+                    }
+                </li>
+            }
+        </ul>
+    </section>
+
+    <section class="panel">
+        <header>
+            <h2>List</h2>
+            <input class="list-name" @bind="listName" placeholder="List name" />
+            <select @onchange="LoadList">
+                <option value="">Load list…</option>
+                @foreach (var l in savedLists)
+                {
+                    <option value="@l.Name">@l.Name</option>
+                }
+            </select>
+        </header>
+        <div class="toolbar">
+            <button @onclick="ImportCurrent">Import current</button>
+            <button @onclick="Save">Save list</button>
+            <button class="danger" @onclick="DeleteList" disabled="@(!savedLists.Any(l => l.Name == listName.Trim()))">Delete list</button>
+            <button class="primary" @onclick="Apply">Apply</button>
+            <button class="primary" @onclick="ApplyAndLaunch">Apply &amp; Launch</button>
+        </div>
+        <ol class="mod-list ordered">
+            @for (int i = 0; i < current.Count; i++)
+            {
+                var index = i;
+                var e = current[i];
+                var installed = Manager.IsInstalled(e);
+                <li draggable="true" class="@(installed ? "" : "missing")"
+                    @ondragstart="() => dragIndex = index" @ondragover:preventDefault @ondrop="() => Drop(index)">
+                    <span class="order">@(index + 1)</span>
+                    <span class="name" title="@e.DescriptorRel">@e.Name</span>
+                    @if (!installed)
+                    {
+                        <span class="badge missing">not installed</span>
+                    }
+                    <button class="small" @onclick="() => Move(index, -1)" disabled="@(index == 0)">↑</button>
+                    <button class="small" @onclick="() => Move(index, 1)" disabled="@(index == current.Count - 1)">↓</button>
+                    <button class="small danger" @onclick="() => current.RemoveAt(index)">✕</button>
+                </li>
+            }
+        </ol>
+    </section>
+</div>
+
+@if (status is not null)
+{
+    <p class="status @(error ? "error" : "")">@status</p>
+}
+@if (Manager.LibraryErrors.Count > 0)
+{
+    <details class="library-errors">
+        <summary>@Manager.LibraryErrors.Count descriptors could not be read</summary>
+        <ul>
+            @foreach (var err in Manager.LibraryErrors)
+            {
+                <li>@err</li>
+            }
+        </ul>
+    </details>
+}
+
+@code {
+    List<ModListEntry> current = [];
+    List<string> disabledDlcs = [];
+    string listName = "Current";
+    string filter = "";
+    int? dragIndex;
+    IReadOnlyList<ModList> savedLists = [];
+    string? status;
+    bool error;
+
+    IEnumerable<InstalledMod> FilteredLibrary =>
+        Manager.Library.Where(m => filter.Length == 0 || m.Name.Contains(filter, StringComparison.OrdinalIgnoreCase));
+
+    static bool SameKey(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        status = "Scanning mods…";
+        error = false;
+        await RunAsync(async () =>
+        {
+            await Manager.RefreshLibraryAsync();
+            savedLists = Manager.Lists.LoadAll();
+            SetList(Manager.ImportCurrent("Current"));
+            return $"Loaded {current.Count} enabled mods from dlc_load.json." + ErrorSuffix();
+        });
+    }
+
+    async Task Refresh()
+    {
+        status = "Scanning mods…";
+        error = false;
+        await RunAsync(async () =>
+        {
+            await Manager.RefreshLibraryAsync();
+            return $"Found {Manager.Library.Count} installed mods." + ErrorSuffix();
+        });
+    }
+
+    string ErrorSuffix() =>
+        Manager.LibraryErrors.Count > 0 ? $" ({Manager.LibraryErrors.Count} descriptors could not be read)" : "";
+
+    void Add(InstalledMod m) => current.Add(new ModListEntry(m.Key, m.Name, m.DescriptorRel, m.RemoteId));
+
+    void Move(int index, int delta)
+    {
+        var e = current[index];
+        current.RemoveAt(index);
+        current.Insert(index + delta, e);
+    }
+
+    void Drop(int target)
+    {
+        if (dragIndex is not int from || from == target) return;
+        var e = current[from];
+        current.RemoveAt(from);
+        current.Insert(target, e);
+        dragIndex = null;
+    }
+
+    ModList Build() => new(listName.Trim(), current.ToList(), disabledDlcs.ToList());
+
+    void SetList(ModList list)
+    {
+        listName = list.Name;
+        current = list.Mods.ToList();
+        disabledDlcs = list.DisabledDlcs.ToList();
+    }
+
+    void ImportCurrent() => Run(() =>
+    {
+        SetList(Manager.ImportCurrent("Current"));
+        return $"Imported {current.Count} mods from dlc_load.json.";
+    });
+
+    void Save() => Run(() =>
+    {
+        Manager.Lists.Save(Build());
+        savedLists = Manager.Lists.LoadAll();
+        return $"Saved list '{listName.Trim()}'.";
+    });
+
+    void DeleteList() => Run(() =>
+    {
+        Manager.Lists.Delete(listName);
+        savedLists = Manager.Lists.LoadAll();
+        return $"Deleted list '{listName.Trim()}'.";
+    });
+
+    void LoadList(ChangeEventArgs e) => Run(() =>
+    {
+        if (e.Value is not string name || name.Length == 0) return null;
+        SetList(Manager.Lists.Load(name) ?? throw new InvalidOperationException($"List '{name}' not found."));
+        return $"Loaded list '{name}'.";
+    });
+
+    void Apply() => Run(() =>
+    {
+        var backup = Manager.Apply(Build());
+        return $"Applied {current.Count} mods to dlc_load.json" + (backup is null ? "." : $" (backup: {Path.GetFileName(backup)}).");
+    });
+
+    void ApplyAndLaunch() => Run(() =>
+    {
+        var steamWarning = GameLauncher.IsSteamRunning() ? "" : " Warning: Steam does not appear to be running.";
+        Manager.Apply(Build());
+        Manager.Launch();
+        return "Applied and launched Stellaris." + steamWarning;
+    });
+
+    async Task RunAsync(Func<Task<string?>> action)
+    {
+        try
+        {
+            var message = await action();
+            if (message is not null) (status, error) = (message, false);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException
+                                   or System.Text.Json.JsonException or System.ComponentModel.Win32Exception or InvalidDataException)
+        {
+            (status, error) = (ex.Message, true);
+        }
+    }
+
+    void Run(Func<string?> action)
+    {
+        try
+        {
+            var message = action();
+            if (message is not null) (status, error) = (message, false);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException
+                                   or System.Text.Json.JsonException or System.ComponentModel.Win32Exception or InvalidDataException)
+        {
+            (status, error) = (ex.Message, true);
+        }
+    }
+}
