@@ -50,7 +50,7 @@ public sealed class Localisation
         }
     }
 
-    /// <summary>Cleaned text for a key (colour codes and icons removed, $refs$ resolved one level), or null.</summary>
+    /// <summary>Cleaned text for a key (colour codes and icons removed, $refs$ resolved up to three levels), or null.</summary>
     public string? Get(string key) => _map.TryGetValue(key, out var value) ? Clean(value, 0) : null;
 
     string Clean(string text, int depth)
@@ -60,7 +60,7 @@ public sealed class Localisation
         text = Reference.Replace(text, m =>
         {
             var key = m.Groups[1].Value.Split('|')[0];
-            return depth < 1 && _map.TryGetValue(key, out var v) ? Clean(v, depth + 1) : key;
+            return depth < 3 && _map.TryGetValue(key, out var v) ? Clean(v, depth + 1) : key;
         });
         text = text.Replace("\\n", "\n").Replace("\\\"", "\"");
         return Spaces.Replace(text, " ").Trim();

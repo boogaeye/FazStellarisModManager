@@ -43,4 +43,13 @@ public class LocalisationTests
         Assert.Equal("Mod2 B", loc.Get("tech_b"));
         Assert.Empty(warnings);
     }
+
+    [Fact]
+    public void Resolves_chained_references_up_to_three_levels()
+    {
+        var loc = new Localisation();
+        loc.AddText("l_english:\n energy:0 \"$concept_energy$\"\n concept_energy:0 \"Energy Credits\"\n mod_country_energy_produces_mult:0 \"Monthly $energy$\"\n");
+
+        Assert.Equal("Monthly Energy Credits", loc.Get("MOD_COUNTRY_ENERGY_PRODUCES_MULT"));
+    }
 }
