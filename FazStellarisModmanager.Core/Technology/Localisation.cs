@@ -1,0 +1,65 @@
+using System.Text.RegularExpressions;
+
+namespace FazStellarisModmanager.Core.Technology;
+
+/// <summary>English localisation merged from the base game and mods (later wins; "replace" folders win over everything).</summary>
+public sealed class Localisation
+{
+    static readonly Regex Line = new(@"^\s*([\w.\-]+):\d*\s*""(.*)""[^""]*$");
+    static readonly Regex ColorCode = new(@"§.");
+    static readonly Regex IconTag = new(@"£[^£]*£");
+    static readonly Regex Reference = new(@"\$([^$\s]+)\$");
+    static readonly Regex Spaces = new(@"[ \t]{2,}");
+
+    readonly Dictionary<string, string> _map = new(StringComparer.OrdinalIgnoreCase);
+
+    public int Count => _map.Count;
+
+    public static Localisation Load(IReadOnlyList<ContentSource> sources, ICollection<string> warnings)
+    {
+        var loc = new Localisation();
+        var replace = new List<(ContentSource Source, string Rel)>();
+        foreach (var source in sources)
+            foreach (var rel in source.Files("localisation", "_l_english.yml"))
+            {
+                if (rel.Split('/').Any(part => part.Equals("replace", StringComparison.OrdinalIgnoreCase))) replace.Add((source, rel));
+                else loc.AddFile(source, rel, warnings);
+            }
+        foreach (var (source, rel) in replace) loc.AddFile(source, rel, warnings);
+        return loc;
+    }
+
+    void AddFile(ContentSource source, string rel, ICollection<string> warnings)
+    {
+        try { AddText(source.ReadText(rel)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException)
+        {
+            warnings.Add($"{source.Name}: {rel}: {ex.Message}");
+        }
+    }
+
+    public void AddText(string text)
+    {
+        foreach (var raw in text.Split('\n'))
+        {
+            var m = Line.Match(raw.TrimEnd('\r'));
+            if (m.Success) _map[m.Groups[1].Value] = m.Groups[2].Value;
+        }
+    }
+
+    /// <summary>Cleaned text for a key (colour codes and icons removed, $refs$ resolved one level), or null.</summary>
+    public string? Get(string key) => _map.TryGetValue(key, out var value) ? Clean(value, 0) : null;
+
+    string Clean(string text, int depth)
+    {
+        text = ColorCode.Replace(text, "");
+        text = IconTag.Replace(text, "");
+        text = Reference.Replace(text, m =>
+        {
+            var key = m.Groups[1].Value.Split('|')[0];
+            return depth < 1 && _map.TryGetValue(key, out var v) ? Clean(v, depth + 1) : key;
+        });
+        text = text.Replace("\\n", "\n").Replace("\\\"", "\"");
+        return Spaces.Replace(text, " ").Trim();
+    }
+}
