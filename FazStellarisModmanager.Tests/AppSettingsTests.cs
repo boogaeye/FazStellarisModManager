@@ -35,4 +35,13 @@ public class AppSettingsTests
 
         Assert.Equal(s, SettingsStore.Load(file));
     }
+
+    [Fact]
+    public void Corrupt_settings_fall_back_to_defaults()
+    {
+        using var tmp = new TempDir();
+        var file = tmp.Write("settings.json", "{not json");
+
+        Assert.Equal(new AppSettings(), SettingsStore.Load(file));
+    }
 }

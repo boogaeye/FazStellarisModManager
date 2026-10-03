@@ -10,10 +10,12 @@ public static class SettingsStore
 {
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
+    /// <summary>Missing, unreadable or corrupt settings fall back to defaults: they are only overrides, and must never stop the app starting.</summary>
     public static AppSettings Load(string file)
     {
         if (!File.Exists(file)) return new AppSettings();
-        return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(file), Json) ?? new AppSettings();
+        try { return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(file), Json) ?? new AppSettings(); }
+        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException) { return new AppSettings(); }
     }
 
     public static void Save(string file, AppSettings settings)
