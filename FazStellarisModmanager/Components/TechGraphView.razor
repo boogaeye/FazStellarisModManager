@@ -1,0 +1,86 @@
+@using System.Globalization
+
+<svg class="tech-graph" viewBox="0 0 @width @height" width="@width" height="@height">
+    @foreach (var e in Graph.Edges)
+    {
+        if (!pos.ContainsKey(e.From) || !pos.ContainsKey(e.To)) continue;
+        var hot = e.From == Graph.Focus || e.To == Graph.Focus;
+        <path d="@EdgePath(e)" stroke-dasharray="@(IsLong(e) ? "4 3" : null)" fill="none" stroke="@(hot ? "#9fd2ff" : "#3a4757")" stroke-width="@(hot ? "2.5" : "1.5")" />
+    }
+    @foreach (var n in Graph.Nodes)
+    {
+        var t = Database.Techs[n.Key];
+        var (x, y) = pos[n.Key];
+        var key = n.Key;
+        var icon = IconUri(t);
+        <g class="tnode" @onclick="() => OnSelect.InvokeAsync(key)">
+            <title>@t.Name (@t.Key)</title>
+            <rect x="@F(x)" y="@F(y - NodeH / 2.0)" width="@NodeW" height="@NodeH" rx="5"
+                  fill="@(n.IsFocus ? "#203247" : "#1a2029")"
+                  stroke="@(n.IsFocus ? "#ffffff" : t.ChangedByMods ? "#e3a33b" : "#2d3744")"
+                  stroke-width="@(n.IsFocus || t.ChangedByMods ? "2" : "1")" />
+            <rect x="@F(x)" y="@F(y - NodeH / 2.0)" width="3" height="@NodeH" fill="@AreaColor(t.Area)" />
+            @if (icon is not null)
+            {
+                <image href="@icon" x="@F(x + 6)" y="@F(y - 13)" width="26" height="26" />
+            }
+            <text x="@F(x + 38)" y="@F(y - 2)" fill="#dbe2ea" font-size="11" font-weight="@(n.IsFocus ? "700" : "400")">@Trim(t.Name, 22)</text>
+            <text x="@F(x + 38)" y="@F(y + 12)" fill="@(t.ChangedByMods ? "#e3a33b" : "#8a96a6")" font-size="9">T@(TierText(t)) · @Trim(t.Source.SourceName, 20)</text>
+        </g>
+    }
+    @foreach (var m in Graph.More)
+    {
+        <g><text x="@F(10 + (m.Column - Graph.MinColumn) * ColW)" y="@F(height - 8)" fill="#8a96a6" font-size="11">+@m.Hidden more</text></g>
+    }
+</svg>
+
+@code {
+    [Parameter, EditorRequired] public TechGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public TechDatabase Database { get; set; } = default!;
+    [Parameter, EditorRequired] public Func<Tech, string?> IconUri { get; set; } = default!;
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+
+    const int ColW = 200, NodeW = 172, NodeH = 40, RowGap = 50, Top = 10;
+
+    readonly Dictionary<string, (double X, double Y)> pos = new(StringComparer.OrdinalIgnoreCase);
+    int width, height;
+
+    protected override void OnParametersSet()
+    {
+        pos.Clear();
+        var rows = Math.Max(1, Graph.MaxRows);
+        height = Top + rows * RowGap + (Graph.More.Count > 0 ? 30 : 10);
+        width = (Graph.MaxColumn - Graph.MinColumn + 1) * ColW + 20;
+        foreach (var group in Graph.Nodes.GroupBy(n => n.Column))
+        {
+            var nodes = group.OrderBy(n => n.Row).ToList();
+            var x = 10 + (group.Key - Graph.MinColumn) * ColW;
+            for (int i = 0; i < nodes.Count; i++)
+                pos[nodes[i].Key] = (x, Top + RowGap / 2.0 + (rows - nodes.Count) * RowGap / 2.0 + i * RowGap);
+        }
+    }
+
+    string EdgePath(GraphEdge e)
+    {
+        var (px, py) = pos[e.From];
+        var (cx, cy) = pos[e.To];
+        var x1 = px + NodeW;
+        if (cx - x1 > ColW)
+            return $"M{F(x1)},{F(py)} C{F(x1 + 60)},{F(Top)} {F(cx - 60)},{F(Top)} {F(cx)},{F(cy)}";
+        return $"M{F(x1)},{F(py)} C{F(x1 + 40)},{F(py)} {F(cx - 40)},{F(cy)} {F(cx)},{F(cy)}";
+    }
+
+    bool IsLong(GraphEdge e) => pos[e.To].X - (pos[e.From].X + NodeW) > ColW;
+
+    static string F(double v) => v.ToString("0.#", CultureInfo.InvariantCulture);
+    static string Trim(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
+    static string TierText(Tech t) => t.IsRepeatable ? "R" : t.Tier?.ToString(CultureInfo.InvariantCulture) ?? "?";
+
+    static string AreaColor(TechArea a) => a switch
+    {
+        TechArea.Physics => "#3fa7ff",
+        TechArea.Society => "#46c46e",
+        TechArea.Engineering => "#e3a33b",
+        _ => "#8a96a6",
+    };
+}

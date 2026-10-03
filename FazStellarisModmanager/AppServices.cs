@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using FazStellarisModmanager.Core;
 using FazStellarisModmanager.Core.Session;
+using FazStellarisModmanager.Core.Technology;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FazStellarisModmanager;
@@ -19,6 +20,7 @@ public static class AppServices
         services.AddSingleton(paths);
         services.AddSingleton(_ => new ModManagerService(paths));
         services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>()));
+        services.AddSingleton(sp => new TechTreeService(sp.GetRequiredService<ModManagerService>()));
     }
 
     static string? ArgValue(string[] args, string name)
