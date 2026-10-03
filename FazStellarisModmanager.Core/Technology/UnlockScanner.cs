@@ -39,6 +39,23 @@ public static class UnlockScanner
         ["bypass"] = "Bypasses",
     };
 
+    /// <summary>Localisation key prefixes tried (after the bare id) per common/ folder; confirmed against the base game's localisation.</summary>
+    static readonly Dictionary<string, string[]> LocPrefixes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["starbase_modules"] = ["sm_"],
+        ["starbase_buildings"] = ["sm_", "sb_"],
+        ["edicts"] = ["edict_"],
+    };
+
+    static string UnlockName(Localisation loc, string folder, string id)
+    {
+        if (loc.Get(id) is { } n) return n;
+        if (LocPrefixes.TryGetValue(folder, out var prefixes))
+            foreach (var p in prefixes)
+                if (loc.Get(p + id) is { } pn) return pn;
+        return id;
+    }
+
     public static string KindName(string folder)
     {
         if (KindNames.TryGetValue(folder, out var name)) return name;
@@ -94,7 +111,20 @@ public static class UnlockScanner
                 IEnumerable<string> shown = b.GetString("show_in_tech") is { } sit ? [sit] : [];
                 var techs = (b.GetBlock("prerequisites")?.StringItems ?? []).Concat(shown).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 var frame = int.TryParse(b.GetString("icon_frame"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var f) ? f : (int?)null;
-                list.Add(new ScannedObject(folder, id, techs, src, b.GetString("icon"), frame));
+                var icon = b.GetString("icon");
+                // Policies: each option with its own prerequisites is an unlock keyed by the option's name.
+                if (folder.Equals("policies", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var oe in b.Entries)
+                        if (oe.Key.Equals("option", StringComparison.OrdinalIgnoreCase) && oe.Value is PdxBlock ob
+                            && ob.GetString("name") is { } oname && ob.GetBlock("prerequisites") is { } oreq)
+                        {
+                            var otechs = oreq.StringItems.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                            if (otechs.Length > 0)
+                                list.Add(new ScannedObject(folder, oname, otechs, src, ob.GetString("icon"), null));
+                        }
+                }
+                list.Add(new ScannedObject(folder, id, techs, src, icon, frame));
             }
             parsed[i] = list;
         });
@@ -111,7 +141,7 @@ public static class UnlockScanner
             foreach (var tech in o.Techs)
             {
                 if (!index.TryGetValue(tech, out var list)) index[tech] = list = [];
-                list.Add(new Unlock(KindName(o.Folder), o.Folder, o.Id, loc.Get(o.Id) ?? o.Id, o.Src, o.Icon, o.Frame));
+                list.Add(new Unlock(KindName(o.Folder), o.Folder, o.Id, UnlockName(loc, o.Folder, o.Id), o.Src, o.Icon, o.Frame));
             }
 
         return index.ToDictionary(

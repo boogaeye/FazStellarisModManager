@@ -37,7 +37,7 @@
         {
             var step = path[i];
             if (i > 0) { <span class="muted"> → </span> }
-            <a class="link" @onclick="() => OnSelect.InvokeAsync(step.Key)">@step.Name</a>
+            <button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(step.Key)">@step.Name</button>
         }
     </div>
 
@@ -98,7 +98,7 @@
                     @if (Database.Techs.TryGetValue(s.Name, out var target))
                     {
                         var targetKey = target.Key;
-                        <a class="link" @onclick="() => OnSelect.InvokeAsync(targetKey)">@target.Name</a>
+                        <button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(targetKey)">@target.Name</button>
                     }
                     else
                     {
@@ -131,7 +131,7 @@
             if (Database.Techs.TryGetValue(p, out var pre))
             {
                 var preKey = pre.Key;
-                <div><a class="link" @onclick="() => OnSelect.InvokeAsync(preKey)">@pre.Name</a></div>
+                <div><button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(preKey)">@pre.Name</button></div>
             }
             else
             {

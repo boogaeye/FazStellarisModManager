@@ -106,6 +106,22 @@ public class TechDetailsTests
     }
 
     [Fact]
+    public void Tooltip_modifier_entries_are_not_bonuses()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("g/common/technology/00_t.txt", "tech_z = { area = physics modifier = { army_damage_mult = 0.05 custom_tooltip = tt_key } technology_swap = { name = s trigger = { } } }");
+        tmp.Write("g/localisation/english/t_l_english.yml", "l_english:\n tt_key:0 \"Something special\"\n");
+        using var source = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "g"), isBaseGame: true);
+
+        var d = TechDatabase.Build([source]).Techs["tech_z"].Details;
+
+        Assert.Single(d.Bonuses);
+        var cu = Assert.Single(d.CustomUnlocks);
+        Assert.Equal(("tooltip", "Something special", (string?)null), (cu.Kind, cu.Title, cu.Description));
+        Assert.Null(Assert.Single(d.Swaps).TriggerScript);
+    }
+
+    [Fact]
     public void Annotations_use_a_cache_and_skip_stop_words()
     {
         var loc = new Localisation();

@@ -76,6 +76,37 @@ public class UnlockScannerTests
         Assert.DoesNotContain(db.AllUnlocks, u => u.Id == "building_x");
     }
 
+    [Fact]
+    public void Names_use_folder_prefixes()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("g/common/technology/00_t.txt", "tech_a = { area = physics }");
+        tmp.Write("g/common/edicts/00_e.txt", "test_edict = { prerequisites = { \"tech_a\" } }");
+        tmp.Write("g/common/starbase_modules/00_s.txt", "mod_y = { prerequisites = { \"tech_a\" } }");
+        tmp.Write("g/localisation/english/c_l_english.yml", "l_english:\n edict_test_edict:0 \"Test Edict\"\n sm_mod_y:0 \"Module Y\"\n");
+        using var g = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "g"), isBaseGame: true);
+
+        var db = TechDatabase.Build([g]);
+
+        var names = db.Unlocks("tech_a").ToDictionary(u => u.Id, u => u.Name);
+        Assert.Equal("Test Edict", names["test_edict"]);
+        Assert.Equal("Module Y", names["mod_y"]);
+    }
+
+    [Fact]
+    public void Policy_options_with_prerequisites_become_their_own_unlocks()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("g/common/technology/00_t.txt", "tech_a = { area = physics }");
+        tmp.Write("g/common/policies/00_p.txt", "policy_p = { option = { name = \"opt_a\" prerequisites = { \"tech_a\" } } option = { name = \"opt_b\" } }");
+        using var g = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "g"), isBaseGame: true);
+
+        var db = TechDatabase.Build([g]);
+
+        var u = Assert.Single(db.Unlocks("tech_a"));
+        Assert.Equal(("opt_a", "Policies", "policies"), (u.Id, u.Kind, u.KindFolder));
+    }
+
     [Theory]
     [InlineData("component_templates", "Ship components")]
     [InlineData("bypass", "Bypasses")]

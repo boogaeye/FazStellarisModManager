@@ -31,6 +31,11 @@ public static class TechDetailsBuilder
 {
     static readonly Regex Identifier = new(@"^[A-Za-z_][A-Za-z0-9_.]*$", RegexOptions.Compiled);
 
+    static readonly HashSet<string> NotBonuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "custom_tooltip", "custom_tooltip_with_params", "show_only_custom_tooltip", "description",
+    };
+
     static readonly HashSet<string> NoAnnotate = new(StringComparer.OrdinalIgnoreCase)
     {
         "yes", "no", "always", "never", "root", "from", "owner", "this", "prev", "value", "factor", "add", "base",
@@ -53,12 +58,20 @@ public static class TechDetailsBuilder
         string? Script(string name) =>
             block.GetBlock(name) is { } b && PdxScriptPrinter.Print(b, Annotate) is { Length: > 0 } text ? text : null;
 
-        var bonuses = (block.GetBlock("modifier")?.Entries ?? [])
-            .Where(e => e.Value is string)
+        var modifierEntries = (block.GetBlock("modifier")?.Entries ?? []).Where(e => e.Value is string).ToList();
+        var bonuses = modifierEntries
+            .Where(e => !NotBonuses.Contains(e.Key))
             .Select(e => Bonus(e.Key, (string)e.Value, loc, locals, globals))
             .ToList();
 
         var custom = new List<CustomUnlock>();
+        foreach (var e in modifierEntries)
+            if (e.Key.Equals("custom_tooltip", StringComparison.OrdinalIgnoreCase)
+                || e.Key.Equals("custom_tooltip_with_params", StringComparison.OrdinalIgnoreCase))
+            {
+                var v = (string)e.Value;
+                custom.Add(new CustomUnlock("tooltip", loc.Get(v) ?? v, null));
+            }
         if (block.GetBlock("prereqfor_desc") is { } descs)
             foreach (var e in descs.Entries)
                 if (e.Value is PdxBlock b)
@@ -73,7 +86,7 @@ public static class TechDetailsBuilder
             .Select(e => (PdxBlock)e.Value)
             .Select(b => new TechSwap(
                 b.GetString("name") ?? "?",
-                b.GetBlock("trigger") is { } t ? PdxScriptPrinter.Print(t, Annotate) : null,
+                b.GetBlock("trigger") is { } t && PdxScriptPrinter.Print(t, Annotate) is { Length: > 0 } tt ? tt : null,
                 string.Equals(b.GetString("inherit_effects"), "yes", StringComparison.OrdinalIgnoreCase)))
             .ToList();
 

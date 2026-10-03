@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:blazor="clr-namespace:Microsoft.AspNetCore.Components.WebView.Wpf;assembly=Microsoft.AspNetCore.Components.WebView.Wpf"
         xmlns:local="clr-namespace:FazStellarisModmanager"
-        Title="Faz Stellaris Mod Manager" Height="800" Width="1280">
+        Title="Faz Stellaris Mod Manager" Height="800" Width="1280" MinWidth="1000" MinHeight="600">
     <Grid>
         <blazor:BlazorWebView HostPage="wwwroot\index.html" Services="{DynamicResource services}">
             <blazor:BlazorWebView.RootComponents>
