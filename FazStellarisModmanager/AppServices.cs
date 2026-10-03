@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using FazStellarisModmanager.Core;
+using FazStellarisModmanager.Core.Session;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FazStellarisModmanager;
@@ -17,6 +18,7 @@ public static class AppServices
         var paths = dataDir is null ? AppPaths.Default() : new AppPaths(Path.GetFullPath(dataDir));
         services.AddSingleton(paths);
         services.AddSingleton(_ => new ModManagerService(paths));
+        services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>()));
     }
 
     static string? ArgValue(string[] args, string name)

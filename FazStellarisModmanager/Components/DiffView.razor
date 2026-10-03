@@ -1,0 +1,65 @@
+@* Shows one DiffResult grouped by kind. "Who" names the compared machine: "you" or a player's name. *@
+
+@if (!Diff.IsReliable)
+{
+    <p class="status warn">Some files could not be read, so some differences below may not be real. Close programs that lock mod files and rescan.</p>
+    <details>
+        <summary>Scan warnings (@(Diff.TargetWarnings.Count + Diff.MineWarnings.Count))</summary>
+        <ul>
+            @foreach (var w in Diff.TargetWarnings) { <li>Host: @w</li> }
+            @foreach (var w in Diff.MineWarnings) { <li>@Who: @w</li> }
+        </ul>
+    </details>
+}
+@if (Diff.IsMatch)
+{
+    <p class="status ok">Everything matches the host.</p>
+}
+@if (!Diff.GameVersionMatches)
+{
+    <p class="status error">Game version differs: host @Diff.TargetGameVersion, @Who @Diff.MineGameVersion.</p>
+}
+@if (!Diff.BaseFiles.IsEmpty)
+{
+    <p class="status error">@BaseCount base game file(s) differ. Use "Verify integrity of game files" in Steam.</p>
+}
+
+@Section($"Missing (the host has these, {Who} don't)", Diff.Mods.Where(m => m.Status == UnitStatus.Missing).ToList())
+@Section("Different files", Diff.Mods.Where(m => m.Status == UnitStatus.ContentMismatch).ToList())
+@Section($"Extra ({Who} have these, the host doesn't)", Diff.Mods.Where(m => m.Status == UnitStatus.Extra).ToList())
+@Section("Load order differs", Diff.Mods.Where(m => m.OutOfOrder).ToList())
+@Section("DLC differences", Diff.Dlcs.Where(d => d.Status != UnitStatus.Ok).ToList())
+
+@code {
+    [Parameter, EditorRequired] public DiffResult Diff { get; set; } = default!;
+    [Parameter] public string Who { get; set; } = "you";
+
+    int BaseCount => Diff.BaseFiles.Changed.Count + Diff.BaseFiles.OnlyInTarget.Count + Diff.BaseFiles.OnlyInMine.Count;
+
+    RenderFragment Section(string title, List<UnitDiff> units) =>
+        @<div class="diff-group">
+            @if (units.Count > 0)
+            {
+                <h3>@title (@units.Count)</h3>
+                <ul>
+                    @foreach (var u in units)
+                    {
+                        <li>
+                            <span class="name">@u.Name</span> <span class="badge">@u.Key</span>
+                            @if (u.Files is { } f)
+                            {
+                                <details>
+                                    <summary>@f.Changed.Count changed, @f.OnlyInTarget.Count only on host, @f.OnlyInMine.Count only on @Who</summary>
+                                    <ul class="files">
+                                        @foreach (var p in f.Changed.Take(50)) { <li>~ @p</li> }
+                                        @foreach (var p in f.OnlyInTarget.Take(50)) { <li>- @p</li> }
+                                        @foreach (var p in f.OnlyInMine.Take(50)) { <li>+ @p</li> }
+                                    </ul>
+                                </details>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+        </div>;
+}

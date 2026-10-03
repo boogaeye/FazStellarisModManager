@@ -1,0 +1,214 @@
+@page "/session"
+@implements IDisposable
+@inject SessionService Session
+
+<h1>Multiplayer session</h1>
+
+@if (Session.Role == SessionRole.None)
+{
+    @if (Session.LastDisconnectReason is { } reason)
+    {
+        <p class="status error">@reason</p>
+    }
+    <div class="session-forms">
+        <section class="panel pad">
+            <h2>Host a session</h2>
+            <p class="status">Friends join with your IP address and this port. They must be able to reach it: forward the port on your router, or use Hamachi, ZeroTier or Tailscale.</p>
+            <label>Port <input type="number" min="1" max="65535" @bind="hostPort" /></label>
+            <div><button class="primary" @onclick="Host" disabled="@busy">Host</button></div>
+        </section>
+        <section class="panel pad">
+            <h2>Join a session</h2>
+            <label>Host address <input @bind="joinAddress" placeholder="203.0.113.5 or 203.0.113.5:27015" /></label>
+            <div><button class="primary" @onclick="Join" disabled="@busy">Join</button></div>
+        </section>
+    </div>
+}
+else
+{
+    <div class="toolbar">
+        @if (Session.Role == SessionRole.Host)
+        {
+            <span>Hosting on port <b>@Session.HostPort</b>. LAN addresses: @(addresses.Count == 0 ? "unknown" : string.Join(", ", addresses)) (friends over the internet need your public IP and a forwarded port)</span>
+        }
+        else
+        {
+            <span>Connected to <b>@Session.HostAddress</b></span>
+        }
+        <button @onclick="Rescan" disabled="@busy">Rescan my mods</button>
+        @if (Session.Role == SessionRole.Client)
+        {
+            <button class="primary" @onclick="Match" disabled="@(busy || Session.MyDiff is null || Session.MyDiff.IsMatch)">Match host</button>
+        }
+        @if (busy)
+        {
+            <button @onclick="Session.CancelCurrent">Cancel</button>
+        }
+        <button class="danger" @onclick="Leave">@(Session.Role == SessionRole.Host ? "Stop hosting" : "Leave")</button>
+    </div>
+
+    <table class="roster">
+        <thead><tr><th>Player</th><th>Status</th><th>Compared with host</th></tr></thead>
+        <tbody>
+            @foreach (var p in Session.Players)
+            {
+                var player = p;
+                <tr class="@(player.Id == selectedId ? "selected" : "")" @onclick="() => selectedId = player.Id">
+                    <td>@player.Name@(player.IsHost ? " (host)" : "")</td>
+                    <td><span class="badge @StatusClass(player.Status)">@StatusText(player)</span></td>
+                    <td>@(player.IsHost ? "" : player.Summary?.ToString() ?? "")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    @if (Session.Role == SessionRole.Client && Session.MyDiff is { } mine)
+    {
+        <h2>Your mods compared with the host</h2>
+        <DiffView Diff="mine" Who="you" />
+    }
+    else if (Session.Role == SessionRole.Host && selectedId is not null && Session.DiffFor(selectedId) is { } theirs)
+    {
+        <h2>@(Session.Players.FirstOrDefault(p => p.Id == selectedId)?.Name ?? "Player") compared with you</h2>
+        <DiffView Diff="theirs" Who="they" />
+    }
+    else if (Session.Role == SessionRole.Host)
+    {
+        <p class="status">Click a player to see how their mods differ from yours.</p>
+    }
+
+    @if (Session.LastPlan is { } plan)
+    {
+        <section class="panel pad">
+            <h2>Match host result</h2>
+            <p>Wrote the host's list (@plan.ToApply.Mods.Count installed mods, in the host's order) to dlc_load.json.</p>
+            @if (plan.NeedsWorkshopInstall.Count > 0)
+            {
+                <p class="status error">Not installed. Subscribe to these on the Steam Workshop, then click Rescan my mods:</p>
+                <ul>@foreach (var e in plan.NeedsWorkshopInstall) { <li>@e.Name (Workshop id @ModKeys.WorkshopId(e.Key))</li> }</ul>
+            }
+            @if (plan.NeedsWorkshopUpdate.Count > 0)
+            {
+                <p class="status error">Out of date. Let Steam update these (or unsubscribe and resubscribe):</p>
+                <ul>@foreach (var u in plan.NeedsWorkshopUpdate) { <li>@u.Name</li> }</ul>
+            }
+            @if (plan.NeedsManualInstall.Count > 0)
+            {
+                <p class="status error">Local mods you don't have. Ask the host to share them:</p>
+                <ul>@foreach (var e in plan.NeedsManualInstall) { <li>@e.Name</li> }</ul>
+            }
+            @if (plan.DiffersLocally.Count > 0)
+            {
+                <p class="status error">Local mods whose files differ from the host's:</p>
+                <ul>@foreach (var u in plan.DiffersLocally) { <li>@u.Name</li> }</ul>
+            }
+            @if (plan.NeedsDlc.Count > 0)
+            {
+                <p class="status error">DLC the host uses that you don't have enabled or own:</p>
+                <ul>@foreach (var u in plan.NeedsDlc) { <li>@u.Name</li> }</ul>
+            }
+        </section>
+    }
+}
+
+@if (Session.Activity is { } activity)
+{
+    <p class="status">@activity</p>
+}
+@if (status is not null)
+{
+    <p class="status @(error ? "error" : "")">@status</p>
+}
+
+@code {
+    int hostPort = SessionProtocol.DefaultPort;
+    string joinAddress = "";
+    string? selectedId;
+    string? status;
+    bool busy;
+    bool error;
+    IReadOnlyList<string> addresses = [];
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+        addresses = SessionProtocol.LocalAddresses();
+    }
+
+    void OnSessionChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+
+    Task Host() => RunAsync(async () =>
+    {
+        await Session.HostAsync(hostPort);
+        return $"Hosting on port {Session.HostPort}. Windows may ask to allow the app through the firewall: allow it.";
+    });
+
+    Task Join() => RunAsync(async () =>
+    {
+        var (h, port) = SessionProtocol.ParseAddress(joinAddress);
+        await Session.JoinAsync(h, port);
+        return $"Joined {h}:{port}.";
+    });
+
+    Task Rescan() => RunAsync(async () =>
+    {
+        await Session.RescanAsync();
+        return "Rescanned and shared your mods.";
+    });
+
+    Task Match() => RunAsync(async () =>
+    {
+        var plan = await Session.MatchHostAsync();
+        return plan.IsComplete ? "Your mod list now matches the host." : "Applied the host's list, but some mods still need attention (see below).";
+    });
+
+    Task Leave() => RunAsync(async () =>
+    {
+        await Session.LeaveAsync();
+        selectedId = null;
+        return "Left the session.";
+    });
+
+    async Task RunAsync(Func<Task<string?>> action)
+    {
+        busy = true;
+        (status, error) = (null, false);
+        try
+        {
+            status = await action();
+        }
+        catch (OperationCanceledException)
+        {
+            status = "Cancelled.";
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException
+                                   or InvalidDataException or TimeoutException or SessionRejectedException
+                                   or System.Net.Sockets.SocketException or ObjectDisposedException)
+        {
+            (status, error) = (ex.Message, true);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    static string StatusClass(PlayerStatus s) => s switch
+    {
+        PlayerStatus.Ready => "ready",
+        PlayerStatus.Mismatch => "mismatch",
+        PlayerStatus.Unreliable => "unreliable",
+        _ => "busy",
+    };
+
+    static string StatusText(PlayerInfo p) => p.Status switch
+    {
+        PlayerStatus.Ready => "✔ Ready",
+        PlayerStatus.Mismatch => "✖ Differs",
+        PlayerStatus.Unreliable => "⚠ Check warnings",
+        PlayerStatus.Busy => p.Activity ?? "Busy…",
+        _ => "Waiting for scan…",
+    };
+}
