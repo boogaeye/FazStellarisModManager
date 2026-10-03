@@ -15,11 +15,11 @@ public static class IconResolver
 
     /// <summary>
     /// 1) "GFX_…" -> sprite (frame = icon_frame, default 1, clamped). 2) a path ("/" or ".dds") as written.
-    /// 3) a bare name -> sprite GFX_name, else icons/&lt;kind folder&gt;/name.dds. 4) no icon -> icons/&lt;kind folder&gt;/&lt;id&gt;.dds.
+    /// 3) a bare name -> sprite GFX_name, else icons/&lt;kind folder&gt;/name.dds. 4) no icon -> icons/&lt;kind folder&gt;/&lt;id&gt;.dds, else sprite GFX_&lt;id&gt;.
     /// </summary>
     public static IconRef? ForUnlock(string? icon, int? iconFrame, string kindFolder, string id, SpriteIndex sprites, Func<string, bool> exists)
     {
-        if (string.IsNullOrWhiteSpace(icon)) return Existing($"{Icons}/{kindFolder}/{id}.dds", exists);
+        if (string.IsNullOrWhiteSpace(icon)) return Existing($"{Icons}/{kindFolder}/{id}.dds", exists) ?? FromSprite(sprites.Find("GFX_" + id), iconFrame);
         icon = icon.Trim();
         if (icon.StartsWith("GFX_", StringComparison.OrdinalIgnoreCase)) return FromSprite(sprites.Find(icon), iconFrame);
         if (icon.Contains('/') || icon.EndsWith(".dds", StringComparison.OrdinalIgnoreCase)) return new IconRef(icon.Replace('\\', '/'));

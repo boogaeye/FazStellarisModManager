@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using FazStellarisModmanager.Core.Descriptors;
 
@@ -8,7 +9,14 @@ public sealed record Unlock(string Kind, string KindFolder, string Id, string Na
 
 public static class UnlockScanner
 {
-    static readonly HashSet<string> Excluded = new(StringComparer.OrdinalIgnoreCase) { "technology", "scripted_variables", "inline_scripts" };
+    static readonly HashSet<string> Excluded = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "technology", "scripted_variables", "inline_scripts",
+        "scripted_effects", "scripted_triggers", "on_actions", "defines", "script_values", "game_rules", "event_chains",
+        "pop_jobs", "random_names", "name_lists", "personalities", "opinion_modifiers", "static_modifiers", "triggered_modifiers",
+        "diplomatic_actions", "ai_budget", "economic_categories", "mandates", "message_types", "special_projects",
+        "anomalies", "observation_station_missions",
+    };
 
     static readonly Dictionary<string, string> KindNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -43,7 +51,9 @@ public static class UnlockScanner
     /// <summary>
     /// Tech key -> unlocks (sorted by kind, then name). Same override rules as techs: a later source's file at the same path
     /// replaces the earlier one, then objects are read in load order and the last (folder, id) definition wins.
-    /// Only files mentioning "prerequisites" or "show_in_tech" are parsed.
+    /// Files are read and parsed in parallel, then merged in load order. Base-game files are only parsed when they mention
+    /// "prerequisites" or "show_in_tech"; files from other sources are always parsed, because a mod file can redefine an
+    /// object without those keywords (which clears its earlier unlocks).
     /// </summary>
     public static IReadOnlyDictionary<string, IReadOnlyList<Unlock>> Scan(IReadOnlyList<ContentSource> sources, Localisation loc,
         ICollection<string> warnings, CancellationToken ct = default)
@@ -57,21 +67,26 @@ public static class UnlockScanner
                 files[rel] = (source, rel);
             }
 
-        var objects = new Dictionary<string, (string Folder, string Id, string[] Techs, TechSourceRef Src, string? Icon, int? Frame)>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (source, rel) in files.Values.OrderBy(f => f.Rel, TechDatabase.LoadOrder))
+        var ordered = files.Values.OrderBy(f => f.Rel, TechDatabase.LoadOrder).ToArray();
+        var parsed = new List<ScannedObject>?[ordered.Length];
+        var warned = new ConcurrentQueue<string>();
+        Parallel.ForEach(Enumerable.Range(0, ordered.Length), new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, i =>
         {
-            ct.ThrowIfCancellationRequested();
+            var (source, rel) = ordered[i];
             string text;
             try { text = source.ReadText(rel); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException)
             {
-                warnings.Add($"{source.Name}: {rel}: {ex.Message}");
-                continue;
+                warned.Enqueue($"{source.Name}: {rel}: {ex.Message}");
+                return;
             }
-            if (!text.Contains("prerequisites", StringComparison.OrdinalIgnoreCase) && !text.Contains("show_in_tech", StringComparison.OrdinalIgnoreCase)) continue;
+            if (source.IsBaseGame
+                && !text.Contains("prerequisites", StringComparison.OrdinalIgnoreCase)
+                && !text.Contains("show_in_tech", StringComparison.OrdinalIgnoreCase)) return;
 
             var folder = rel.Split('/')[1];
             var src = new TechSourceRef(source.Name, source.IsBaseGame, rel);
+            var list = new List<ScannedObject>();
             foreach (var e in ParadoxScriptParser.Parse(text).Entries)
             {
                 if (e.Value is not PdxBlock b || e.Key.StartsWith('@')) continue;
@@ -79,9 +94,17 @@ public static class UnlockScanner
                 IEnumerable<string> shown = b.GetString("show_in_tech") is { } sit ? [sit] : [];
                 var techs = (b.GetBlock("prerequisites")?.StringItems ?? []).Concat(shown).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 var frame = int.TryParse(b.GetString("icon_frame"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var f) ? f : (int?)null;
-                objects[folder + "|" + id] = (folder, id, techs, src, b.GetString("icon"), frame);
+                list.Add(new ScannedObject(folder, id, techs, src, b.GetString("icon"), frame));
             }
-        }
+            parsed[i] = list;
+        });
+        ct.ThrowIfCancellationRequested();
+        foreach (var w in warned) warnings.Add(w);
+
+        var objects = new Dictionary<string, ScannedObject>(StringComparer.OrdinalIgnoreCase);
+        foreach (var list in parsed)
+            if (list is not null)
+                foreach (var o in list) objects[o.Folder + "|" + o.Id] = o;
 
         var index = new Dictionary<string, List<Unlock>>(StringComparer.OrdinalIgnoreCase);
         foreach (var o in objects.Values)
@@ -99,4 +122,6 @@ public static class UnlockScanner
                 .ToList(),
             StringComparer.OrdinalIgnoreCase);
     }
+
+    sealed record ScannedObject(string Folder, string Id, string[] Techs, TechSourceRef Src, string? Icon, int? Frame);
 }

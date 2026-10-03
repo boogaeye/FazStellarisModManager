@@ -5,7 +5,7 @@ namespace FazStellarisModmanager.Core.Technology;
 
 public sealed record SpriteInfo(string Name, string TextureFile, int Frames);
 
-/// <summary>GFX sprite name -> texture file (and sprite-sheet frame count), from interface/**/*.gfx. Later sources win per name.</summary>
+/// <summary>GFX sprite name -> texture file (and sprite-sheet frame count), from interface/**/*.gfx. A later source's file at the same path replaces the earlier one; remaining files are read in load order, later wins per name.</summary>
 public sealed class SpriteIndex
 {
     readonly Dictionary<string, SpriteInfo> _sprites;
@@ -20,21 +20,25 @@ public sealed class SpriteIndex
 
     public static SpriteIndex Build(IReadOnlyList<ContentSource> sources, ICollection<string> warnings, CancellationToken ct = default)
     {
-        var map = new Dictionary<string, SpriteInfo>(StringComparer.OrdinalIgnoreCase);
+        var files = new Dictionary<string, (ContentSource Source, string Rel)>(StringComparer.OrdinalIgnoreCase);
         foreach (var source in sources)
-            foreach (var rel in source.Files("interface", ".gfx").Order(TechDatabase.LoadOrder))
+            foreach (var rel in source.Files("interface", ".gfx"))
+                files[rel] = (source, rel);
+
+        var map = new Dictionary<string, SpriteInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (source, rel) in files.Values.OrderBy(f => f.Rel, TechDatabase.LoadOrder))
+        {
+            ct.ThrowIfCancellationRequested();
+            string text;
+            try { text = source.ReadText(rel); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException)
             {
-                ct.ThrowIfCancellationRequested();
-                string text;
-                try { text = source.ReadText(rel); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException)
-                {
-                    warnings.Add($"{source.Name}: {rel}: {ex.Message}");
-                    continue;
-                }
-                if (!text.Contains("spriteType", StringComparison.OrdinalIgnoreCase)) continue;
-                Collect(ParadoxScriptParser.Parse(text), map);
+                warnings.Add($"{source.Name}: {rel}: {ex.Message}");
+                continue;
             }
+            if (!text.Contains("spriteType", StringComparison.OrdinalIgnoreCase)) continue;
+            Collect(ParadoxScriptParser.Parse(text), map);
+        }
         return new SpriteIndex(map);
     }
 

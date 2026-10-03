@@ -60,6 +60,22 @@ public class UnlockScannerTests
         Assert.Equal(1, db.Sprites.Count);
     }
 
+    [Fact]
+    public void A_mod_file_redefining_an_object_without_the_keyword_clears_the_old_unlock()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("g/common/technology/00_t.txt", "tech_a = { area = physics }");
+        tmp.Write("g/common/buildings/00_b.txt", "building_x = { prerequisites = { \"tech_a\" } }");
+        tmp.Write("m/common/buildings/zz_b.txt", "building_x = { cost = 5 }");
+        using var g = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "g"), isBaseGame: true);
+        using var m = ContentSource.FromPath("Mod", Path.Combine(tmp.Path, "m"));
+
+        var db = TechDatabase.Build([g, m]);
+
+        Assert.Empty(db.Unlocks("tech_a"));
+        Assert.DoesNotContain(db.AllUnlocks, u => u.Id == "building_x");
+    }
+
     [Theory]
     [InlineData("component_templates", "Ship components")]
     [InlineData("bypass", "Bypasses")]

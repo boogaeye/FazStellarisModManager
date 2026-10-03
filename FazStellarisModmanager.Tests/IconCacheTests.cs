@@ -79,6 +79,34 @@ public class IconCacheTests
     static int PngWidth(string dataUri) =>
         BinaryPrimitives.ReadInt32BigEndian(Convert.FromBase64String(dataUri["data:image/png;base64,".Length..]).AsSpan(16));
 
+    static byte[] Png(string dataUri) => Convert.FromBase64String(dataUri["data:image/png;base64,".Length..]);
+
+    /// <summary>First pixel (RGBA) of a single-IDAT, unfiltered-or-not PNG; the tests only need the first row's first pixel.</summary>
+    static (byte R, byte G, byte B, byte A) FirstPixel(string dataUri)
+    {
+        var png = Png(dataUri);
+        var len = BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(33));
+        using var z = new System.IO.Compression.ZLibStream(new MemoryStream(png, 33 + 8, len), System.IO.Compression.CompressionMode.Decompress);
+        using var raw = new MemoryStream();
+        z.CopyTo(raw);
+        var b = raw.ToArray();
+        return (b[1], b[2], b[3], b[4]); // b[0] is the row's filter byte
+    }
+
+    [Fact]
+    public void A_one_pixel_wide_sheet_is_shown_uncropped()
+    {
+        using var tmp = new TempDir();
+        var root = tmp.Mkdir("g");
+        Directory.CreateDirectory(Path.Combine(root, "gfx"));
+        File.WriteAllBytes(Path.Combine(root, "gfx", "thin.dds"), DdsBuilder.Bgra32(1, 1, (255, 0, 0, 255)));
+        using var s = ContentSource.FromPath("g", root);
+
+        var uri = new IconCache(Path.Combine(tmp.Path, "cache")).DataUri([s], new IconRef("gfx/thin.dds", 2, 2));
+
+        Assert.Equal(1, PngWidth(uri!));
+    }
+
     [Fact]
     public void Crops_sprite_sheet_frames()
     {
@@ -96,6 +124,8 @@ public class IconCacheTests
         Assert.Equal(2, PngWidth(first!));
         Assert.Equal(2, PngWidth(second!));
         Assert.NotEqual(first, second);
+        Assert.Equal(((byte)255, (byte)0, (byte)0, (byte)255), FirstPixel(first!));
+        Assert.Equal(((byte)0, (byte)0, (byte)255, (byte)255), FirstPixel(second!));
         Assert.Equal(2, Directory.GetFiles(Path.Combine(tmp.Path, "cache"), "*.png").Length);
     }
 

@@ -40,6 +40,32 @@ public class SpriteIconTests
     }
 
     [Fact]
+    public void A_later_file_at_the_same_path_replaces_the_earlier_one()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("g/interface/a.gfx", "spriteTypes = { spriteType = { name = \"GFX_old\" texturefile = \"gfx/old.dds\" } }");
+        tmp.Write("m/interface/a.gfx", "spriteTypes = { spriteType = { name = \"GFX_new\" texturefile = \"gfx/new.dds\" } }");
+        using var g = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "g"), isBaseGame: true);
+        using var m = ContentSource.FromPath("Mod", Path.Combine(tmp.Path, "m"));
+
+        var index = SpriteIndex.Build([g, m], new List<string>());
+
+        Assert.Null(index.Find("GFX_old"));
+        Assert.NotNull(index.Find("GFX_new"));
+    }
+
+    [Fact]
+    public void Falls_back_to_a_GFX_sprite_named_after_the_id()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("g/interface/a.gfx", "spriteTypes = { spriteType = { name = \"GFX_module_x\" texturefile = \"gfx/mx.dds\" } }");
+        using var g = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "g"), isBaseGame: true);
+        var index = SpriteIndex.Build([g], new List<string>());
+
+        Assert.Equal(new IconRef("gfx/mx.dds"), IconResolver.ForUnlock(null, null, "starbase_modules", "module_x", index, _ => false));
+    }
+
+    [Fact]
     public void Resolves_unlock_icons_by_each_rule()
     {
         using var tmp = new TempDir();
