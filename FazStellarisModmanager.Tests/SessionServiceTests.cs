@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using FazStellarisModmanager.Core;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Game;
@@ -92,5 +94,72 @@ public class SessionServiceTests
         await host.Session.HostAsync(0);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => host.Session.HostAsync(0));
+    }
+
+    [Fact]
+    public async Task A_throwing_Changed_handler_does_not_wedge_the_session()
+    {
+        await using var host = new Rig("Hosty", "[]");
+        host.Session.Changed += () => throw new InvalidOperationException("boom");
+
+        await host.Session.HostAsync(0).WaitAsync(TimeSpan.FromSeconds(5));
+        await host.Session.LeaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await host.Session.HostAsync(0).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Match_host_after_the_host_left_throws_and_leaves_the_load_file_alone()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/ugc_111.mod\",\"mod/local.mod\"]");
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]");
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+        var before = DlcLoadFile.Read(client.Fake.UserDir).EnabledMods.ToArray();
+
+        await host.Session.LeaveAsync();
+        await Wait.Until(() => client.Session.Role == SessionRole.None, "client notices host stopped");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.Session.MatchHostAsync());
+        Assert.Equal(before, DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
+        Assert.Null(client.Session.LastPlan);
+    }
+
+    [Fact]
+    public async Task Leave_cancels_a_join_that_is_waiting_for_the_host()
+    {
+        await using var client = new Rig("Cli", "[]");
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var join = client.Session.JoinAsync("127.0.0.1", port);
+            await Wait.Until(() => client.Session.Activity?.StartsWith("Connecting") == true, "join is connecting");
+
+            await client.Session.LeaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => join.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(SessionRole.None, client.Session.Role);
+        }
+        finally { listener.Stop(); }
+    }
+
+    [Theory]
+    [InlineData("", 5000)]
+    [InlineData("127.0.0.1", 0)]
+    [InlineData("127.0.0.1", 70000)]
+    public async Task Join_rejects_bad_input(string address, int port)
+    {
+        await using var client = new Rig("Cli", "[]");
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Session.JoinAsync(address, port));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(65536)]
+    public async Task Host_rejects_bad_port(int port)
+    {
+        await using var host = new Rig("Hosty", "[]");
+        await Assert.ThrowsAsync<ArgumentException>(() => host.Session.HostAsync(port));
     }
 }
