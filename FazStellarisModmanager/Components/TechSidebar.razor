@@ -1,0 +1,158 @@
+@using System.Globalization
+
+<div class="tech-sidebar-card">
+    <div class="sb-head">
+        <TechIcon Uri="@Tree.IconUri(Tech)" Size="52" />
+        <div class="grow">
+            <div class="title">@Tech.Name</div>
+            <div class="muted small">@Tech.Key</div>
+        </div>
+    </div>
+    <div class="tags">
+        <span class="tag">@Tech.Area</span>
+        @if (Tech.Category is not null) { <span class="tag">@Tech.Category</span> }
+        <span class="tag">Tier @TierText</span>
+        <span class="tag">Cost @Tech.Cost</span>
+        @if (Details.Weight is not null) { <span class="tag">Weight @Details.Weight</span> }
+        @if (Details.Gateway is not null) { <span class="tag">Gateway: @Details.Gateway</span> }
+        @if (Tech.IsStart) { <span class="tag">Starting</span> }
+        @if (Tech.IsRare) { <span class="tag rare">Rare</span> }
+        @if (Tech.IsDangerous) { <span class="tag danger">Dangerous</span> }
+        @if (Tech.IsRepeatable) { <span class="tag">Repeatable</span> }
+        @foreach (var dlc in Tech.Dlcs) { <span class="tag dlc">DLC: @dlc</span> }
+    </div>
+    @if (Tech.Description is not null)
+    {
+        <p class="desc">@Tech.Description</p>
+    }
+    <div><span class="muted">Source:</span> <span class="@(Tech.ChangedByMods ? "modtext" : "")">@Tech.Source.SourceName</span> <span class="muted">· @Tech.Source.File</span></div>
+    @if (Tech.Overridden.Count > 0)
+    {
+        <div><span class="muted">Overrides:</span> @string.Join(", ", Tech.Overridden.Select(o => $"{o.SourceName} ({Path.GetFileName(o.File)})"))</div>
+    }
+    <div class="path">
+        <span class="muted">Path from start:</span>
+        @{ var path = Database.PathFromStart(Tech.Key); }
+        @for (int i = 0; i < path.Count; i++)
+        {
+            var step = path[i];
+            if (i > 0) { <span class="muted"> → </span> }
+            <a class="link" @onclick="() => OnSelect.InvokeAsync(step.Key)">@step.Name</a>
+        }
+    </div>
+
+    <details open>
+        <summary>Unlocks (@Unlocks.Count)</summary>
+        @if (Unlocks.Count == 0)
+        {
+            <p class="muted small">Nothing in common/ requires this technology.</p>
+        }
+        @foreach (var group in Unlocks.GroupBy(u => u.Kind))
+        {
+            <h4>@group.Key (@group.Count())</h4>
+            <div class="chips">
+                @foreach (var u in group)
+                {
+                    <span class="uchip @(u.Source.IsBaseGame ? "" : "mod")" title="@($"{u.Id} · {u.Source.SourceName} · {u.Source.File}")">
+                        <TechIcon Uri="@Tree.UnlockIconUri(u)" Size="18" />@u.Name
+                    </span>
+                }
+            </div>
+        }
+    </details>
+
+    <details open>
+        <summary>Effects</summary>
+        <h4>Stat bonuses</h4>
+        @if (Details.Bonuses.Count == 0) { <p class="muted small">None.</p> }
+        @foreach (var b in Details.Bonuses)
+        {
+            <div class="bonus">
+                <TechIcon Uri="@Tree.BonusIconUri(b)" Size="18" />
+                <span class="@(b.IsNegative ? "neg" : "pos")">@b.Display</span>
+                <span>@b.Name</span>
+                <span class="muted small">(@b.Key = @b.RawValue)</span>
+            </div>
+        }
+        <h4>Custom unlock text</h4>
+        @if (Details.CustomUnlocks.Count == 0) { <p class="muted small">None.</p> }
+        @foreach (var c in Details.CustomUnlocks)
+        {
+            <div class="custom-unlock"><b>@c.Title</b> <span class="muted small">(@c.Kind)</span>
+                @if (c.Description is not null) { <div class="muted">@c.Description</div> }
+            </div>
+        }
+        <h4>Feature flags</h4>
+        @if (Details.FeatureFlags.Count == 0) { <p class="muted small">None.</p> }
+        else
+        {
+            <div class="chips">@foreach (var f in Details.FeatureFlags) { <span class="uchip">@f</span> }</div>
+        }
+        @if (Details.Swaps.Count > 0)
+        {
+            <h4>Technology swaps</h4>
+            @foreach (var s in Details.Swaps)
+            {
+                <div class="swap">
+                    Becomes
+                    @if (Database.Techs.TryGetValue(s.Name, out var target))
+                    {
+                        var targetKey = target.Key;
+                        <a class="link" @onclick="() => OnSelect.InvokeAsync(targetKey)">@target.Name</a>
+                    }
+                    else
+                    {
+                        <b>@s.Name</b>
+                    }
+                    @if (s.InheritsEffects) { <span class="muted small">(inherits effects)</span> }
+                    @if (s.TriggerScript is not null) { <span class="muted small">when:</span><ScriptView Text="@s.TriggerScript" /> }
+                </div>
+            }
+        }
+    </details>
+
+    <details>
+        <summary>Weights</summary>
+        <div><span class="muted">Base research weight:</span> @(Details.Weight ?? "default")</div>
+        <h4>Research weight modifiers</h4>
+        @if (Details.WeightModifierScript is null) { <p class="muted small">None.</p> } else { <ScriptView Text="@Details.WeightModifierScript" /> }
+        <h4>AI weight</h4>
+        @if (Details.AiWeightScript is null) { <p class="muted small">None.</p> } else { <ScriptView Text="@Details.AiWeightScript" /> }
+    </details>
+
+    <details>
+        <summary>Conditions</summary>
+        <h4>Available when</h4>
+        @if (Details.PotentialScript is null) { <p class="muted small">Always.</p> } else { <ScriptView Text="@Details.PotentialScript" /> }
+        <h4>Prerequisites</h4>
+        @if (Tech.Prerequisites.Count == 0) { <p class="muted small">None.</p> }
+        @foreach (var p in Tech.Prerequisites)
+        {
+            if (Database.Techs.TryGetValue(p, out var pre))
+            {
+                var preKey = pre.Key;
+                <div><a class="link" @onclick="() => OnSelect.InvokeAsync(preKey)">@pre.Name</a></div>
+            }
+            else
+            {
+                <div class="muted">@p (not in this tree)</div>
+            }
+        }
+    </details>
+
+    <details>
+        <summary>Raw definition</summary>
+        <ScriptView Text="@Details.RawScript" />
+    </details>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Tech Tech { get; set; } = default!;
+    [Parameter, EditorRequired] public TechDatabase Database { get; set; } = default!;
+    [Parameter, EditorRequired] public TechTreeService Tree { get; set; } = default!;
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+
+    TechDetails Details => Tech.Details;
+    IReadOnlyList<Unlock> Unlocks => Database.Unlocks(Tech.Key);
+    string TierText => Tech.IsRepeatable ? "R" : Tech.Tier?.ToString(CultureInfo.InvariantCulture) ?? "?";
+}

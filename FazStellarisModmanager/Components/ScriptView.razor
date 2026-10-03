@@ -1,0 +1,21 @@
+@using FazStellarisModmanager.Core.Descriptors
+
+<div class="script">
+    @foreach (var line in Text.Split('\n'))
+    {
+        <div class="sl">@foreach (var t in ScriptHighlighter.Line(line)) { <span class="@Css(t.Kind)">@t.Text</span> }</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Text { get; set; } = "";
+
+    static string Css(ScriptTokenKind kind) => kind switch
+    {
+        ScriptTokenKind.Key => "sk",
+        ScriptTokenKind.Operator => "so",
+        ScriptTokenKind.Value => "sv",
+        ScriptTokenKind.Comment => "sc",
+        _ => "",
+    };
+}

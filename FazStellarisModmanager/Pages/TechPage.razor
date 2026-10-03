@@ -116,49 +116,23 @@
                     <div class="graph-scroll">
                         <TechGraphView Graph="TechGraphLayout.Build(db, sel.Key, depth)" Database="db" IconUri="Tree.IconUri" OnSelect="key => selectedKey = key" />
                     </div>
-
-                    <div class="tech-detail">
-                        <TechIcon Uri="@Tree.IconUri(sel)" Size="52" />
-                        <div class="grow">
-                            <div class="title">@sel.Name <span class="muted small">@sel.Key</span></div>
-                            <div class="tags">
-                                <span class="tag">@sel.Area</span>
-                                @if (sel.Category is not null) { <span class="tag">@sel.Category</span> }
-                                <span class="tag">Tier @TierText(sel)</span>
-                                <span class="tag">Cost @sel.Cost</span>
-                                @if (sel.IsStart) { <span class="tag">Starting</span> }
-                                @if (sel.IsRare) { <span class="tag rare">Rare</span> }
-                                @if (sel.IsDangerous) { <span class="tag danger">Dangerous</span> }
-                                @if (sel.IsRepeatable) { <span class="tag">Repeatable</span> }
-                                @foreach (var dlc in sel.Dlcs) { <span class="tag dlc">DLC: @dlc</span> }
-                            </div>
-                            @if (sel.Description is not null)
-                            {
-                                <p class="desc">@sel.Description</p>
-                            }
-                            <div><span class="muted">Source:</span> <span class="@(sel.ChangedByMods ? "modtext" : "")">@sel.Source.SourceName</span> <span class="muted">· @sel.Source.File</span></div>
-                            @if (sel.Overridden.Count > 0)
-                            {
-                                <div><span class="muted">Overrides:</span> @string.Join(", ", sel.Overridden.Select(o => $"{o.SourceName} ({Path.GetFileName(o.File)})"))</div>
-                            }
-                            <div class="path">
-                                <span class="muted">Path from start:</span>
-                                @{ var path = db.PathFromStart(sel.Key); }
-                                @for (int i = 0; i < path.Count; i++)
-                                {
-                                    var step = path[i];
-                                    if (i > 0) { <span class="muted"> → </span> }
-                                    <a class="link" @onclick="() => selectedKey = step.Key">@step.Name</a>
-                                }
-                            </div>
-                        </div>
-                    </div>
                 }
                 else
                 {
                     <p class="status">Pick a technology on the left.</p>
                 }
             </div>
+
+            <aside class="tech-sidebar">
+                @if (selectedKey is not null && db.Techs.TryGetValue(selectedKey, out var side))
+                {
+                    <TechSidebar Tech="side" Database="db" Tree="Tree" OnSelect="key => selectedKey = key" />
+                }
+                else
+                {
+                    <p class="status">Pick a technology to see its details.</p>
+                }
+            </aside>
         </div>
     }
 </div>
