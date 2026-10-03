@@ -78,8 +78,50 @@ public class SnapshotScannerTests
 
             var mod = Assert.Single(snap.Mods);
             Assert.Empty(mod.Files);
+            Assert.Contains(snap.Warnings!, m => m.Contains("[unreadable]"));
         }
 
         Assert.Contains(progress.Messages, m => m.Contains("[unreadable]"));
+    }
+
+    [Fact]
+    public async Task Locked_descriptor_gives_placeholder_and_warning()
+    {
+        using var fake = new FakeInstall();
+        using var _ = new FileStream(Path.Combine(fake.UserDir, "mod", "local.mod"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var snap = await SnapshotScanner.ScanAsync(fake.UserDir, fake.GameDir, "PC1", HashCache.InMemory());
+
+        var mod = Assert.Single(snap.Mods);
+        Assert.Equal(("local:local.mod", 1), (mod.Key, mod.LoadOrder));
+        Assert.Empty(mod.Files);
+        Assert.NotEmpty(snap.Warnings!);
+    }
+
+    [Fact]
+    public async Task Garbage_zip_gives_placeholder_and_warning()
+    {
+        using var fake = new FakeInstall();
+        fake.Write("user/mod/bad.mod", "name=\"Bad\"\narchive=\"mod/bad.zip\"\n");
+        fake.Write("user/mod/bad.zip", "this is not a zip");
+        fake.Write("user/dlc_load.json", "{\"disabled_dlcs\":[],\"enabled_mods\":[\"mod/bad.mod\",\"mod/local.mod\"]}");
+
+        var snap = await SnapshotScanner.ScanAsync(fake.UserDir, fake.GameDir, "PC1", HashCache.InMemory());
+
+        Assert.Equal(new[] { ("local:bad.mod", 1), ("local:local.mod", 2) }, snap.Mods.Select(m => (m.Key, m.LoadOrder)));
+        Assert.Empty(snap.Mods[0].Files);
+        Assert.Single(snap.Mods[1].Files);
+        Assert.Contains(snap.Warnings!, w => w.Contains("bad.mod"));
+    }
+
+    [Fact]
+    public async Task Cancelled_token_throws()
+    {
+        using var fake = new FakeInstall();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            SnapshotScanner.ScanAsync(fake.UserDir, fake.GameDir, "PC1", HashCache.InMemory(), null, cts.Token));
     }
 }

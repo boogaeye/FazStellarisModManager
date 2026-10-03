@@ -11,20 +11,26 @@ namespace FazStellarisModmanager.Core.Snapshots;
 
 public static class SnapshotScanner
 {
-    /// <summary>Snapshots the base game, enabled DLCs and the mods enabled in dlc_load.json (in load order).</summary>
+    /// <summary>
+    /// Snapshots the base game, enabled DLCs and the mods enabled in dlc_load.json (in load order).
+    /// Problems are reported via <paramref name="progress"/> and recorded in <see cref="MachineSnapshot.Warnings"/>.
+    /// <paramref name="progress"/> may be invoked concurrently from worker threads.
+    /// </summary>
     public static async Task<MachineSnapshot> ScanAsync(string userDir, string gameDir, string machineName, HashCache cache,
         IProgress<string>? progress = null, CancellationToken ct = default)
     {
         var load = DlcLoadFile.Read(userDir);
+        var warnings = new ConcurrentQueue<string>();
+        void Warn(string m) { warnings.Enqueue(m); progress?.Report(m); }
 
         var manifestPath = Path.Combine(gameDir, "checksum_manifest.txt");
         var rules = File.Exists(manifestPath) ? Manifest.Parse(await File.ReadAllTextAsync(manifestPath, ct)) : [];
         progress?.Report($"Hashing base game: {gameDir}");
-        var baseFiles = await HashAllAsync(FileCollector.Collect(rules, [gameDir]).Select(kv => (kv.Key, kv.Value)), cache, progress, ct);
-        var gameVersion = ReadGameVersion(userDir, progress);
+        var baseFiles = await HashAllAsync(FileCollector.Collect(rules, [gameDir]).Select(kv => (kv.Key, kv.Value)), cache, Warn, ct);
+        var gameVersion = ReadGameVersion(userDir, Warn);
         var baseSnap = new ModSnapshot("base", "Stellaris", "checksum_manifest.txt", null, gameVersion, null, gameDir, 0, baseFiles);
 
-        var dlcs = ScanDlcs(gameDir, load, progress);
+        var dlcs = ScanDlcs(gameDir, load, Warn, progress, ct);
 
         var mods = new List<ModSnapshot>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -34,47 +40,60 @@ public static class SnapshotScanner
             ct.ThrowIfCancellationRequested();
             var rel = raw.Replace('\\', '/');
             var key = ModKeys.For(rel);
-            if (!seen.Add(key)) { progress?.Report($"  [duplicate] {rel} skipped"); continue; }
+            if (!seen.Add(key)) { Warn($"  [duplicate] {rel} skipped"); continue; }
             order++;
 
-            var descriptorPath = Path.Combine(userDir, rel);
-            if (!File.Exists(descriptorPath))
+            try { mods.Add(await ScanModAsync(userDir, rel, key, order, cache, Warn, progress, ct)); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException)
             {
-                progress?.Report($"  [missing descriptor] {rel}");
+                // One bad mod must not sink the scan; keep a placeholder so the unit still shows up in the diff.
+                Warn($"  [{Kind(ex)}] {rel}: {ex.Message}");
                 mods.Add(new ModSnapshot(key, Path.GetFileNameWithoutExtension(rel), rel, null, null, null, "", order, []));
-                continue;
             }
-
-            var d = ModDescriptor.Load(descriptorPath);
-            var name = d.Name ?? Path.GetFileNameWithoutExtension(rel);
-            var content = ModLibrary.ResolveContent(userDir, d);
-            List<ModFile> files;
-            if (Directory.Exists(content))
-            {
-                files = await HashAllAsync(
-                    Directory.EnumerateFiles(content, "*", SearchOption.AllDirectories)
-                        .Select(f => (Path.GetRelativePath(content, f).Replace('\\', '/'), f)),
-                    cache, progress, ct);
-            }
-            else if (File.Exists(content) && content.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            {
-                files = HashZipEntries(content);
-            }
-            else
-            {
-                progress?.Report($"  [missing content] {name} -> {content}");
-                files = [];
-            }
-
-            progress?.Report($"  {order,3}. {name} ({files.Count} files)");
-            mods.Add(new ModSnapshot(key, name, rel, d.RemoteFileId, d.Version, d.SupportedVersion, content, order, files));
         }
 
-        return new MachineSnapshot(machineName, gameVersion, gameDir, DateTime.UtcNow, baseSnap, dlcs, mods);
+        return new MachineSnapshot(machineName, gameVersion, gameDir, DateTime.UtcNow, baseSnap, dlcs, mods, warnings.ToList());
+    }
+
+    static string Kind(Exception ex) => ex is InvalidDataException ? "broken zip" : "unreadable";
+
+    static async Task<ModSnapshot> ScanModAsync(string userDir, string rel, string key, int order, HashCache cache,
+        Action<string> warn, IProgress<string>? progress, CancellationToken ct)
+    {
+        var descriptorPath = Path.Combine(userDir, rel);
+        if (!File.Exists(descriptorPath))
+        {
+            warn($"  [missing descriptor] {rel}");
+            return new ModSnapshot(key, Path.GetFileNameWithoutExtension(rel), rel, null, null, null, "", order, []);
+        }
+
+        var d = ModDescriptor.Load(descriptorPath);
+        var name = d.Name ?? Path.GetFileNameWithoutExtension(rel);
+        var content = ModLibrary.ResolveContent(userDir, d);
+        List<ModFile> files;
+        if (Directory.Exists(content))
+        {
+            files = await HashAllAsync(
+                Directory.EnumerateFiles(content, "*", SearchOption.AllDirectories)
+                    .Select(f => (Path.GetRelativePath(content, f).Replace('\\', '/'), f)),
+                cache, warn, ct);
+        }
+        else if (File.Exists(content) && content.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            files = HashZipEntries(content, ct);
+        }
+        else
+        {
+            warn($"  [missing content] {name} -> {content}");
+            files = [];
+        }
+
+        progress?.Report($"  {order,3}. {name} ({files.Count} files)");
+        return new ModSnapshot(key, name, rel, d.RemoteFileId, d.Version, d.SupportedVersion, content, order, files);
     }
 
     static async Task<List<ModFile>> HashAllAsync(IEnumerable<(string Rel, string Abs)> files, HashCache cache,
-        IProgress<string>? progress, CancellationToken ct)
+        Action<string> warn, CancellationToken ct)
     {
         var bag = new ConcurrentBag<ModFile>();
         await Parallel.ForEachAsync(files, ct, (f, _) =>
@@ -87,27 +106,28 @@ public static class SnapshotScanner
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 // Files can vanish or be locked mid-scan (e.g. Steam updating a mod); skip and report.
-                progress?.Report($"  [unreadable] {f.Rel}: {ex.Message}");
+                warn($"  [unreadable] {f.Rel}: {ex.Message}");
             }
             return ValueTask.CompletedTask;
         });
         return Sorted(bag);
     }
 
-    static List<ModFile> HashZipEntries(string zipPath)
+    static List<ModFile> HashZipEntries(string zipPath, CancellationToken ct)
     {
         var files = new List<ModFile>();
         using var zip = ZipFile.OpenRead(zipPath);
         foreach (var e in zip.Entries)
         {
+            ct.ThrowIfCancellationRequested();
             if (e.FullName.EndsWith('/')) continue;
             using var s = e.Open();
-            files.Add(new ModFile(e.FullName, Convert.ToHexStringLower(MD5.HashData(s)), e.Length));
+            files.Add(new ModFile(e.FullName.Replace('\\', '/'), Convert.ToHexStringLower(MD5.HashData(s)), e.Length));
         }
         return Sorted(files);
     }
 
-    static List<ModSnapshot> ScanDlcs(string gameDir, DlcLoad load, IProgress<string>? progress)
+    static List<ModSnapshot> ScanDlcs(string gameDir, DlcLoad load, Action<string> warn, IProgress<string>? progress, CancellationToken ct)
     {
         var disabled = new HashSet<string>(load.DisabledDlcs.Select(d => d.Replace('\\', '/')), StringComparer.OrdinalIgnoreCase);
         var dlcs = new List<ModSnapshot>();
@@ -117,28 +137,39 @@ public static class SnapshotScanner
         int order = 0;
         foreach (var descPath in Directory.EnumerateFiles(dlcRoot, "*.dlc", SearchOption.AllDirectories).OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
         {
+            ct.ThrowIfCancellationRequested();
             var descRel = Path.GetRelativePath(gameDir, descPath).Replace('\\', '/');
             if (disabled.Contains(descRel)) { progress?.Report($"  [disabled] {descRel}"); continue; }
 
-            var b = ParadoxScriptParser.Parse(File.ReadAllText(descPath));
-            var name = b.GetString("name") ?? Path.GetFileNameWithoutExtension(descPath);
-            var archive = b.GetString("archive");
-            var zipPath = archive is null ? null : Path.Combine(gameDir, archive);
-            var files = new List<ModFile>();
-            if (zipPath is not null && File.Exists(zipPath))
+            var key = "dlc:" + Path.GetFileNameWithoutExtension(descPath);
+            try { dlcs.Add(ScanDlc(gameDir, descPath, descRel, key, ++order, warn)); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException)
             {
-                // DLC zips hold music/sound/art only (gameplay data ships in the base install),
-                // so per-entry CRCs from the central directory are enough and cost no decompression.
-                using var zip = ZipFile.OpenRead(zipPath);
-                foreach (var e in zip.Entries)
-                    if (!e.FullName.EndsWith('/')) files.Add(new ModFile(e.FullName, $"crc32:{e.Crc32:x8}", e.Length));
+                warn($"  [{Kind(ex)}] {descRel}: {ex.Message}");
+                dlcs.Add(new ModSnapshot(key, Path.GetFileNameWithoutExtension(descPath), descRel, null, null, null, "", order, []));
             }
-            else progress?.Report($"  [missing archive] {name} -> {archive}");
-
-            dlcs.Add(new ModSnapshot("dlc:" + Path.GetFileNameWithoutExtension(descPath), name, descRel,
-                b.GetString("steam_id"), b.GetString("zip_checksum"), null, zipPath ?? "", ++order, Sorted(files)));
         }
         return dlcs;
+    }
+
+    static ModSnapshot ScanDlc(string gameDir, string descPath, string descRel, string key, int order, Action<string> warn)
+    {
+        var b = ParadoxScriptParser.Parse(File.ReadAllText(descPath));
+        var name = b.GetString("name") ?? Path.GetFileNameWithoutExtension(descPath);
+        var archive = b.GetString("archive");
+        var zipPath = archive is null ? null : Path.Combine(gameDir, archive);
+        var files = new List<ModFile>();
+        if (zipPath is not null && File.Exists(zipPath))
+        {
+            // DLC zips hold music/sound/art only (gameplay data ships in the base install),
+            // so per-entry CRCs from the central directory are enough and cost no decompression.
+            using var zip = ZipFile.OpenRead(zipPath);
+            foreach (var e in zip.Entries)
+                if (!e.FullName.EndsWith('/')) files.Add(new ModFile(e.FullName.Replace('\\', '/'), $"crc32:{e.Crc32:x8}", e.Length));
+        }
+        else warn($"  [missing archive] {name} -> {archive}");
+
+        return new ModSnapshot(key, name, descRel, b.GetString("steam_id"), b.GetString("zip_checksum"), null, zipPath ?? "", order, Sorted(files));
     }
 
     static List<ModFile> Sorted(IEnumerable<ModFile> files)
@@ -148,7 +179,7 @@ public static class SnapshotScanner
         return list;
     }
 
-    static string ReadGameVersion(string userDir, IProgress<string>? progress)
+    static string ReadGameVersion(string userDir, Action<string> warn)
     {
         var log = Path.Combine(userDir, "logs", "game.log");
         if (!File.Exists(log)) return "unknown";
@@ -161,7 +192,7 @@ public static class SnapshotScanner
         }
         catch (IOException ex)
         {
-            progress?.Report($"  [warning] could not read game.log: {ex.Message}");
+            warn($"  [warning] could not read game.log: {ex.Message}");
             return "unknown";
         }
     }

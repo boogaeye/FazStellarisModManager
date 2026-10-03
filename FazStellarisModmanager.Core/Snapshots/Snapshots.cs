@@ -23,4 +23,5 @@ public sealed record MachineSnapshot(
     DateTime TakenUtc,
     ModSnapshot Base,
     List<ModSnapshot> Dlcs,
-    List<ModSnapshot> Mods);
+    List<ModSnapshot> Mods,
+    List<string>? Warnings = null);   // problems met while scanning; a non-empty list means the snapshot may be incomplete
