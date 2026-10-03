@@ -13,15 +13,22 @@ public sealed class IconCache(string directory)
     public string? DataUri(IReadOnlyList<ContentSource> sources, string iconKey)
     {
         if (iconKey.AsSpan().IndexOfAny('/', (char)92, ':') >= 0 || iconKey.Contains("..", StringComparison.Ordinal)) return null;
-        var rel = $"{IconFolder}/{iconKey}.dds";
+        return DataUri(sources, IconResolver.ForTech(iconKey));
+    }
+
+    /// <summary>"data:image/png;base64,…" for the texture (cropped to its frame), or null when no source has it, the path is unsafe/not .dds, or it can't be decoded.</summary>
+    public string? DataUri(IReadOnlyList<ContentSource> sources, IconRef icon)
+    {
+        var rel = icon.Path.Replace((char)92, '/');
+        if (!rel.EndsWith(".dds", StringComparison.OrdinalIgnoreCase) || rel.StartsWith('/') || rel.Contains(':') || rel.Split('/').Contains("..")) return null;
         try
         {
             for (var i = sources.Count - 1; i >= 0; i--)
             {
                 var source = sources[i];
                 if (!source.Exists(rel)) continue;
-                var id = $"{source.Name}|{rel}|{source.Stamp(rel)}";
-                return Load(source, rel, id);
+                var id = $"{source.Name}|{icon.CacheId}|{source.Stamp(rel)}";
+                return Load(source, rel, icon, id);
             }
             return null;
         }
@@ -52,7 +59,7 @@ public sealed class IconCache(string directory)
         catch (Exception ex) when (ex is not OutOfMemoryException) { }
     }
 
-    string? Load(ContentSource source, string rel, string id)
+    string? Load(ContentSource source, string rel, IconRef icon, string id)
     {
         var path = Path.Combine(directory, Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes(id))) + ".png");
         try
@@ -74,6 +81,7 @@ public sealed class IconCache(string directory)
                     dds = buffer.ToArray();
                 }
                 var (w, h, rgba) = DdsDecoder.Decode(dds);
+                if (icon.Frames > 1 && w >= icon.Frames) (w, h, rgba) = CropFrame(w, h, rgba, icon.Frame, icon.Frames);
                 if (w > MaxIconSize || h > MaxIconSize) (w, h, rgba) = Downscale(w, h, rgba, MaxIconSize);
                 png = PngEncoder.Encode(w, h, rgba);
                 Directory.CreateDirectory(directory);
@@ -87,6 +95,17 @@ public sealed class IconCache(string directory)
         {
             return null;
         }
+    }
+
+    /// <summary>Frame f (1-based) of a horizontal strip of n frames: columns [(f-1)·w/n, f·w/n).</summary>
+    static (int W, int H, byte[] Rgba) CropFrame(int w, int h, byte[] rgba, int frame, int frames)
+    {
+        var fw = w / frames;
+        var x0 = (Math.Clamp(frame, 1, frames) - 1) * fw;
+        var result = new byte[fw * h * 4];
+        for (int y = 0; y < h; y++)
+            Array.Copy(rgba, (y * w + x0) * 4, result, y * fw * 4, fw * 4);
+        return (fw, h, result);
     }
 
     /// <summary>Box/area-averages RGBA down to fit within max x max, keeping the aspect ratio.</summary>

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using FazStellarisModmanager.Core.Technology;
 using FazStellarisModmanager.Tests.TestUtil;
 
@@ -73,5 +74,40 @@ public class IconCacheTests
         Assert.Null(cache.DataUri([s], "a/b"));
         Assert.Null(cache.DataUri([s], "a" + (char)92 + "b"));
         Assert.Null(cache.DataUri([s], "c:x"));
+    }
+
+    static int PngWidth(string dataUri) =>
+        BinaryPrimitives.ReadInt32BigEndian(Convert.FromBase64String(dataUri["data:image/png;base64,".Length..]).AsSpan(16));
+
+    [Fact]
+    public void Crops_sprite_sheet_frames()
+    {
+        using var tmp = new TempDir();
+        var root = tmp.Mkdir("g");
+        Directory.CreateDirectory(Path.Combine(root, "gfx"));
+        File.WriteAllBytes(Path.Combine(root, "gfx", "sheet.dds"),
+            DdsBuilder.Bgra32(4, 1, (255, 0, 0, 255), (255, 0, 0, 255), (0, 0, 255, 255), (0, 0, 255, 255)));
+        using var s = ContentSource.FromPath("g", root);
+        var cache = new IconCache(Path.Combine(tmp.Path, "cache"));
+
+        var first = cache.DataUri([s], new IconRef("gfx/sheet.dds", 1, 2));
+        var second = cache.DataUri([s], new IconRef("gfx/sheet.dds", 2, 2));
+
+        Assert.Equal(2, PngWidth(first!));
+        Assert.Equal(2, PngWidth(second!));
+        Assert.NotEqual(first, second);
+        Assert.Equal(2, Directory.GetFiles(Path.Combine(tmp.Path, "cache"), "*.png").Length);
+    }
+
+    [Theory]
+    [InlineData("../evil.dds")]
+    [InlineData("gfx/x.png")]
+    [InlineData("C:/x.dds")]
+    public void Rejects_unsafe_or_non_dds_paths(string path)
+    {
+        using var tmp = new TempDir();
+        using var s = ContentSource.FromPath("g", tmp.Mkdir("g"));
+
+        Assert.Null(new IconCache(Path.Combine(tmp.Path, "cache")).DataUri([s], new IconRef(path)));
     }
 }
