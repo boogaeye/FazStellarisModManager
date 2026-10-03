@@ -7,7 +7,7 @@
 **Architecture:**
 - `FazStellarisModmanager.Core` (net10.0) holds all logic as small, focused, testable classes. Most are static and work on explicit paths.
 - `ModManagerService` is the one stateful facade the UI injects.
-- `FazStellarisModmanager` (net10.0-windows) is a WPF shell hosting a `BlazorWebView` with Razor pages.
+- `FazStellarisModmanager` (net10.0-windows10.0.19041.0; WebView2 needs the Windows SDK projection) is a WPF shell hosting a `BlazorWebView` with Razor pages.
 - Hashing, snapshot and diff logic is ported from HashCoop (`C:\Users\SCP Fazbear\Downloads\HashCoop\StellarisHasher`), with these changes:
   - it returns structured data instead of printing;
   - it uses a real Paradox-script parser;
@@ -92,7 +92,7 @@ cd ..
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
