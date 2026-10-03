@@ -61,8 +61,77 @@ public class ModDifferTests
 
         Assert.False(r.OrderMatches);
         Assert.False(r.IsMatch);
-        Assert.Equal(new[] { true, true, false }, r.Mods.Select(m => m.OutOfOrder));
+        // A 2-swap is fixed by moving one mod, so exactly one of the pair is flagged.
+        Assert.Equal(1, r.Mods.Take(2).Count(m => m.OutOfOrder));
+        Assert.False(r.Mods[2].OutOfOrder);
         Assert.All(r.Mods, m => Assert.Equal(UnitStatus.Ok, m.Status));
+    }
+
+    [Fact]
+    public void Flags_only_the_moved_mod()
+    {
+        var target = Machine("v4.4", Unit("ugc:1", 1), Unit("ugc:2", 2), Unit("ugc:3", 3), Unit("ugc:4", 4), Unit("ugc:5", 5));
+        var mine = Machine("v4.4", Unit("ugc:2", 1), Unit("ugc:3", 2), Unit("ugc:4", 3), Unit("ugc:5", 4), Unit("ugc:1", 5));
+
+        var r = ModDiffer.Diff(target, mine);
+
+        Assert.Equal(new[] { "ugc:1" }, r.Mods.Where(m => m.OutOfOrder).Select(m => m.Key));
+    }
+
+    [Fact]
+    public void Interleaved_extra_mods_do_not_flag_order()
+    {
+        var target = Machine("v4.4", Unit("ugc:1", 1), Unit("ugc:2", 2), Unit("ugc:3", 3));
+        var mine = Machine("v4.4", Unit("local:a", 1), Unit("ugc:1", 2), Unit("local:b", 3), Unit("ugc:2", 4), Unit("ugc:3", 5), Unit("local:c", 6));
+
+        var r = ModDiffer.Diff(target, mine);
+
+        Assert.True(r.OrderMatches);
+        Assert.DoesNotContain(r.Mods, m => m.OutOfOrder);
+    }
+
+    [Fact]
+    public void Content_mismatch_and_out_of_order_can_both_be_set()
+    {
+        var target = Machine("v4.4", Unit("ugc:1", 1, ("f", "1")), Unit("ugc:2", 2), Unit("ugc:3", 3));
+        var mine = Machine("v4.4", Unit("ugc:2", 1), Unit("ugc:3", 2), Unit("ugc:1", 3, ("f", "2")));
+
+        var mod = ModDiffer.Diff(target, mine).Mods.Single(m => m.Key == "ugc:1");
+
+        Assert.Equal(UnitStatus.ContentMismatch, mod.Status);
+        Assert.True(mod.OutOfOrder);
+    }
+
+    [Fact]
+    public void Md5_comparison_ignores_case()
+    {
+        var target = Machine("v4.4", Unit("ugc:1", 1, ("f", "ABCDEF")));
+        var mine = Machine("v4.4", Unit("ugc:1", 1, ("f", "abcdef")));
+
+        Assert.Equal(UnitStatus.Ok, Assert.Single(ModDiffer.Diff(target, mine).Mods).Status);
+    }
+
+    [Fact]
+    public void Scan_warnings_surface_and_make_result_unreliable()
+    {
+        var target = Machine("v4.4") with { Warnings = ["t: unreadable a.txt"] };
+        var mine = Machine("v4.4") with { Warnings = ["m: unreadable b.txt", "m: bad unit"] };
+
+        var r = ModDiffer.Diff(target, mine);
+
+        Assert.Equal(new[] { "t: unreadable a.txt" }, r.TargetWarnings);
+        Assert.Equal(new[] { "m: unreadable b.txt", "m: bad unit" }, r.MineWarnings);
+        Assert.False(r.IsReliable);
+    }
+
+    [Fact]
+    public void Without_warnings_result_is_reliable()
+    {
+        var r = ModDiffer.Diff(Machine("v4.4"), Machine("v4.4"));
+
+        Assert.Empty(r.TargetWarnings);
+        Assert.Empty(r.MineWarnings);
+        Assert.True(r.IsReliable);
     }
 
     [Fact]

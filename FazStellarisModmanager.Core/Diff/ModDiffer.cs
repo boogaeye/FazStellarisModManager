@@ -2,6 +2,7 @@ using FazStellarisModmanager.Core.Snapshots;
 
 namespace FazStellarisModmanager.Core.Diff;
 
+/// <summary>Only <c>ugc:</c> keys (Workshop) can be auto-installed; <c>local:</c> units that are Missing or ContentMismatch need manual action.</summary>
 public enum UnitStatus { Ok, Missing, Extra, ContentMismatch }
 
 public sealed record FileDiff(List<string> Changed, List<string> OnlyInTarget, List<string> OnlyInMine)
@@ -9,7 +10,10 @@ public sealed record FileDiff(List<string> Changed, List<string> OnlyInTarget, L
     public bool IsEmpty => Changed.Count == 0 && OnlyInTarget.Count == 0 && OnlyInMine.Count == 0;
 }
 
-/// <summary>One DLC or mod compared between target (host) and mine. Orders are 1-based load positions.</summary>
+/// <summary>
+/// One DLC or mod compared between target (host) and mine. Orders are 1-based load positions.
+/// Only <c>ugc:</c> keys (Workshop) can be auto-installed; <c>local:</c> Missing or ContentMismatch units need manual action.
+/// </summary>
 public sealed record UnitDiff(
     string Key,
     string Name,
@@ -22,8 +26,15 @@ public sealed record UnitDiff(
     string? MineVersion,
     FileDiff? Files);
 
-public sealed record DiffResult(string TargetGameVersion, string MineGameVersion, FileDiff BaseFiles, List<UnitDiff> Dlcs, List<UnitDiff> Mods)
+public sealed record DiffResult(string TargetGameVersion, string MineGameVersion, FileDiff BaseFiles, List<UnitDiff> Dlcs, List<UnitDiff> Mods,
+    List<string> TargetWarnings, List<string> MineWarnings)
 {
+    /// <summary>
+    /// False when either scan reported warnings: some differences may come from unreadable files rather than real
+    /// differences, so the UI should not auto-fix based on this result.
+    /// </summary>
+    public bool IsReliable => TargetWarnings.Count == 0 && MineWarnings.Count == 0;
+
     public bool GameVersionMatches => TargetGameVersion == MineGameVersion;
     public bool OrderMatches => !Mods.Any(m => m.OutOfOrder);
 
@@ -39,8 +50,9 @@ public static class ModDiffer
     public static DiffResult Diff(MachineSnapshot target, MachineSnapshot mine) =>
         new(target.GameVersion, mine.GameVersion,
             DiffFiles(target.Base.Files, mine.Base.Files),
-            DiffUnits(target.Dlcs, mine.Dlcs, checkOrder: false),
-            DiffUnits(target.Mods, mine.Mods, checkOrder: true));
+            DiffUnits(target.Dlcs, mine.Dlcs, checkOrder: false), // DLC order is intentionally not checked
+            DiffUnits(target.Mods, mine.Mods, checkOrder: true),
+            target.Warnings ?? [], mine.Warnings ?? []);
 
     static List<UnitDiff> DiffUnits(List<ModSnapshot> target, List<ModSnapshot> mine, bool checkOrder)
     {
@@ -48,13 +60,16 @@ public static class ModDiffer
         var m = Index(mine);
 
         // Order is compared only over units both sides have, so a missing mod does not flag every later one.
+        // Flag the minimal set: shared units outside a longest increasing subsequence of my ranks in target order.
         var outOfOrder = new HashSet<string>(Cmp);
         if (checkOrder)
         {
-            var sharedT = t.Values.OrderBy(u => u.LoadOrder).Select(u => u.Key).Where(m.ContainsKey).ToList();
-            var sharedM = m.Values.OrderBy(u => u.LoadOrder).Select(u => u.Key).Where(t.ContainsKey).ToList();
-            for (int i = 0; i < sharedT.Count; i++)
-                if (!Cmp.Equals(sharedT[i], sharedM[i])) outOfOrder.Add(sharedT[i]);
+            var rank = new Dictionary<string, int>(Cmp);
+            foreach (var u in m.Values.OrderBy(u => u.LoadOrder).Where(u => t.ContainsKey(u.Key))) rank[u.Key] = rank.Count;
+            var shared = t.Values.OrderBy(u => u.LoadOrder).Select(u => u.Key).Where(rank.ContainsKey).ToList();
+            var keep = LisIndices(shared.Select(k => rank[k]).ToList());
+            for (int i = 0; i < shared.Count; i++)
+                if (!keep.Contains(i)) outOfOrder.Add(shared[i]);
         }
 
         var result = new List<UnitDiff>();
@@ -76,12 +91,29 @@ public static class ModDiffer
         return result;
     }
 
+    // O(n log n) patience LIS over distinct values; ties resolve to the earliest-ending subsequence, so output is deterministic.
+    static HashSet<int> LisIndices(List<int> a)
+    {
+        var tails = new List<int>(); // tails[k] = index of the smallest tail of an increasing run of length k+1
+        var prev = new int[a.Count];
+        for (int i = 0; i < a.Count; i++)
+        {
+            int lo = 0, hi = tails.Count;
+            while (lo < hi) { int mid = (lo + hi) / 2; if (a[tails[mid]] < a[i]) lo = mid + 1; else hi = mid; }
+            prev[i] = lo > 0 ? tails[lo - 1] : -1;
+            if (lo == tails.Count) tails.Add(i); else tails[lo] = i;
+        }
+        var keep = new HashSet<int>();
+        for (int i = tails.Count > 0 ? tails[^1] : -1; i >= 0; i = prev[i]) keep.Add(i);
+        return keep;
+    }
+
     public static FileDiff DiffFiles(List<ModFile> target, List<ModFile> mine)
     {
         var t = IndexFiles(target);
         var m = IndexFiles(mine);
         return new FileDiff(
-            t.Keys.Where(p => m.TryGetValue(p, out var o) && o.Md5 != t[p].Md5).Order(Cmp).ToList(),
+            t.Keys.Where(p => m.TryGetValue(p, out var o) && !Cmp.Equals(o.Md5, t[p].Md5)).Order(Cmp).ToList(),
             t.Keys.Where(p => !m.ContainsKey(p)).Order(Cmp).ToList(),
             m.Keys.Where(p => !t.ContainsKey(p)).Order(Cmp).ToList());
     }
