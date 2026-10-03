@@ -21,10 +21,11 @@ public static class ScriptedVariables
         var current = value;
         for (int hop = 0; hop < 5 && current.StartsWith('@'); hop++)
         {
+            if (current.StartsWith("@[", StringComparison.Ordinal)) return "(formula)";
             var name = current[1..];
             if (local.TryGetValue(name, out var next) || global.TryGetValue(name, out next)) current = next;
             else return current;
         }
-        return current;
+        return current.StartsWith("@[", StringComparison.Ordinal) ? "(formula)" : current;
     }
 }

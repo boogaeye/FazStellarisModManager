@@ -44,7 +44,19 @@ public class TechParserTests
         Assert.Equal(new[] { "tech_a", "tech_x" }, b.Prerequisites);
         Assert.True(b.IsRare && b.IsDangerous && b.IsRepeatable);
         Assert.Equal("tech_a", b.Icon);
-        Assert.Equal(new[] { "Apocalypse", "Utopia" }, b.Dlcs);
+        Assert.Empty(b.Dlcs);
+    }
+
+    [Fact]
+    public void Dlcs_come_only_from_potential_gating_not_negations()
+    {
+        var t = TechParser.Parse("""
+            t = {
+            	potential = { host_has_dlc = "Federations" OR = { has_dlc = "Utopia" NOT = { host_has_dlc = "Apocalypse" } } }
+            	weight_modifier = { has_dlc = "Lithoids" }
+            }
+            """).Single();
+        Assert.Equal(new[] { "Federations", "Utopia" }, t.Dlcs);
     }
 
     [Fact]
@@ -62,5 +74,12 @@ public class TechParserTests
         Assert.Equal("@missing", ScriptedVariables.Resolve("@c", locals, globals));
         Assert.Equal("42", ScriptedVariables.Resolve("42", locals, globals));
         Assert.Equal("(formula)", ScriptedVariables.Resolve("@[ a * 2 ]", locals, globals));
+    }
+
+    [Fact]
+    public void Formula_reached_through_a_variable_is_a_formula()
+    {
+        var locals = ScriptedVariables.Parse("@x = @[a*2]");
+        Assert.Equal("(formula)", ScriptedVariables.Resolve("@x", locals, new Dictionary<string, string>()));
     }
 }

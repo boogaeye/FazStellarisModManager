@@ -5,11 +5,11 @@ namespace FazStellarisModmanager.Core.Technology;
 /// <summary>English localisation merged from the base game and mods (later wins; "replace" folders win over everything).</summary>
 public sealed class Localisation
 {
-    static readonly Regex Line = new(@"^\s*([\w.\-]+):\d*\s*""(.*)""[^""]*$");
-    static readonly Regex ColorCode = new(@"§.");
-    static readonly Regex IconTag = new(@"£[^£]*£");
-    static readonly Regex Reference = new(@"\$([^$\s]+)\$");
-    static readonly Regex Spaces = new(@"[ \t]{2,}");
+    static readonly Regex Line = new(@"^\s*([\w.\-]+):\d*\s*""(.*)""[^""]*$", RegexOptions.Compiled);
+    static readonly Regex ColorCode = new(@"§.", RegexOptions.Compiled);
+    static readonly Regex IconTag = new(@"£[^£]*£", RegexOptions.Compiled);
+    static readonly Regex Reference = new(@"\$([^$\s]+)\$", RegexOptions.Compiled);
+    static readonly Regex Spaces = new(@"[ \t]{2,}", RegexOptions.Compiled);
 
     readonly Dictionary<string, string> _map = new(StringComparer.OrdinalIgnoreCase);
 
@@ -40,9 +40,12 @@ public sealed class Localisation
 
     public void AddText(string text)
     {
-        foreach (var raw in text.Split('\n'))
+        using var reader = new StringReader(text);
+        while (reader.ReadLine() is { } raw)
         {
-            var m = Line.Match(raw.TrimEnd('\r'));
+            var trimmed = raw.AsSpan().TrimStart();
+            if (trimmed.IsEmpty || trimmed[0] == '#') continue;
+            var m = Line.Match(raw);
             if (m.Success) _map[m.Groups[1].Value] = m.Groups[2].Value;
         }
     }

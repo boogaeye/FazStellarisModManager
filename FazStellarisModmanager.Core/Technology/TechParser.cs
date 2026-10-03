@@ -40,24 +40,32 @@ public static class TechParser
                 Yes(b, "is_dangerous"),
                 levels is not null && levels != "1" && levels != "0",
                 b.GetString("icon"),
-                FindDlcs(b).Distinct(StringComparer.OrdinalIgnoreCase).ToList()));
+                FindDlcs(b.GetBlock("potential")).Distinct(StringComparer.OrdinalIgnoreCase).ToList()));
         }
         return result;
     }
 
     static bool Yes(PdxBlock b, string key) => string.Equals(b.GetString(key), "yes", StringComparison.OrdinalIgnoreCase);
 
-    static IEnumerable<string> FindDlcs(PdxBlock block)
+    /// <summary>DLCs a tech's potential block requires. NOT/NOR/NAND are not searched: they exclude a DLC rather than require it.</summary>
+    static IEnumerable<string> FindDlcs(PdxBlock? block)
     {
+        if (block is null) yield break;
         foreach (var e in block.Entries)
         {
-            if (e.Value is string s && (e.Key.Equals("host_has_dlc", StringComparison.OrdinalIgnoreCase) || e.Key.Equals("has_dlc", StringComparison.OrdinalIgnoreCase)))
-                yield return s;
-            else if (e.Value is PdxBlock child)
+            if (e.Value is string s)
+            {
+                if (e.Key.Equals("host_has_dlc", StringComparison.OrdinalIgnoreCase) || e.Key.Equals("has_dlc", StringComparison.OrdinalIgnoreCase))
+                    yield return s;
+            }
+            else if (e.Value is PdxBlock child && !IsNegation(e.Key))
                 foreach (var d in FindDlcs(child)) yield return d;
         }
         foreach (var item in block.Items)
             if (item is PdxBlock child)
                 foreach (var d in FindDlcs(child)) yield return d;
     }
+
+    static bool IsNegation(string key) =>
+        key.Equals("NOT", StringComparison.OrdinalIgnoreCase) || key.Equals("NOR", StringComparison.OrdinalIgnoreCase) || key.Equals("NAND", StringComparison.OrdinalIgnoreCase);
 }

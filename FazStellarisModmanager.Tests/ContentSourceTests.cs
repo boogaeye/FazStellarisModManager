@@ -38,6 +38,20 @@ public class ContentSourceTests
     }
 
     [Fact]
+    public void Directory_source_rejects_paths_that_escape_the_root()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("outside.txt", "secret");
+        tmp.Write("mod/a.txt", "A");
+        using var s = ContentSource.FromPath("Mod", Path.Combine(tmp.Path, "mod"));
+
+        Assert.False(s.Exists("../outside.txt"));
+        Assert.Throws<UnauthorizedAccessException>(() => s.Open("../outside.txt"));
+        Assert.Throws<UnauthorizedAccessException>(() => s.Stamp("../outside.txt"));
+        Assert.False(s.Exists(@"C:\Windows\win.ini"));
+    }
+
+    [Fact]
     public void Zip_source_behaves_like_a_directory()
     {
         using var tmp = new TempDir();

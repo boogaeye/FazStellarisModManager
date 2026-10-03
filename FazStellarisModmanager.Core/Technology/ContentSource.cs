@@ -28,6 +28,7 @@ public abstract class ContentSource(string name, bool isBaseGame) : IDisposable
     public virtual void Dispose() { }
 
     /// <exception cref="DirectoryNotFoundException">Neither a folder nor a .zip exists at <paramref name="path"/>.</exception>
+    /// <exception cref="InvalidDataException">The .zip at <paramref name="path"/> is corrupt or not a valid archive.</exception>
     public static ContentSource FromPath(string name, string path, bool isBaseGame = false)
     {
         if (!string.IsNullOrEmpty(path) && Directory.Exists(path)) return new DirectorySource(name, path, isBaseGame);
@@ -38,24 +39,38 @@ public abstract class ContentSource(string name, bool isBaseGame) : IDisposable
 
 sealed class DirectorySource(string name, string root, bool isBaseGame) : ContentSource(name, isBaseGame)
 {
+    readonly string _rootFull = Path.GetFullPath(root);
+
+    /// <summary>Full path of a relative path, or null if it is rooted or escapes the root.</summary>
+    string? Contain(string relativePath)
+    {
+        if (Path.IsPathRooted(relativePath)) return null;
+        var full = Path.GetFullPath(Path.Combine(_rootFull, relativePath));
+        var prefix = _rootFull.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? full : null;
+    }
+
+    string Require(string relativePath) => Contain(relativePath) ?? throw new UnauthorizedAccessException("Path escapes the content root.");
+
     public override IReadOnlyList<string> Files(string folder, string extension)
     {
         var dir = Path.Combine(root, folder);
         if (!Directory.Exists(dir)) return [];
-        return Directory.EnumerateFiles(dir, "*" + extension, SearchOption.AllDirectories)
+        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+        return Directory.EnumerateFiles(dir, "*" + extension, options)
             .Where(f => f.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
             .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    public override bool Exists(string relativePath) => File.Exists(Path.Combine(root, relativePath));
+    public override bool Exists(string relativePath) => Contain(relativePath) is { } full && File.Exists(full);
 
-    public override Stream Open(string relativePath) => File.OpenRead(Path.Combine(root, relativePath));
+    public override Stream Open(string relativePath) => File.OpenRead(Require(relativePath));
 
     public override string Stamp(string relativePath)
     {
-        var info = new FileInfo(Path.Combine(root, relativePath));
+        var info = new FileInfo(Require(relativePath));
         return $"{info.Length}:{info.LastWriteTimeUtc.Ticks}";
     }
 }
@@ -69,7 +84,21 @@ sealed class ZipSource : ContentSource
     {
         _zip = ZipFile.OpenRead(path);
         foreach (var e in _zip.Entries)
-            if (!e.FullName.EndsWith('/')) _entries.TryAdd(e.FullName.Replace('\\', '/'), e);
+            if (!e.FullName.EndsWith('/') && Normalise(e.FullName) is { } key) _entries.TryAdd(key, e);
+    }
+
+    /// <summary>Forward-slash name, or null if rooted or containing a ".." segment.</summary>
+    static string? Normalise(string name)
+    {
+        var n = name.Replace('\\', '/');
+        if (n.StartsWith('/') || Path.IsPathRooted(n) || n.Split('/').Any(p => p == "..")) return null;
+        return n;
+    }
+
+    bool TryGet(string relativePath, out ZipArchiveEntry entry)
+    {
+        entry = null!;
+        return Normalise(relativePath) is { } key && _entries.TryGetValue(key, out entry!);
     }
 
     public override IReadOnlyList<string> Files(string folder, string extension)
@@ -81,12 +110,12 @@ sealed class ZipSource : ContentSource
             .ToList();
     }
 
-    public override bool Exists(string relativePath) => _entries.ContainsKey(relativePath.Replace('\\', '/'));
+    public override bool Exists(string relativePath) => TryGet(relativePath, out _);
 
     // ZipArchive is not thread-safe, so copy the entry out under a lock.
     public override Stream Open(string relativePath)
     {
-        if (!_entries.TryGetValue(relativePath.Replace('\\', '/'), out var entry)) throw new FileNotFoundException("Not in archive.", relativePath);
+        if (!TryGet(relativePath, out var entry)) throw new FileNotFoundException("Not in archive.", relativePath);
         lock (_zip)
         {
             using var s = entry.Open();
@@ -99,7 +128,7 @@ sealed class ZipSource : ContentSource
 
     public override string Stamp(string relativePath)
     {
-        if (!_entries.TryGetValue(relativePath.Replace('\\', '/'), out var entry)) throw new FileNotFoundException("Not in archive.", relativePath);
+        if (!TryGet(relativePath, out var entry)) throw new FileNotFoundException("Not in archive.", relativePath);
         return $"{entry.Length}:{entry.LastWriteTime.UtcTicks}";
     }
 
