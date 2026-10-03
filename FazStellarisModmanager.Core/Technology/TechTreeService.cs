@@ -150,7 +150,7 @@ public sealed class TechTreeService
                 if (seen.Add(BonusKey(b)))
                 {
                     var bonus = b;
-                    work.Add((BonusKey(b), () => IconResolver.ForBonus(bonus, Exists)));
+                    work.Add((BonusKey(b), () => IconResolver.ForBonus(bonus, Exists, db.Sprites)));
                 }
 
             var done = 0;

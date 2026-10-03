@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace FazStellarisModmanager.Core.Technology;
 
 /// <summary>A texture to show: relative path plus 1-based frame of a horizontal sprite sheet with <see cref="Frames"/> frames.</summary>
@@ -26,13 +28,45 @@ public static class IconResolver
         return FromSprite(sprites.Find("GFX_" + icon), iconFrame) ?? Existing($"{Icons}/{kindFolder}/{icon}.dds", exists);
     }
 
-    /// <summary>icons/modifiers/mod_&lt;key&gt;.dds, or its _negative variant for a negative value when that file exists.</summary>
-    public static IconRef? ForBonus(StatBonus bonus, Func<string, bool> exists) =>
-        (bonus.IsNegative ? Existing($"{Icons}/modifiers/mod_{bonus.Key}_negative.dds", exists) : null)
-        ?? Existing($"{Icons}/modifiers/mod_{bonus.Key}.dds", exists);
+    static readonly Regex ShipFamily = new(
+        @"^(?:shipsize|ship)_(?:offspring_)?.+?_(build_speed_mult|cost_mult|hull_mult|hull_add|damage_mult|armor_mult|shield_mult|speed_mult|evasion_add|upkeep_mult)$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    static readonly string[] TagSpritePrefixes = ["GFX_text_", "GFX_resource_", "GFX_"];
+
+    /// <summary>
+    /// Modifier icon, first hit wins: negative variants (mod_&lt;key&gt;_negative, mod_negative_&lt;key&gt;) for a negative value; mod_&lt;key&gt;; mod_&lt;key&gt;_positive;
+    /// the sprite named by the first inline tag of the modifier's name; the general ship icon for per-ship-size modifiers.
+    /// </summary>
+    public static IconRef? ForBonus(StatBonus bonus, Func<string, bool> exists, SpriteIndex? sprites = null)
+    {
+        string Mod(string file) => $"{Icons}/modifiers/{file}.dds";
+        var key = bonus.Key;
+        if (bonus.IsNegative && (Existing(Mod($"mod_{key}_negative"), exists) ?? Existing(Mod($"mod_negative_{key}"), exists)) is { } neg) return neg;
+        if ((Existing(Mod($"mod_{key}"), exists) ?? Existing(Mod($"mod_{key}_positive"), exists)) is { } direct) return direct;
+
+        if (bonus.IconTag is { Length: > 0 } tag && sprites is not null)
+            foreach (var prefix in TagSpritePrefixes)
+                if (sprites.Find(prefix + tag) is { } sprite && exists(sprite.TextureFile))
+                    return new IconRef(sprite.TextureFile, Math.Clamp(sprite.DefaultFrame ?? 1, 1, sprite.Frames), sprite.Frames);
+
+        if (ShipFamily.Match(key) is { Success: true } m)
+        {
+            var stat = m.Groups[1].Value.ToLowerInvariant();
+            string[] general = stat switch
+            {
+                "build_speed_mult" => ["mod_ship_build_speed_mult"],
+                "cost_mult" => ["mod_ship_build_cost_mult", "mod_ship_cost_mult"],
+                _ => ["mod_ship_" + stat],
+            };
+            foreach (var g in general)
+                if (Existing(Mod(g), exists) is { } icon) return icon;
+        }
+        return null;
+    }
 
     static IconRef? FromSprite(SpriteInfo? sprite, int? frame) =>
-        sprite is null ? null : new IconRef(sprite.TextureFile, Math.Clamp(frame ?? 1, 1, sprite.Frames), sprite.Frames);
+        sprite is null ? null : new IconRef(sprite.TextureFile, Math.Clamp(frame ?? sprite.DefaultFrame ?? 1, 1, sprite.Frames), sprite.Frames);
 
     static IconRef? Existing(string path, Func<string, bool> exists) => exists(path) ? new IconRef(path) : null;
 }

@@ -25,6 +25,27 @@ public class LocalisationTests
     }
 
     [Fact]
+    public void FirstIconTag_reads_raw_text_and_expands_references()
+    {
+        var loc = new Localisation();
+        loc.AddText("""
+            l_english:
+             mod_x: "£food£ $food$ from Jobs"
+             mod_y: "§GBoost§! $mod_x$"
+             mod_z: "No icon $food$"
+             mod_w: "£a£ then £b£"
+             food: "Food"
+            """);
+
+        Assert.Equal("food", loc.FirstIconTag("mod_x"));
+        Assert.Equal("food", loc.FirstIconTag("mod_y"));
+        Assert.Equal("a", loc.FirstIconTag("mod_w"));
+        Assert.Null(loc.FirstIconTag("mod_z"));
+        Assert.Null(loc.FirstIconTag("missing"));
+        Assert.Equal("Food from Jobs", loc.Get("mod_x"));
+    }
+
+    [Fact]
     public void Later_sources_and_replace_folders_win()
     {
         using var tmp = new TempDir();

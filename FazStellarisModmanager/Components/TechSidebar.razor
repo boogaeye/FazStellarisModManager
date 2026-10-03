@@ -54,7 +54,7 @@
                 @foreach (var u in group)
                 {
                     <span class="uchip @(u.Source.IsBaseGame ? "" : "mod")" title="@($"{u.Id} · {u.Source.SourceName} · {u.Source.File}")">
-                        <TechIcon Uri="@Tree.UnlockIconUri(u)" Size="18" />@u.Name
+                        <TechIcon Uri="@Tree.UnlockIconUri(u)" Size="18" ShowPlaceholder="false" />@u.Name
                     </span>
                 }
             </div>
@@ -68,7 +68,7 @@
         @foreach (var b in Details.Bonuses)
         {
             <div class="bonus">
-                <TechIcon Uri="@Tree.BonusIconUri(b)" Size="18" />
+                <TechIcon Uri="@Tree.BonusIconUri(b)" Size="18" ShowPlaceholder="false" />
                 <span class="@(b.IsNegative ? "neg" : "pos")">@b.Display</span>
                 <span>@b.Name</span>
                 <span class="muted small">(@b.Key = @b.RawValue)</span>

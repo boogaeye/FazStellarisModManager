@@ -5,7 +5,7 @@ using FazStellarisModmanager.Core.Descriptors;
 namespace FazStellarisModmanager.Core.Technology;
 
 /// <summary>One entry of a tech's modifier block, e.g. army_damage_mult = 0.05 shown as "+5% Army Damage".</summary>
-public sealed record StatBonus(string Key, string RawValue, string Name, string Display, bool IsNegative);
+public sealed record StatBonus(string Key, string RawValue, string Name, string Display, bool IsNegative, string? IconTag = null);
 
 /// <summary>A prereqfor_desc line: Kind is the child block name (ship, custom, …).</summary>
 public sealed record CustomUnlock(string Kind, string Title, string? Description);
@@ -109,13 +109,14 @@ public static class TechDetailsBuilder
         IReadOnlyDictionary<string, string> locals, IReadOnlyDictionary<string, string> globals)
     {
         var name = loc.Get("mod_" + key) ?? key;
+        var tag = loc.FirstIconTag("mod_" + key);
         raw = ScriptedVariables.Resolve(raw, locals, globals);
         if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || !double.IsFinite(v))
-            return new StatBonus(key, raw, name, raw, false);
+            return new StatBonus(key, raw, name, raw, false, tag);
         var display = key.EndsWith("_mult", StringComparison.OrdinalIgnoreCase) ? Signed(v * 100) + "%"
             : key.EndsWith("_add", StringComparison.OrdinalIgnoreCase) ? Signed(v)
             : raw;
-        return new StatBonus(key, raw, name, display, v < 0);
+        return new StatBonus(key, raw, name, display, v < 0, tag);
     }
 
     static string Signed(double v)

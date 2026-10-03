@@ -106,6 +106,18 @@ public class TechDetailsTests
     }
 
     [Fact]
+    public void Bonus_carries_the_first_inline_icon_tag_of_its_name()
+    {
+        var loc = new Localisation();
+        loc.AddText("l_english:\n mod_a_add: \"£food£ $food$ from Jobs\"\n mod_b_add: \"Plain\"\n food: \"Food\"");
+        var none = new Dictionary<string, string>();
+
+        Assert.Equal("food", TechDetailsBuilder.Bonus("a_add", "1", loc, none, none).IconTag);
+        Assert.Null(TechDetailsBuilder.Bonus("b_add", "1", loc, none, none).IconTag);
+        Assert.Null(TechDetailsBuilder.Bonus("c_add", "1", loc, none, none).IconTag);
+    }
+
+    [Fact]
     public void Tooltip_modifier_entries_are_not_bonuses()
     {
         using var tmp = new TempDir();

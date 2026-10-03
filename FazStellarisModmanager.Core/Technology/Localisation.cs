@@ -8,6 +8,7 @@ public sealed class Localisation
     static readonly Regex Line = new(@"^\s*([\w.\-]+):\d*\s*""(.*)""[^""]*$", RegexOptions.Compiled);
     static readonly Regex ColorCode = new(@"§.", RegexOptions.Compiled);
     static readonly Regex IconTag = new(@"£[^£]*£", RegexOptions.Compiled);
+    static readonly Regex IconName = new(@"£([^£]+)£", RegexOptions.Compiled);
     static readonly Regex Reference = new(@"\$([^$\s]+)\$", RegexOptions.Compiled);
     static readonly Regex Spaces = new(@"[ \t]{2,}", RegexOptions.Compiled);
 
@@ -52,6 +53,20 @@ public sealed class Localisation
 
     /// <summary>Cleaned text for a key (colour codes and icons removed, $refs$ resolved up to three levels), or null.</summary>
     public string? Get(string key) => _map.TryGetValue(key, out var value) ? Clean(value, 0) : null;
+
+    /// <summary>Name of the first inline icon tag (the name in a "£name£" pair) of a key's raw text, after expanding $refs$ up to three levels, or null.</summary>
+    public string? FirstIconTag(string key)
+    {
+        if (!_map.TryGetValue(key, out var value)) return null;
+        var m = IconName.Match(Expand(value, 0));
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    string Expand(string text, int depth) => Reference.Replace(text, m =>
+    {
+        var key = m.Groups[1].Value.Split('|')[0];
+        return depth < 3 && _map.TryGetValue(key, out var v) ? Expand(v, depth + 1) : key;
+    });
 
     string Clean(string text, int depth)
     {

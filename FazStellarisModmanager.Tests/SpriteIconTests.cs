@@ -108,4 +108,97 @@ public class SpriteIconTests
         Assert.Equal("gfx/sheet.dds#2/3", new IconRef("gfx/sheet.dds", 2, 3).CacheId);
         Assert.Equal("gfx/a.dds", new IconRef("gfx/a.dds").CacheId);
     }
+
+    static SpriteIndex SheetIndex(TempDir tmp)
+    {
+        tmp.Write("g/interface/a_refs.gfx", """
+            spriteTypes = {
+            	spriteType = { name = "GFX_ship_size_mauler_stage_2" sprite_sheet_sprite_type = "GFX_ship_sizes" default_frame = 16 }
+            	spriteType = { name = "GFX_zero" sprite_sheet_sprite_type = "GFX_ship_sizes" default_frame = 0 }
+            	spriteType = { name = "GFX_dangling" sprite_sheet_sprite_type = "GFX_nowhere" default_frame = 2 }
+            	spriteType = { name = "GFX_loop_a" sprite_sheet_sprite_type = "GFX_loop_b" }
+            	spriteType = { name = "GFX_loop_b" sprite_sheet_sprite_type = "GFX_loop_a" }
+            }
+            """);
+        tmp.Write("g/interface/z_sheets.gfx", "spriteTypes = { spriteType = { name = \"GFX_ship_sizes\" textureFile = \"gfx/interface/icons/ship_sizes.dds\" noOfFrames = 29 } }");
+        using var g = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "g"), isBaseGame: true);
+        return SpriteIndex.Build([g], new List<string>());
+    }
+
+    [Fact]
+    public void Sprite_sheet_references_resolve_regardless_of_order_or_file()
+    {
+        using var tmp = new TempDir();
+        var s = SheetIndex(tmp);
+
+        var r = s.Find("GFX_ship_size_mauler_stage_2")!;
+        Assert.Equal(("gfx/interface/icons/ship_sizes.dds", 29, 16), (r.TextureFile, r.Frames, r.DefaultFrame));
+        Assert.Equal(1, s.Find("GFX_zero")!.DefaultFrame);
+        Assert.Null(s.Find("GFX_dangling"));
+        Assert.Null(s.Find("GFX_loop_a"));
+        Assert.Null(s.Find("GFX_ship_sizes")!.DefaultFrame);
+    }
+
+    [Fact]
+    public void Unlock_icons_use_the_default_frame_unless_icon_frame_overrides()
+    {
+        using var tmp = new TempDir();
+        var s = SheetIndex(tmp);
+
+        Assert.Equal(new IconRef("gfx/interface/icons/ship_sizes.dds", 16, 29), IconResolver.ForUnlock("ship_size_mauler_stage_2", null, "ship_sizes", "x", s, _ => false));
+        Assert.Equal(new IconRef("gfx/interface/icons/ship_sizes.dds", 3, 29), IconResolver.ForUnlock("ship_size_mauler_stage_2", 3, "ship_sizes", "x", s, _ => false));
+    }
+
+    const string Mod = "gfx/interface/icons/modifiers/";
+
+    static IconRef? Bonus(string key, bool negative, string[] files, SpriteIndex? sprites = null, string? tag = null) =>
+        IconResolver.ForBonus(new StatBonus(key, "1", key, "+1", negative, tag), new HashSet<string>(files, StringComparer.OrdinalIgnoreCase).Contains, sprites);
+
+    [Fact]
+    public void Bonus_icons_try_name_variants_in_order()
+    {
+        Assert.Equal(new IconRef(Mod + "mod_k_negative.dds"), Bonus("k", true, [Mod + "mod_k_negative.dds", Mod + "mod_negative_k.dds", Mod + "mod_k.dds"]));
+        Assert.Equal(new IconRef(Mod + "mod_negative_k.dds"), Bonus("k", true, [Mod + "mod_negative_k.dds", Mod + "mod_k.dds"]));
+        Assert.Equal(new IconRef(Mod + "mod_k.dds"), Bonus("k", true, [Mod + "mod_k.dds", Mod + "mod_k_positive.dds"]));
+        Assert.Equal(new IconRef(Mod + "mod_k_positive.dds"), Bonus("k", false, [Mod + "mod_k_positive.dds"]));
+        Assert.Null(Bonus("k", false, [Mod + "mod_negative_k.dds"]));
+    }
+
+    [Fact]
+    public void Bonus_icons_fall_back_to_the_inline_tag_sprite()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("g/interface/a.gfx", """
+            spriteTypes = {
+            	spriteType = { name = "GFX_text_food" texturefile = "gfx/text_food.dds" }
+            	spriteType = { name = "GFX_resource_minerals" texturefile = "gfx/res_min.dds" }
+            	spriteType = { name = "GFX_zz" texturefile = "gfx/zz.dds" }
+            	spriteType = { name = "GFX_gone" texturefile = "gfx/gone.dds" }
+            	spriteType = { name = "GFX_ship_sizes" textureFile = "gfx/sizes.dds" noOfFrames = 4 }
+            	spriteType = { name = "GFX_text_sheet" sprite_sheet_sprite_type = "GFX_ship_sizes" default_frame = 3 }
+            }
+            """);
+        using var g = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "g"), isBaseGame: true);
+        var s = SpriteIndex.Build([g], new List<string>());
+        string[] files = ["gfx/text_food.dds", "gfx/res_min.dds", "gfx/zz.dds", "gfx/sizes.dds"];
+
+        Assert.Equal(new IconRef("gfx/text_food.dds"), Bonus("k", false, files, s, "food"));
+        Assert.Equal(new IconRef("gfx/res_min.dds"), Bonus("k", false, files, s, "minerals"));
+        Assert.Equal(new IconRef("gfx/zz.dds"), Bonus("k", false, files, s, "zz"));
+        Assert.Equal(new IconRef("gfx/sizes.dds", 3, 4), Bonus("k", false, files, s, "sheet"));
+        Assert.Null(Bonus("k", false, files, s, "gone"));
+        Assert.Null(Bonus("k", false, files, s, "unknown"));
+        Assert.Null(Bonus("k", false, files, null, "food"));
+    }
+
+    [Fact]
+    public void Per_ship_size_bonuses_fall_back_to_the_general_ship_icon()
+    {
+        Assert.Equal(new IconRef(Mod + "mod_ship_build_speed_mult.dds"), Bonus("shipsize_corvette_build_speed_mult", false, [Mod + "mod_ship_build_speed_mult.dds"]));
+        Assert.Equal(new IconRef(Mod + "mod_ship_cost_mult.dds"), Bonus("shipsize_corvette_cost_mult", false, [Mod + "mod_ship_cost_mult.dds"]));
+        Assert.Equal(new IconRef(Mod + "mod_ship_build_cost_mult.dds"), Bonus("ship_offspring_x_cost_mult", false, [Mod + "mod_ship_cost_mult.dds", Mod + "mod_ship_build_cost_mult.dds"]));
+        Assert.Equal(new IconRef(Mod + "mod_ship_hull_mult.dds"), Bonus("shipsize_battleship_hull_mult", false, [Mod + "mod_ship_hull_mult.dds"]));
+        Assert.Null(Bonus("shipsize_battleship_hull_mult", false, []));
+        Assert.Null(Bonus("shipsize_battleship_other", false, [Mod + "mod_ship_other.dds"]));
+    }
 }

@@ -2,6 +2,10 @@
 {
     <img class="ticon" src="@Uri" width="@Size" height="@Size" alt="" />
 }
+else if (!ShowPlaceholder)
+{
+    <span class="ticon blank" style="width:@(Size)px;height:@(Size)px"></span>
+}
 else
 {
     <span class="ticon ph" style="width:@(Size)px;height:@(Size)px"></span>
@@ -10,4 +14,5 @@ else
 @code {
     [Parameter] public string? Uri { get; set; }
     [Parameter] public int Size { get; set; } = 24;
+    [Parameter] public bool ShowPlaceholder { get; set; } = true;
 }

@@ -3,7 +3,8 @@ using FazStellarisModmanager.Core.Descriptors;
 
 namespace FazStellarisModmanager.Core.Technology;
 
-public sealed record SpriteInfo(string Name, string TextureFile, int Frames);
+/// <summary>A sprite. <see cref="DefaultFrame"/> is the 1-based default_frame of a sprite that references a sheet.</summary>
+public sealed record SpriteInfo(string Name, string TextureFile, int Frames, int? DefaultFrame = null);
 
 /// <summary>GFX sprite name -> texture file (and sprite-sheet frame count), from interface/**/*.gfx. A later source's file at the same path replaces the earlier one; remaining files are read in load order, later wins per name.</summary>
 public sealed class SpriteIndex
@@ -25,7 +26,7 @@ public sealed class SpriteIndex
             foreach (var rel in source.Files("interface", ".gfx"))
                 files[rel] = (source, rel);
 
-        var map = new Dictionary<string, SpriteInfo>(StringComparer.OrdinalIgnoreCase);
+        var raw = new Dictionary<string, RawSprite>(StringComparer.OrdinalIgnoreCase);
         foreach (var (source, rel) in files.Values.OrderBy(f => f.Rel, TechDatabase.LoadOrder))
         {
             ct.ThrowIfCancellationRequested();
@@ -37,23 +38,46 @@ public sealed class SpriteIndex
                 continue;
             }
             if (!text.Contains("spriteType", StringComparison.OrdinalIgnoreCase)) continue;
-            Collect(ParadoxScriptParser.Parse(text), map);
+            Collect(ParadoxScriptParser.Parse(text), raw);
         }
-        return new SpriteIndex(map);
+        return new SpriteIndex(Resolve(raw));
     }
 
-    static void Collect(PdxBlock block, Dictionary<string, SpriteInfo> map)
+    sealed record RawSprite(string Name, string? Texture, int Frames, string? SheetRef, int? DefaultFrame);
+
+    const int MaxSheetHops = 3;
+
+    static Dictionary<string, SpriteInfo> Resolve(Dictionary<string, RawSprite> raw)
+    {
+        var map = new Dictionary<string, SpriteInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in raw.Values)
+        {
+            var cur = entry;
+            for (var hops = 0; cur.Texture is null && hops < MaxSheetHops; hops++)
+            {
+                if (cur.SheetRef is null || !raw.TryGetValue(cur.SheetRef, out var next)) break;
+                cur = next;
+            }
+            if (cur.Texture is null) continue;
+            map[entry.Name] = new SpriteInfo(entry.Name, cur.Texture, cur.Frames, entry.DefaultFrame);
+        }
+        return map;
+    }
+
+    static void Collect(PdxBlock block, Dictionary<string, RawSprite> map)
     {
         foreach (var e in block.Entries)
         {
             if (e.Value is not PdxBlock b) continue;
             if (e.Key.Equals("spriteType", StringComparison.OrdinalIgnoreCase) || e.Key.Equals("frameAnimatedSpriteType", StringComparison.OrdinalIgnoreCase))
             {
-                if (b.GetString("name") is { } name && b.GetString("texturefile") is { } texture)
-                {
-                    var frames = int.TryParse(b.GetString("noOfFrames"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && n > 0 ? n : 1;
-                    map[name] = new SpriteInfo(name, texture.Replace('\\', '/'), frames);
-                }
+                if (b.GetString("name") is not { } name) continue;
+                var texture = b.GetString("texturefile")?.Replace((char)92, '/');
+                var sheet = b.GetString("sprite_sheet_sprite_type");
+                if (texture is null && sheet is null) continue;
+                var frames = int.TryParse(b.GetString("noOfFrames"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && n > 0 ? n : 1;
+                int? defaultFrame = int.TryParse(b.GetString("default_frame"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var d) ? Math.Max(d, 1) : null;
+                map[name] = new RawSprite(name, texture, frames, sheet, defaultFrame);
             }
             else
             {
