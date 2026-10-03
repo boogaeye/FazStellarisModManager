@@ -143,4 +143,30 @@ public class ModListTests
         Assert.Equal(("ugc:1", "A", "mod/ugc_1.mod", "1"), (mod.Key, mod.Name, mod.DescriptorRel, mod.RemoteId));
         Assert.Equal(new[] { "dlc/x.dlc" }, m.DisabledDlcs);
     }
+
+    [Fact]
+    public void Delete_reports_whether_a_file_was_removed()
+    {
+        using var tmp = new TempDir();
+        var store = new ModListStore(tmp.Path);
+        store.Save(new ModList("x", [], []));
+
+        Assert.False(store.Delete("missing"));
+        Assert.True(store.Delete("x"));
+        Assert.False(store.Delete("x"));
+    }
+
+    [Fact]
+    public void ReadFile_drops_null_and_descriptorless_mod_entries()
+    {
+        using var tmp = new TempDir();
+        var store = new ModListStore(tmp.Path);
+        File.WriteAllText(Path.Combine(tmp.Path, "l.json"),
+            "{\"name\":\"L\",\"mods\":[null, {\"key\":\"ugc:1\",\"name\":\"A\",\"descriptorRel\":\"mod/ugc_1.mod\",\"remoteId\":\"1\"}, {\"key\":\"x\",\"name\":\"B\",\"descriptorRel\":null,\"remoteId\":null}],\"disabledDlcs\":[null]}");
+
+        var list = store.Load("L")!;
+
+        Assert.Equal("ugc:1", list.Mods.Single().Key);
+        Assert.Empty(list.DisabledDlcs);
+    }
 }

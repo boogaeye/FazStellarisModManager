@@ -6,5 +6,17 @@
         <NavLink href="" Match="NavLinkMatch.All">Mods</NavLink>
         <NavLink href="settings">Settings</NavLink>
     </nav>
-    <main>@Body</main>
+    <main>
+        <ErrorBoundary @ref="boundary">
+            <ChildContent>@Body</ChildContent>
+            <ErrorContent>
+                <p class="status error">Something went wrong in this page.</p>
+                <button @onclick="() => boundary?.Recover()">Recover</button>
+            </ErrorContent>
+        </ErrorBoundary>
+    </main>
 </div>
+
+@code {
+    ErrorBoundary? boundary;
+}

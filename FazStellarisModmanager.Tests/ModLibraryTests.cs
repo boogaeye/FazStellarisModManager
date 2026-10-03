@@ -115,4 +115,21 @@ public class ModLibraryTests
         var mod = ModLibrary.Scan(fake.UserDir).Single(m => m.Key == "ugc:222");
         Assert.Equal(Path.GetFullPath(expected), mod.ContentPath);
     }
+
+    [Fact]
+    public void EnsureWorkshopDescriptors_reports_an_unusable_mod_dir_instead_of_throwing()
+    {
+        using var tmp = new TempDir();
+        var user = Path.Combine(tmp.Path, "user");
+        var workshop = Path.Combine(tmp.Path, "ws");
+        Directory.CreateDirectory(user);
+        Directory.CreateDirectory(workshop);
+        File.WriteAllText(Path.Combine(user, "mod"), "not a directory");
+        var errors = new List<string>();
+
+        var created = ModLibrary.EnsureWorkshopDescriptors(user, workshop, errors);
+
+        Assert.Empty(created);
+        Assert.Single(errors);
+    }
 }

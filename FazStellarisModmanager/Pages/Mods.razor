@@ -6,7 +6,7 @@
         <header>
             <h2>Installed (@Manager.Library.Count)</h2>
             <input class="search" placeholder="Search…" @bind="filter" @bind:event="oninput" />
-            <button @onclick="Refresh">Rescan</button>
+            <button @onclick="Refresh" disabled="@busy">Rescan</button>
         </header>
         <ul class="mod-list">
             @foreach (var m in FilteredLibrary)
@@ -28,7 +28,7 @@
         <header>
             <h2>List</h2>
             <input class="list-name" @bind="listName" placeholder="List name" />
-            <select @onchange="LoadList">
+            <select @bind="selectedList" @bind:after="LoadSelected" disabled="@busy">
                 <option value="">Load list…</option>
                 @foreach (var l in savedLists)
                 {
@@ -37,11 +37,11 @@
             </select>
         </header>
         <div class="toolbar">
-            <button @onclick="ImportCurrent">Import current</button>
-            <button @onclick="Save">Save list</button>
-            <button class="danger" @onclick="DeleteList" disabled="@(!savedLists.Any(l => l.Name == listName.Trim()))">Delete list</button>
-            <button class="primary" @onclick="Apply">Apply</button>
-            <button class="primary" @onclick="ApplyAndLaunch">Apply &amp; Launch</button>
+            <button @onclick="ImportCurrent" disabled="@busy">Import current</button>
+            <button @onclick="Save" disabled="@busy">Save list</button>
+            <button class="danger" @onclick="DeleteList" disabled="@(busy || !savedLists.Any(l => string.Equals(l.Name, listName.Trim(), StringComparison.OrdinalIgnoreCase)))">Delete list</button>
+            <button class="primary" @onclick="Apply" disabled="@(busy || !loaded)">Apply</button>
+            <button class="primary" @onclick="ApplyAndLaunch" disabled="@(busy || !loaded)">Apply &amp; Launch</button>
         </div>
         <ol class="mod-list ordered">
             @for (int i = 0; i < current.Count; i++)
@@ -50,7 +50,8 @@
                 var e = current[i];
                 var installed = Manager.IsInstalled(e);
                 <li draggable="true" class="@(installed ? "" : "missing")"
-                    @ondragstart="() => dragIndex = index" @ondragover:preventDefault @ondrop="() => Drop(index)">
+                    @ondragstart="() => dragIndex = index" @ondragend="() => dragIndex = null"
+                    @ondragover:preventDefault @ondrop:preventDefault @ondrop="() => Drop(index)">
                     <span class="order">@(index + 1)</span>
                     <span class="name" title="@e.DescriptorRel">@e.Name</span>
                     @if (!installed)
@@ -59,7 +60,7 @@
                     }
                     <button class="small" @onclick="() => Move(index, -1)" disabled="@(index == 0)">↑</button>
                     <button class="small" @onclick="() => Move(index, 1)" disabled="@(index == current.Count - 1)">↓</button>
-                    <button class="small danger" @onclick="() => current.RemoveAt(index)">✕</button>
+                    <button class="small danger" @onclick="() => Remove(e)">✕</button>
                 </li>
             }
         </ol>
@@ -92,6 +93,10 @@
     IReadOnlyList<ModList> savedLists = [];
     string? status;
     bool error;
+    bool busy;
+    bool loaded;
+    bool confirmEmpty;
+    string selectedList = "";
 
     IEnumerable<InstalledMod> FilteredLibrary =>
         Manager.Library.Where(m => filter.Length == 0 || m.Name.Contains(filter, StringComparison.OrdinalIgnoreCase));
@@ -102,11 +107,13 @@
     {
         status = "Scanning mods…";
         error = false;
+        busy = true;
         await RunAsync(async () =>
         {
             await Manager.RefreshLibraryAsync();
             savedLists = Manager.Lists.LoadAll();
             SetList(Manager.ImportCurrent("Current"));
+            loaded = true;
             return $"Loaded {current.Count} enabled mods from dlc_load.json." + ErrorSuffix();
         });
     }
@@ -115,6 +122,7 @@
     {
         status = "Scanning mods…";
         error = false;
+        busy = true;
         await RunAsync(async () =>
         {
             await Manager.RefreshLibraryAsync();
@@ -125,10 +133,23 @@
     string ErrorSuffix() =>
         Manager.LibraryErrors.Count > 0 ? $" ({Manager.LibraryErrors.Count} descriptors could not be read)" : "";
 
-    void Add(InstalledMod m) => current.Add(new ModListEntry(m.Key, m.Name, m.DescriptorRel, m.RemoteId));
+    void Add(InstalledMod m)
+    {
+        confirmEmpty = false;
+        current.Add(new ModListEntry(m.Key, m.Name, m.DescriptorRel, m.RemoteId));
+    }
+
+    void Remove(ModListEntry e)
+    {
+        confirmEmpty = false;
+        current.Remove(e);
+    }
 
     void Move(int index, int delta)
     {
+        var to = index + delta;
+        if (index < 0 || index >= current.Count || to < 0 || to >= current.Count) return;
+        confirmEmpty = false;
         var e = current[index];
         current.RemoveAt(index);
         current.Insert(index + delta, e);
@@ -136,17 +157,21 @@
 
     void Drop(int target)
     {
-        if (dragIndex is not int from || from == target) return;
-        var e = current[from];
-        current.RemoveAt(from);
-        current.Insert(target, e);
+        var from = dragIndex;
         dragIndex = null;
+        if (from is not int f || f == target) return;
+        if (f < 0 || f >= current.Count || target < 0 || target >= current.Count) return;
+        confirmEmpty = false;
+        var e = current[f];
+        current.RemoveAt(f);
+        current.Insert(target, e);
     }
 
     ModList Build() => new(listName.Trim(), current.ToList(), disabledDlcs.ToList());
 
     void SetList(ModList list)
     {
+        confirmEmpty = false;
         listName = list.Name;
         current = list.Mods.ToList();
         disabledDlcs = list.DisabledDlcs.ToList();
@@ -154,7 +179,9 @@
 
     void ImportCurrent() => Run(() =>
     {
+        selectedList = "";
         SetList(Manager.ImportCurrent("Current"));
+        loaded = true;
         return $"Imported {current.Count} mods from dlc_load.json.";
     });
 
@@ -167,29 +194,58 @@
 
     void DeleteList() => Run(() =>
     {
-        Manager.Lists.Delete(listName);
+        var name = listName.Trim();
+        var deleted = Manager.Lists.Delete(name);
         savedLists = Manager.Lists.LoadAll();
-        return $"Deleted list '{listName.Trim()}'.";
+        return deleted ? $"Deleted list '{name}'." : $"No saved list named '{name}'.";
     });
 
-    void LoadList(ChangeEventArgs e) => Run(() =>
+    void LoadSelected() => Run(() =>
     {
-        if (e.Value is not string name || name.Length == 0) return null;
+        var name = selectedList;
+        selectedList = "";
+        if (name.Length == 0) return null;
         SetList(Manager.Lists.Load(name) ?? throw new InvalidOperationException($"List '{name}' not found."));
+        loaded = true;
         return $"Loaded list '{name}'.";
     });
 
     void Apply() => Run(() =>
     {
+        if (current.Count == 0 && !confirmEmpty)
+        {
+            confirmEmpty = true;
+            return "Click Apply again to write an empty mod list.";
+        }
+        confirmEmpty = false;
         var backup = Manager.Apply(Build());
         return $"Applied {current.Count} mods to dlc_load.json" + (backup is null ? "." : $" (backup: {Path.GetFileName(backup)}).");
     });
 
     void ApplyAndLaunch() => Run(() =>
     {
+        if (Manager.Resolve().GameDir is null)
+        {
+            (status, error) = ("Stellaris install not found. Set the game folder in Settings.", true);
+            return null;
+        }
+        if (current.Count == 0 && !confirmEmpty)
+        {
+            confirmEmpty = true;
+            return "Click Apply again to write an empty mod list.";
+        }
+        confirmEmpty = false;
         var steamWarning = GameLauncher.IsSteamRunning() ? "" : " Warning: Steam does not appear to be running.";
         Manager.Apply(Build());
-        Manager.Launch();
+        try
+        {
+            Manager.Launch();
+        }
+        catch (Exception ex)
+        {
+            (status, error) = ($"Applied, but launch failed: {ex.Message}", true);
+            return null;
+        }
         return "Applied and launched Stellaris." + steamWarning;
     });
 
@@ -204,6 +260,10 @@
                                    or System.Text.Json.JsonException or System.ComponentModel.Win32Exception or InvalidDataException)
         {
             (status, error) = (ex.Message, true);
+        }
+        finally
+        {
+            busy = false;
         }
     }
 

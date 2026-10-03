@@ -13,9 +13,19 @@ public static class ModLibrary
         var created = new List<string>();
         if (!Directory.Exists(workshopDir)) return created;
         var modDir = Path.Combine(userDir, "mod");
-        Directory.CreateDirectory(modDir);
+        List<string> workshopDirs;
+        try
+        {
+            Directory.CreateDirectory(modDir);
+            workshopDirs = Directory.EnumerateDirectories(workshopDir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            errors?.Add($"Workshop descriptors: {e.Message}");
+            return created;
+        }
 
-        foreach (var dir in Directory.EnumerateDirectories(workshopDir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+        foreach (var dir in workshopDirs)
         {
             var id = Path.GetFileName(dir);
             if (!ulong.TryParse(id, out _)) continue;

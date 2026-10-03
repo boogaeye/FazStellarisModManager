@@ -30,12 +30,15 @@ public sealed class ModListStore(string directory)
         AtomicFile.WriteAllText(path, JsonSerializer.Serialize(list, Json));
     }
 
-    public void Delete(string name)
+    /// <summary>Deletes the named list; returns true only if a file was deleted.</summary>
+    public bool Delete(string name)
     {
         var path = PathFor(name);
-        if (!File.Exists(path)) return;
+        if (!File.Exists(path)) return false;
         var stored = ReadFile(path);
-        if (stored is null || SameName(stored.Name, name)) File.Delete(path);
+        if (stored is not null && !SameName(stored.Name, name)) return false;
+        File.Delete(path);
+        return true;
     }
 
     static bool SameName(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
@@ -67,7 +70,12 @@ public sealed class ModListStore(string directory)
         try
         {
             var list = JsonSerializer.Deserialize<ModList>(File.ReadAllText(path), Json);
-            return list is { Name: not null, Mods: not null, DisabledDlcs: not null } ? list : null; // corrupt files are skipped, not fatal
+            if (list is not { Name: not null, Mods: not null, DisabledDlcs: not null }) return null; // corrupt files are skipped, not fatal
+            return list with
+            {
+                Mods = list.Mods.Where(m => m is not null && !string.IsNullOrEmpty(m.DescriptorRel)).ToList(),
+                DisabledDlcs = list.DisabledDlcs.Where(d => d is not null).ToList(),
+            };
         }
         catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException) { return null; }
     }
