@@ -53,4 +53,32 @@ public class ScriptPrintingTests
         Assert.Equal(new[] { "years_passed", " ", ">=", " ", "5" }, ScriptHighlighter.Line("years_passed >= 5").Select(t => t.Text));
         Assert.Equal(ScriptTokenKind.Plain, ScriptHighlighter.Line("modifier = {").Last().Kind);
     }
+
+    [Fact]
+    public void Quotes_values_with_special_characters_and_highlighting_ignores_hash_in_quotes()
+    {
+        var text = PdxScriptPrinter.Print(ParadoxScriptParser.Parse("a = \"x # y\""));
+
+        Assert.Equal("a = \"x # y\"", text);
+        Assert.DoesNotContain(ScriptHighlighter.Line(text), t => t.Kind == ScriptTokenKind.Comment);
+    }
+
+    [Fact]
+    public void Escapes_quotes_inside_quoted_values() =>
+        Assert.Equal("a = \"x\\\"y=z\"", PdxScriptPrinter.Print(Single("x\"y=z")));
+
+    static PdxBlock Single(string value)
+    {
+        var b = new PdxBlock();
+        b.Entries.Add(new PdxEntry("a", "=", value));
+        return b;
+    }
+
+    [Fact]
+    public void Highlights_optional_assignment_operator() =>
+        Assert.Contains(ScriptHighlighter.Line("a ?= b"), t => t is { Text: "?=", Kind: ScriptTokenKind.Operator });
+
+    [Fact]
+    public void Annotations_are_single_line() =>
+        Assert.Equal("a = b   # line1 line2", PdxScriptPrinter.Print(ParadoxScriptParser.Parse("a = b"), v => "line1\nline2"));
 }

@@ -90,4 +90,33 @@ public class TechDetailsTests
         Assert.Null(d.PotentialScript);
         Assert.Equal("tech_y = {\n    area = physics\n}", d.RawScript);
     }
+
+    [Fact]
+    public void Formats_resolved_tiny_and_zero_bonuses_and_drops_empty_scripts()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("g/common/technology/00_t.txt", "tech_z = { area = physics potential = { } modifier = { x_mult = @b y_mult = 0.00001 z_add = 0 n_add = nan } }");
+        tmp.Write("g/common/scripted_variables/00_v.txt", "@b = 0.1\n");
+        using var source = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "g"), isBaseGame: true);
+
+        var d = TechDatabase.Build([source]).Techs["tech_z"].Details;
+
+        Assert.Equal(new[] { "+10%", "+0.001%", "0", "nan" }, d.Bonuses.Select(b => b.Display));
+        Assert.Null(d.PotentialScript);
+    }
+
+    [Fact]
+    public void Annotations_use_a_cache_and_skip_stop_words()
+    {
+        var loc = new Localisation();
+        loc.AddText("l_english:\n always:0 \"Always\"\n foo:0 \"Foo Name\"\n");
+        var cache = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var wrapper = FazStellarisModmanager.Core.Descriptors.ParadoxScriptParser.Parse("t = { potential = { x = always y = foo } }").GetBlock("t")!;
+
+        var d = TechDetailsBuilder.Build("t", wrapper, loc, new Dictionary<string, string>(), new Dictionary<string, string>(), cache);
+
+        Assert.Equal("x = always\ny = foo   # Foo Name", d.PotentialScript);
+        Assert.True(cache.ContainsKey("foo"));
+        Assert.False(cache.ContainsKey("always"));
+    }
 }

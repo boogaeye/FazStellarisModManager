@@ -9,12 +9,12 @@ public sealed record ScriptToken(string Text, ScriptTokenKind Kind);
 /// <summary>Splits one line printed by <see cref="PdxScriptPrinter"/> into parts the UI colours.</summary>
 public static class ScriptHighlighter
 {
-    static readonly Regex Assignment = new(@"^(\s*)([^\s=<>!{}]+)(\s*)(>=|<=|!=|==|=|<|>)(\s*)(.*)$", RegexOptions.Compiled);
+    static readonly Regex Assignment = new(@"^(\s*)([^\s=<>!{}]+)(\s*)(>=|<=|!=|==|\?=|=|<|>)(\s*)(.*)$", RegexOptions.Compiled);
 
     public static List<ScriptToken> Line(string line)
     {
         var tokens = new List<ScriptToken>();
-        var hash = line.IndexOf('#');
+        var hash = CommentStart(line);
         var code = hash >= 0 ? line[..hash] : line;
         var m = Assignment.Match(code);
         if (m.Success)
@@ -33,6 +33,20 @@ public static class ScriptHighlighter
         }
         if (hash >= 0) Add(tokens, line[hash..], ScriptTokenKind.Comment);
         return tokens;
+    }
+
+    /// <summary>Index of the first '#' outside double quotes (honouring escaped quotes), or -1.</summary>
+    static int CommentStart(string line)
+    {
+        var inQuote = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var c = line[i];
+            if (c == '\\' && inQuote) i++;
+            else if (c == '"') inQuote = !inQuote;
+            else if (c == '#' && !inQuote) return i;
+        }
+        return -1;
     }
 
     static void Add(List<ScriptToken> tokens, string text, ScriptTokenKind kind)

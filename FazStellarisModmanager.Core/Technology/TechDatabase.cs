@@ -176,6 +176,7 @@ public sealed class TechDatabase
         var loc = Localisation.Load(sources, warnings);
 
         var techs = new Dictionary<string, Tech>(StringComparer.OrdinalIgnoreCase);
+        var annotationCache = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var (key, (def, src, locals)) in defs)
         {
             var tierText = def.Tier is null ? null : ScriptedVariables.Resolve(def.Tier, locals, globals);
@@ -196,7 +197,7 @@ public sealed class TechDatabase
                 def.Dlcs,
                 src,
                 overridden.TryGetValue(key, out var o) ? o.Distinct().ToList() : [],
-                TechDetailsBuilder.Build(def.Key, def.Block, loc, locals, globals));
+                TechDetailsBuilder.Build(def.Key, def.Block, loc, locals, globals, annotationCache));
         }
 
         var dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);

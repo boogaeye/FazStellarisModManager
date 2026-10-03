@@ -52,4 +52,13 @@ public class LocalisationTests
 
         Assert.Equal("Monthly Energy Credits", loc.Get("MOD_COUNTRY_ENERGY_PRODUCES_MULT"));
     }
+
+    [Fact]
+    public void Reference_cycles_terminate()
+    {
+        var loc = new Localisation();
+        loc.AddText("l_english:\n a:0 \"$b$\"\n b:0 \"$a$\"\n");
+
+        Assert.NotNull(loc.Get("a"));
+    }
 }

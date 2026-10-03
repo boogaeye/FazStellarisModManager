@@ -22,24 +22,40 @@ public sealed record TechDetails(
     string? WeightModifierScript,
     string? AiWeightScript,
     string? PotentialScript,
-    string RawScript);
+    string RawScript)
+{
+    public static TechDetails Empty { get; } = new([], [], [], null, [], null, null, null, null, "");
+}
 
 public static class TechDetailsBuilder
 {
     static readonly Regex Identifier = new(@"^[A-Za-z_][A-Za-z0-9_.]*$", RegexOptions.Compiled);
 
-    public static TechDetails Build(string key, PdxBlock block, Localisation loc,
-        IReadOnlyDictionary<string, string> locals, IReadOnlyDictionary<string, string> globals)
+    static readonly HashSet<string> NoAnnotate = new(StringComparer.OrdinalIgnoreCase)
     {
-        // "# name" annotations: only for identifier-like values with a short localised name.
-        string? Annotate(string v) =>
-            Identifier.IsMatch(v) && v is not ("yes" or "no") && loc.Get(v) is { Length: > 0 and <= 60 } name ? name : null;
+        "yes", "no", "always", "never", "root", "from", "owner", "this", "prev", "value", "factor", "add", "base",
+    };
 
-        string? Script(string name) => block.GetBlock(name) is { } b ? PdxScriptPrinter.Print(b, Annotate) : null;
+    public static TechDetails Build(string key, PdxBlock block, Localisation loc,
+        IReadOnlyDictionary<string, string> locals, IReadOnlyDictionary<string, string> globals,
+        Dictionary<string, string?>? annotationCache = null)
+    {
+        // "# name" annotations: only for identifier-like values with a short localised name. Cached per value when a cache is given.
+        string? Annotate(string v)
+        {
+            if (!Identifier.IsMatch(v) || NoAnnotate.Contains(v)) return null;
+            if (annotationCache is not null && annotationCache.TryGetValue(v, out var cached)) return cached;
+            var name = loc.Get(v) is { Length: > 0 and <= 60 } n ? n : null;
+            if (annotationCache is not null) annotationCache[v] = name;
+            return name;
+        }
+
+        string? Script(string name) =>
+            block.GetBlock(name) is { } b && PdxScriptPrinter.Print(b, Annotate) is { Length: > 0 } text ? text : null;
 
         var bonuses = (block.GetBlock("modifier")?.Entries ?? [])
             .Where(e => e.Value is string)
-            .Select(e => Bonus(e.Key, (string)e.Value, loc))
+            .Select(e => Bonus(e.Key, (string)e.Value, loc, locals, globals))
             .ToList();
 
         var custom = new List<CustomUnlock>();
@@ -67,6 +83,7 @@ public static class TechDetailsBuilder
             block.GetBlock("feature_flags")?.StringItems.ToList() ?? [],
             block.GetString("gateway"),
             swaps,
+            // A block-form weight is not a plain number; leave Weight null (weight_modifier/ai_weight cover those).
             block.GetString("weight") is { } w ? ScriptedVariables.Resolve(w, locals, globals) : null,
             Script("weight_modifier"),
             Script("ai_weight"),
@@ -75,16 +92,25 @@ public static class TechDetailsBuilder
     }
 
     /// <summary>_mult values show as signed percentages, _add values as signed numbers, anything else as written. Name from mod_KEY localisation.</summary>
-    public static StatBonus Bonus(string key, string raw, Localisation loc)
+    public static StatBonus Bonus(string key, string raw, Localisation loc,
+        IReadOnlyDictionary<string, string> locals, IReadOnlyDictionary<string, string> globals)
     {
         var name = loc.Get("mod_" + key) ?? key;
-        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var v))
+        raw = ScriptedVariables.Resolve(raw, locals, globals);
+        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || !double.IsFinite(v))
             return new StatBonus(key, raw, name, raw, false);
-        var sign = v < 0 ? "-" : "+";
-        var display = key.EndsWith("_mult", StringComparison.OrdinalIgnoreCase) ? sign + Number(Math.Abs(v) * 100) + "%"
-            : key.EndsWith("_add", StringComparison.OrdinalIgnoreCase) ? sign + Number(Math.Abs(v))
+        var display = key.EndsWith("_mult", StringComparison.OrdinalIgnoreCase) ? Signed(v * 100) + "%"
+            : key.EndsWith("_add", StringComparison.OrdinalIgnoreCase) ? Signed(v)
             : raw;
         return new StatBonus(key, raw, name, display, v < 0);
+    }
+
+    static string Signed(double v)
+    {
+        if (v == 0) return "0";
+        var abs = Math.Abs(v);
+        var text = Math.Round(abs, 2) == 0 ? abs.ToString("0.####", CultureInfo.InvariantCulture) : Number(abs);
+        return (v < 0 ? "-" : "+") + text;
     }
 
     static string Number(double v) => Math.Round(v, 2).ToString("0.##", CultureInfo.InvariantCulture);

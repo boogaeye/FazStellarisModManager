@@ -58,12 +58,15 @@ public static class PdxScriptPrinter
 
     static void Indent(StringBuilder sb, int depth) => sb.Append(' ', depth * 4);
 
-    static string Value(string s) => s.Length == 0 || s.Any(char.IsWhiteSpace) ? "\"" + s + "\"" : s;
+    static string Value(string s) =>
+        s.Length == 0 || s.Any(c => char.IsWhiteSpace(c) || "#={}\"<>!".Contains(c))
+            ? "\"" + s.Replace("\"", "\\\"") + "\""
+            : s;
 
     static string Note(string value, Func<string, string?>? annotate)
     {
         if (annotate is null) return "";
-        var name = annotate(value);
+        var name = annotate(value)?.Replace('\r', ' ').Replace('\n', ' ').Trim();
         return string.IsNullOrEmpty(name) || string.Equals(name, value, StringComparison.OrdinalIgnoreCase) ? "" : "   # " + name;
     }
 }
