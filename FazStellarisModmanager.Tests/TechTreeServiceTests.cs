@@ -75,7 +75,7 @@ public class TechTreeServiceTests
         var (fake, _, tree) = Create();
         using var _cleanup = fake;
 
-        Assert.Null(tree.IconUri(new Tech("tech_a", "A", null, TechArea.Physics, 0, null, "", [], false, false, false, false, "tech_a", [], new TechSourceRef("x", true, "f"), [])));
+        Assert.Null(tree.IconUri(new Tech("tech_a", "A", null, TechArea.Physics, 0, null, "", [], false, false, false, false, "tech_a", [], new TechSourceRef("x", true, "f"), [], new TechDetails([], [], [], null, [], null, null, null, null, ""))));
     }
 
     [Fact]

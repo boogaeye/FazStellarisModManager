@@ -15,7 +15,8 @@ public sealed record TechDefinition(
     bool IsDangerous,
     bool IsRepeatable,
     string? Icon,
-    IReadOnlyList<string> Dlcs);
+    IReadOnlyList<string> Dlcs,
+    PdxBlock Block);
 
 public static class TechParser
 {
@@ -40,7 +41,8 @@ public static class TechParser
                 Yes(b, "is_dangerous"),
                 levels is not null && levels != "1" && levels != "0",
                 b.GetString("icon"),
-                FindDlcs(b.GetBlock("potential")).Distinct(StringComparer.OrdinalIgnoreCase).ToList()));
+                FindDlcs(b.GetBlock("potential")).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                b));
         }
         return result;
     }

@@ -23,7 +23,8 @@ public sealed record Tech(
     string IconKey,
     IReadOnlyList<string> Dlcs,
     TechSourceRef Source,
-    IReadOnlyList<TechSourceRef> Overridden)
+    IReadOnlyList<TechSourceRef> Overridden,
+    TechDetails Details)
 {
     /// <summary>The winning definition comes from a mod (added or overridden by it).</summary>
     public bool ChangedByMods => !Source.IsBaseGame;
@@ -194,7 +195,8 @@ public sealed class TechDatabase
                 def.Icon ?? def.Key,
                 def.Dlcs,
                 src,
-                overridden.TryGetValue(key, out var o) ? o.Distinct().ToList() : []);
+                overridden.TryGetValue(key, out var o) ? o.Distinct().ToList() : [],
+                TechDetailsBuilder.Build(def.Key, def.Block, loc, locals, globals));
         }
 
         var dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
