@@ -34,25 +34,30 @@ public static class ParadoxScriptParser
     {
         var tokens = Tokenize(text);
         int pos = 0;
-        return ParseBlock(tokens, ref pos, topLevel: true);
+        return ParseBlock(tokens, ref pos, depth: 0);
     }
 
-    static PdxBlock ParseBlock(List<Token> t, ref int pos, bool topLevel)
+    const int MaxDepth = 256; // third-party input: bound recursion
+
+    static PdxBlock ParseBlock(List<Token> t, ref int pos, int depth)
     {
         var block = new PdxBlock();
+        int skipped = 0; // too-deep '{' flattened into this block; their '}' must not close it
         while (pos < t.Count)
         {
             var tok = t[pos];
             if (tok.Kind == Kind.Close)
             {
                 pos++;
-                if (topLevel) continue; // stray '}' at top level: ignore
+                if (skipped > 0) { skipped--; continue; }
+                if (depth == 0) continue; // stray '}' at top level: ignore
                 return block;
             }
             if (tok.Kind == Kind.Open)
             {
                 pos++;
-                block.Items.Add(ParseBlock(t, ref pos, topLevel: false));
+                if (depth >= MaxDepth) skipped++;
+                else block.Items.Add(ParseBlock(t, ref pos, depth + 1));
                 continue;
             }
             if (tok.Kind == Kind.Op) { pos++; continue; } // stray operator
@@ -66,7 +71,8 @@ public static class ParadoxScriptParser
                 if (v.Kind == Kind.Open)
                 {
                     pos++;
-                    block.Entries.Add(new PdxEntry(tok.Text, op, ParseBlock(t, ref pos, topLevel: false)));
+                    if (depth >= MaxDepth) skipped++;
+                    else block.Entries.Add(new PdxEntry(tok.Text, op, ParseBlock(t, ref pos, depth + 1)));
                 }
                 else if (v.Kind is Kind.Word or Kind.Quoted)
                 {
@@ -83,6 +89,14 @@ public static class ParadoxScriptParser
         return block;
     }
 
+    /// <summary>True if the quote at q is followed only by spaces/tabs then a line break or end of input (so a preceding backslash is literal, e.g. a path).</summary>
+    static bool QuoteEndsLine(string s, int q)
+    {
+        int j = q + 1;
+        while (j < s.Length && (s[j] is ' ' or '\t')) j++;
+        return j >= s.Length || (s[j] is '\n' or '\r');
+    }
+
     static List<Token> Tokenize(string s)
     {
         var list = new List<Token>();
@@ -94,7 +108,7 @@ public static class ParadoxScriptParser
             if (c == '#') { while (i < s.Length && s[i] != '\n') i++; continue; }
             if (c == '{') { list.Add(new Token(Kind.Open, "{")); i++; continue; }
             if (c == '}') { list.Add(new Token(Kind.Close, "}")); i++; continue; }
-            if (c is '=' or '<' or '>' or '!')
+            if (c is '=' or '<' or '>' or '!' || (c == '?' && i + 1 < s.Length && s[i + 1] == '='))
             {
                 if (i + 1 < s.Length && s[i + 1] == '=') { list.Add(new Token(Kind.Op, s.Substring(i, 2))); i += 2; }
                 else { list.Add(new Token(Kind.Op, c.ToString())); i++; }
@@ -106,7 +120,7 @@ public static class ParadoxScriptParser
                 i++;
                 while (i < s.Length && s[i] != '"')
                 {
-                    if (s[i] == '\\' && i + 1 < s.Length && s[i + 1] is '"' or '\\') { sb.Append(s[i + 1]); i += 2; continue; }
+                    if (s[i] == '\\' && i + 1 < s.Length && s[i + 1] == '"' && !QuoteEndsLine(s, i + 1)) { sb.Append('"'); i += 2; continue; }
                     sb.Append(s[i]);
                     i++;
                 }
@@ -115,7 +129,8 @@ public static class ParadoxScriptParser
                 continue;
             }
             int start = i;
-            while (i < s.Length && !char.IsWhiteSpace(s[i]) && s[i] is not ('{' or '}' or '=' or '<' or '>' or '!' or '"' or '#')) i++;
+            while (i < s.Length && !char.IsWhiteSpace(s[i]) && s[i] is not ('{' or '}' or '=' or '<' or '>' or '!' or '"' or '#')
+                   && !(s[i] == '?' && i + 1 < s.Length && s[i + 1] == '=')) i++;
             list.Add(new Token(Kind.Word, s[start..i]));
         }
         return list;
