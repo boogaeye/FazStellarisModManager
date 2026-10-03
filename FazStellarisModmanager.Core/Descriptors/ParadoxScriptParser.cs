@@ -86,7 +86,7 @@ public static class ParadoxScriptParser
     static List<Token> Tokenize(string s)
     {
         var list = new List<Token>();
-        int i = s.Length > 0 && s[0] == '﻿' ? 1 : 0;
+        int i = s.Length > 0 && s[0] == 'FEFF' ? 1 : 0;
         while (i < s.Length)
         {
             char c = s[i];

@@ -7,7 +7,7 @@ public class ParadoxScriptParserTests
     [Fact]
     public void Parses_key_values_blocks_and_bare_items()
     {
-        var text = "﻿name=\"My Mod\"\n# comment\ntags={\n\t\"Balance\"\n\t\"Gameplay\"\n}\nsupported_version=\"v4.*\"\nversion = 1.2\n";
+        var text = "FEFFname=\"My Mod\"\n# comment\ntags={\n\t\"Balance\"\n\t\"Gameplay\"\n}\nsupported_version=\"v4.*\"\nversion = 1.2\n";
 
         var b = ParadoxScriptParser.Parse(text);
 
