@@ -58,4 +58,89 @@ public class ModListTests
 
         Assert.Throws<ArgumentException>(() => store.Save(new ModList("  ", [], [])));
     }
+
+    [Fact]
+    public void Save_rejects_a_different_list_that_sanitizes_to_the_same_file()
+    {
+        using var tmp = new TempDir();
+        var store = new ModListStore(tmp.Path);
+        store.Save(new ModList("a/b", [], []));
+
+        Assert.Throws<InvalidOperationException>(() => store.Save(new ModList("a?b", [], [])));
+        Assert.NotNull(store.Load("a/b"));
+        Assert.Null(store.Load("a?b"));
+    }
+
+    [Fact]
+    public void Save_allows_case_only_rename_of_the_same_list()
+    {
+        using var tmp = new TempDir();
+        var store = new ModListStore(tmp.Path);
+        store.Save(new ModList("Foo", [], []));
+        store.Save(new ModList("foo", [], []));
+
+        Assert.Equal(new[] { "foo" }, store.LoadAll().Select(l => l.Name));
+    }
+
+    [Fact]
+    public void Reserved_device_names_round_trip()
+    {
+        using var tmp = new TempDir();
+        var store = new ModListStore(tmp.Path);
+        store.Save(new ModList("CON", [], []));
+        store.Save(new ModList("con.txt", [], []));
+
+        Assert.Equal("CON", store.Load("CON")!.Name);
+        Assert.Equal("con.txt", store.Load("con.txt")!.Name);
+    }
+
+    [Fact]
+    public void Delete_leaves_a_different_list_with_the_same_file_name()
+    {
+        using var tmp = new TempDir();
+        var store = new ModListStore(tmp.Path);
+        store.Save(new ModList("a/b", [], []));
+
+        store.Delete("a?b");
+        Assert.NotNull(store.Load("a/b"));
+        store.Delete("A/B");
+        Assert.Null(store.Load("a/b"));
+    }
+
+    [Fact]
+    public void Corrupt_files_are_skipped_and_corrupt_target_can_be_deleted()
+    {
+        using var tmp = new TempDir();
+        var store = new ModListStore(tmp.Path);
+        store.Save(new ModList("good", [], []));
+        File.WriteAllText(Path.Combine(tmp.Path, "bad.json"), "{not json");
+        File.WriteAllText(Path.Combine(tmp.Path, "empty.json"), "{}");
+
+        Assert.Equal(new[] { "good" }, store.LoadAll().Select(l => l.Name));
+        store.Delete("bad");
+        Assert.False(File.Exists(Path.Combine(tmp.Path, "bad.json")));
+    }
+
+    [Fact]
+    public void Missing_directory_and_missing_list_are_empty()
+    {
+        using var tmp = new TempDir();
+        var store = new ModListStore(Path.Combine(tmp.Path, "nope"));
+
+        Assert.Empty(store.LoadAll());
+        Assert.Null(store.Load("x"));
+    }
+
+    [Fact]
+    public void Round_trip_preserves_all_fields()
+    {
+        using var tmp = new TempDir();
+        var store = new ModListStore(tmp.Path);
+        store.Save(new ModList("L", [new("ugc:1", "A", "mod/ugc_1.mod", "1")], ["dlc/x.dlc"]));
+
+        var m = store.Load("L")!;
+        var mod = m.Mods.Single();
+        Assert.Equal(("ugc:1", "A", "mod/ugc_1.mod", "1"), (mod.Key, mod.Name, mod.DescriptorRel, mod.RemoteId));
+        Assert.Equal(new[] { "dlc/x.dlc" }, m.DisabledDlcs);
+    }
 }

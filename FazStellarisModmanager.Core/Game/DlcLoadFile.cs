@@ -1,5 +1,6 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using FazStellarisModmanager.Core.IO;
 
 namespace FazStellarisModmanager.Core.Game;
 
@@ -64,17 +65,7 @@ public static class DlcLoadFile
         Directory.CreateDirectory(userDir);
         // Unknown root keys are not preserved (Stellaris only uses these two).
         var json = JsonSerializer.Serialize(new { disabled_dlcs = load.DisabledDlcs, enabled_mods = load.EnabledMods }, WriteOptions);
-        var tmp = path + ".tmp";
-        try
-        {
-            File.WriteAllText(tmp, json);
-            File.Move(tmp, path, overwrite: true);
-        }
-        catch
-        {
-            try { File.Delete(tmp); } catch { }
-            throw;
-        }
+        AtomicFile.WriteAllText(path, json);
         return backup;
     }
 
