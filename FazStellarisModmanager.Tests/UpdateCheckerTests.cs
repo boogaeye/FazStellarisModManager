@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using FazStellarisModmanager.Core.Updates;
 using FazStellarisModmanager.Tests.TestUtil;
@@ -104,5 +105,71 @@ public class UpdateCheckerTests
 
         Assert.Equal(UpdateStatus.Failed, (await Checker(new FakeHttp(_ => FakeHttp.Json("not json"))).CheckAsync(current)).Status);
         Assert.Equal(UpdateStatus.Failed, (await Checker(new FakeHttp(_ => FakeHttp.Json(Release("nightly")))).CheckAsync(current)).Status);
+    }
+
+    [Fact]
+    public void Reads_the_sha256_digest_and_ignores_a_size_that_is_not_a_number()
+    {
+        const string hex = "0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef";
+        var json = $$"""
+            { "tag_name": "v0.2.0", "assets": [
+                { "name": "App-win-x64.zip", "browser_download_url": "https://x/app.zip", "size": "big", "digest": "sha256:{{hex}}" } ] }
+            """;
+        var info = UpdateChecker.Parse(json)!;
+        Assert.Equal(0, info.Size);
+        Assert.Equal(hex.ToLowerInvariant(), info.Sha256);
+
+        Assert.Null(UpdateChecker.Parse(json.Replace("sha256:", "md5:"))!.Sha256);
+        Assert.Null(UpdateChecker.Parse(json.Replace("sha256:0123", "sha256:xyz3"))!.Sha256);
+        Assert.Null(UpdateChecker.Parse(Release("v0.2.0", ("App-win-x64.zip", "https://x/app.zip", 5)))!.Sha256);
+    }
+
+    [Fact]
+    public async Task A_bogus_charset_or_a_non_number_size_does_not_throw()
+    {
+        var current = new Version(0, 1, 0);
+        var bogus = await Checker(new FakeHttp(_ =>
+        {
+            var content = new ByteArrayContent("{}"u8.ToArray());
+            content.Headers.ContentType = MediaTypeHeaderValue.Parse("application/json; charset=bogus-charset");
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        })).CheckAsync(current);
+        Assert.Equal(UpdateStatus.Failed, bogus.Status);
+        Assert.False(string.IsNullOrEmpty(bogus.Error));
+
+        var json = """{ "tag_name": "v0.2.0", "assets": [ { "name": "App-win-x64.zip", "browser_download_url": "https://x/app.zip", "size": "big" } ] }""";
+        var odd = await Checker(new FakeHttp(_ => FakeHttp.Json(json))).CheckAsync(current);
+        Assert.Equal(UpdateStatus.Available, odd.Status);
+        Assert.Equal(0, odd.Update!.Size);
+    }
+
+    [Fact]
+    public async Task Any_other_exception_fails_quietly_but_caller_cancellation_throws()
+    {
+        var current = new Version(0, 1, 0);
+        var odd = await Checker(new FakeHttp(_ => throw new InvalidOperationException("odd"))).CheckAsync(current);
+        Assert.Equal((UpdateStatus.Failed, "odd"), (odd.Status, odd.Error));
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            Checker(new FakeHttp(_ => throw new OperationCanceledException(cts.Token))).CheckAsync(current, cts.Token));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task An_exhausted_rate_limit_says_so(HttpStatusCode status)
+    {
+        var limited = await Checker(new FakeHttp(_ =>
+        {
+            var r = FakeHttp.Json("{}", status);
+            r.Headers.Add("x-ratelimit-remaining", "0");
+            return r;
+        })).CheckAsync(new Version(0, 1, 0));
+        Assert.Equal((UpdateStatus.Failed, "GitHub's rate limit was reached; try again later."), (limited.Status, limited.Error));
+
+        var forbidden = await Checker(new FakeHttp(_ => FakeHttp.Json("{}", HttpStatusCode.Forbidden))).CheckAsync(new Version(0, 1, 0));
+        Assert.Contains("403", forbidden.Error);
     }
 }

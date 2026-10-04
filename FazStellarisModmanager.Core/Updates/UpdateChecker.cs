@@ -4,8 +4,11 @@ using System.Text.Json;
 
 namespace FazStellarisModmanager.Core.Updates;
 
-/// <summary>A published release. <see cref="DownloadUrl"/> is null when the release has no Windows zip.</summary>
-public sealed record UpdateInfo(Version Version, string Tag, string Name, string? Notes, string PageUrl, string? DownloadUrl, long Size);
+/// <summary>
+/// A published release. <see cref="DownloadUrl"/> is null when the release has no Windows zip.
+/// <see cref="Sha256"/> is the zip's lowercase hex SHA-256 from GitHub's asset digest, or null when GitHub gave none.
+/// </summary>
+public sealed record UpdateInfo(Version Version, string Tag, string Name, string? Notes, string PageUrl, string? DownloadUrl, long Size, string? Sha256 = null);
 
 public enum UpdateStatus { UpToDate, Available, NoReleases, Failed }
 
@@ -21,7 +24,7 @@ public sealed class UpdateChecker(HttpClient http, string repository = UpdateChe
 
     static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
 
-    /// <summary>Never throws for network or GitHub problems: those come back as <see cref="UpdateStatus.Failed"/> with a message.</summary>
+    /// <summary>Never throws except when <paramref name="ct"/> is cancelled: every problem comes back as <see cref="UpdateStatus.Failed"/> with a message.</summary>
     public async Task<UpdateCheckResult> CheckAsync(Version current, CancellationToken ct = default)
     {
         current = Normalize(current);
@@ -34,6 +37,9 @@ public sealed class UpdateChecker(HttpClient http, string repository = UpdateChe
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
             using var response = await http.SendAsync(request, timeout.Token);
             if (response.StatusCode == HttpStatusCode.NotFound) return new UpdateCheckResult(UpdateStatus.NoReleases, current);
+            if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests
+                && response.Headers.TryGetValues("x-ratelimit-remaining", out var remaining) && remaining.Contains("0"))
+                return new UpdateCheckResult(UpdateStatus.Failed, current, Error: "GitHub's rate limit was reached; try again later.");
             if (!response.IsSuccessStatusCode)
                 return new UpdateCheckResult(UpdateStatus.Failed, current, Error: $"GitHub answered {(int)response.StatusCode} {response.ReasonPhrase}.");
             var release = Parse(await response.Content.ReadAsStringAsync(timeout.Token), repository);
@@ -43,13 +49,10 @@ public sealed class UpdateChecker(HttpClient http, string repository = UpdateChe
                 ? new UpdateCheckResult(UpdateStatus.Available, current, release)
                 : new UpdateCheckResult(UpdateStatus.UpToDate, current);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            return new UpdateCheckResult(UpdateStatus.Failed, current, Error: "GitHub did not answer in time.");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException)
-        {
-            return new UpdateCheckResult(UpdateStatus.Failed, current, Error: ex.Message);
+            return new UpdateCheckResult(UpdateStatus.Failed, current,
+                Error: ex is OperationCanceledException ? "GitHub did not answer in time." : ex.Message);
         }
     }
 
@@ -61,20 +64,31 @@ public sealed class UpdateChecker(HttpClient http, string repository = UpdateChe
         if (Str(root, "tag_name") is not { } tag || !TryParseVersion(tag, out var version)) return null;
         string? url = null;
         long size = 0;
+        string? sha256 = null;
         if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
             foreach (var asset in assets.EnumerateArray())
                 if (Str(asset, "name") is { } name && name.EndsWith(AssetSuffix, StringComparison.OrdinalIgnoreCase)
                     && Str(asset, "browser_download_url") is { } link)
                 {
                     url = link;
-                    size = asset.TryGetProperty("size", out var s) && s.TryGetInt64(out var n) ? n : 0;
+                    size = asset.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt64(out var n) ? n : 0;
+                    sha256 = Sha256Of(Str(asset, "digest"));
                     break;
                 }
         return new UpdateInfo(version, tag,
             Str(root, "name") is { Length: > 0 } title ? title : tag,
             Str(root, "body"),
             Str(root, "html_url") ?? $"https://github.com/{repository}/releases/latest",
-            url, size);
+            url, size, sha256);
+    }
+
+    // GitHub's asset digest looks like "sha256:<64 hex digits>".
+    static string? Sha256Of(string? digest)
+    {
+        const string prefix = "sha256:";
+        if (digest is null || !digest.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        var hex = digest[prefix.Length..];
+        return hex.Length == 64 && hex.All(Uri.IsHexDigit) ? hex.ToLowerInvariant() : null;
     }
 
     static string? Str(JsonElement e, string name) =>
