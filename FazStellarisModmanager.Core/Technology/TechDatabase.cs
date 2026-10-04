@@ -188,6 +188,9 @@ public sealed class TechDatabase
         progress?.Report("Reading localisation…");
         var loc = Localisation.Load(sources, warnings);
         loc.Scripted = ScriptedLoc.Build(sources, warnings, ct);
+        progress?.Report("Reading job swaps…");
+        loc.Jobs = JobSwaps.From(CommonDefinitions.Load(sources, "common/pop_jobs", warnings, ct));
+        loc.ScriptedTriggers = CommonDefinitions.Load(sources, "common/scripted_triggers", warnings, ct);
         progress?.Report("Finding what each technology unlocks…");
         var unlocks = UnlockScanner.Scan(sources, loc, warnings, ct);
         progress?.Report("Reading sprite definitions…");

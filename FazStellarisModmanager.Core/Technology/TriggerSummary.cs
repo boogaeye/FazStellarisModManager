@@ -22,23 +22,42 @@ public static class TriggerSummary
         ["has_valid_civic"] = "Civic",
     };
 
-    /// <summary>"always" for a missing or empty trigger. <paramref name="name"/> localises values such as civic keys.</summary>
-    public static string Describe(PdxBlock? trigger, Func<string, string?> name)
+    // How many scripted triggers deep "x = yes" is expanded into x's own conditions.
+    const int MaxScriptedDepth = 3;
+
+    sealed record Context(Func<string, string?> Name, Func<string, PdxBlock?>? Scripted);
+
+    /// <summary>
+    /// "always" for a missing or empty trigger. <paramref name="name"/> localises values such as civic keys. <paramref name="scripted"/>
+    /// returns a scripted trigger's body (common/scripted_triggers), so "bureaucrat_is_priest = yes" reads as the conditions inside it.
+    /// </summary>
+    public static string Describe(PdxBlock? trigger, Func<string, string?> name, Func<string, PdxBlock?>? scripted = null)
     {
-        var parts = trigger is null ? [] : Block(trigger, false, name);
+        var parts = trigger is null ? [] : Block(trigger, false, new Context(name, scripted), 0);
         return parts.Count == 0 ? "always" : string.Join(", ", parts);
     }
 
-    static List<string> Block(PdxBlock block, bool negate, Func<string, string?> name)
+    static List<string> Block(PdxBlock block, bool negate, Context c, int depth)
     {
         var parts = new List<string>();
         foreach (var e in block.Entries)
-            foreach (var p in Entry(e, negate, name))
+            foreach (var p in Entry(e, negate, c, depth))
                 if (!parts.Contains(p)) parts.Add(p);
         return parts;
     }
 
-    static List<string> Entry(PdxEntry e, bool negate, Func<string, string?> name)
+    // "a or b": one alternative per entry, each worded with the given negation.
+    static List<string> AnyOf(PdxBlock block, bool negate, Context c, int depth)
+    {
+        var alternatives = block.Entries
+            .Select(x => string.Join(", ", Entry(x, negate, c, depth)))
+            .Where(s => s.Length > 0)
+            .Distinct()
+            .ToList();
+        return alternatives.Count == 0 ? [] : [string.Join(" or ", alternatives)];
+    }
+
+    static List<string> Entry(PdxEntry e, bool negate, Context c, int depth)
     {
         // always = no switches a branch off entirely.
         if (e.Key.Equals("always", StringComparison.OrdinalIgnoreCase) && e.Value is string a
@@ -51,28 +70,16 @@ public static class TriggerSummary
             {
                 case "not":
                 case "nor":
-                    return Block(b, !negate, name);
+                    return Block(b, !negate, c, depth);
                 case "or":
                 case "nand":
                     // NAND = NOT AND = OR of negations. A negated OR is an AND of negations (De Morgan).
                     var childNegate = e.Key.Equals("nand", StringComparison.OrdinalIgnoreCase) != negate;
-                    if (negate) return Block(b, childNegate, name);
-                    var alternatives = b.Entries
-                        .Select(x => string.Join(", ", Entry(x, childNegate, name)))
-                        .Where(s => s.Length > 0)
-                        .Distinct()
-                        .ToList();
-                    return alternatives.Count == 0 ? [] : [string.Join(" or ", alternatives)];
+                    return negate ? Block(b, childNegate, c, depth) : AnyOf(b, childNegate, c, depth);
                 default:
                     // AND, scope changes (owner = { … }), limits: the conditions inside still apply.
                     // Negated, an AND becomes "not a or not b" (De Morgan).
-                    if (!negate) return Block(b, false, name);
-                    var negated = b.Entries
-                        .Select(x => string.Join(", ", Entry(x, true, name)))
-                        .Where(s => s.Length > 0)
-                        .Distinct()
-                        .ToList();
-                    return negated.Count == 0 ? [] : [string.Join(" or ", negated)];
+                    return negate ? AnyOf(b, true, c, depth) : Block(b, false, c, depth);
             }
         }
 
@@ -81,10 +88,14 @@ public static class TriggerSummary
         if (value.Equals("yes", StringComparison.OrdinalIgnoreCase) || value.Equals("no", StringComparison.OrdinalIgnoreCase))
         {
             var positive = value.Equals("yes", StringComparison.OrdinalIgnoreCase) != negate;
+            // Well-known checks keep their short name even though some (is_gestalt) are scripted triggers too.
+            if (depth < MaxScriptedDepth && !Names.ContainsKey(e.Key) && c.Scripted?.Invoke(e.Key) is { } body
+                && (positive ? Block(body, false, c, depth + 1) : AnyOf(body, true, c, depth + 1)) is { Count: > 0 } expanded)
+                return expanded;
             return [positive ? Friendly(e.Key) : "not " + Friendly(e.Key)];
         }
         if (e.Op == "=" && (e.Key.StartsWith("has_", StringComparison.OrdinalIgnoreCase) || e.Key.StartsWith("is_", StringComparison.OrdinalIgnoreCase)))
-            label = $"{Friendly(e.Key)}: {(name(value) is { Length: > 0 and <= 60 } n ? n : value)}";
+            label = $"{Friendly(e.Key)}: {(c.Name(value) is { Length: > 0 and <= 60 } n ? n : value)}";
         else
             label = $"{e.Key} {e.Op} {value}";
         return [negate ? "not " + label : label];

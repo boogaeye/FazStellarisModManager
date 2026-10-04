@@ -27,6 +27,12 @@ public sealed class Localisation
     /// <summary>Scripted localisation used for [GetX] commands; empty until set.</summary>
     public ScriptedLoc Scripted { get; set; } = ScriptedLoc.Empty;
 
+    /// <summary>Job swaps (common/pop_jobs) used for variants of texts that name a job; empty until set.</summary>
+    public JobSwaps Jobs { get; set; } = JobSwaps.Empty;
+
+    /// <summary>Scripted trigger bodies (common/scripted_triggers) used to word variant conditions; empty until set.</summary>
+    public IReadOnlyDictionary<string, PdxBlock> ScriptedTriggers { get; set; } = new Dictionary<string, PdxBlock>();
+
     public static Localisation Load(IReadOnlyList<ContentSource> sources, ICollection<string> warnings)
     {
         var loc = new Localisation();
@@ -72,13 +78,53 @@ public sealed class Localisation
     public string? FirstIconTag(string key) => _map.TryGetValue(key, out var value) ? FirstIcon(value, 0) : null;
 
     /// <summary>
-    /// The texts a key can show when its first multi-branch scripted function ([GetX]) depends on the empire: one per distinct branch,
-    /// in file order, with a readable condition. Empty when the key has no such function.
+    /// The texts a key can show depending on the empire, in file order, each with a readable condition and the trigger script:
+    /// first one per distinct branch of its first multi-branch scripted function ([GetX]), then, within each, one per job swap
+    /// (common/pop_jobs swap_type) of the job it names, e.g. Bureaucrats / Priests / Managers. Identical texts are merged.
+    /// Empty when the key has fewer than two distinct texts.
     /// </summary>
     public IReadOnlyList<LocVariant> Variants(string key)
     {
         if (!_map.TryGetValue(key, out var raw)) return [];
-        var text = ExpandReferences(raw, 0);
+        var variants = new List<LocVariant>();
+        foreach (var branch in FunctionBranches(ExpandReferences(raw, 0)))
+            foreach (var v in JobSwapBranches(branch))
+            {
+                var final = new LocVariant(Clean(v.Text, 1), FirstIcon(v.Text, 1), v.Condition, v.Script, v.IsDefault);
+                var same = variants.FindIndex(x => x.Text == final.Text);
+                if (same < 0) { variants.Add(final); continue; }
+                var old = variants[same];
+                variants[same] = old with
+                {
+                    Condition = old.Condition == final.Condition ? old.Condition : $"{old.Condition} or {final.Condition}",
+                    ConditionScript = JoinScripts(old.ConditionScript, final.ConditionScript, OrSeparator),
+                    IsDefault = old.IsDefault || final.IsDefault,
+                };
+            }
+        return variants.Count < 2 ? [] : variants;
+    }
+
+    // Raw text of one variant before cleaning.
+    sealed record RawVariant(string Text, string Condition, string? Script, bool IsDefault);
+
+    static readonly string OrSeparator = (char)10 + "# or" + (char)10;
+    static readonly string AndSeparator = (char)10 + "# and" + (char)10;
+
+    // Shown when the empire is unknown and nothing else applies.
+    const string Always = "always";
+    const string Otherwise = "otherwise";
+
+    static string? JoinScripts(string? a, string? b, string separator) =>
+        a is null ? b : b is null ? a : a + separator + b;
+
+    string Describe(PdxBlock? trigger) =>
+        TriggerSummary.Describe(trigger, Get, n => ScriptedTriggers.TryGetValue(n, out var body) ? body : null);
+
+    static string Print(PdxBlock? trigger) => trigger is null ? "" : PdxScriptPrinter.Print(trigger);
+
+    // One raw variant per distinct branch of the first multi-branch [GetX] in the text, or the text itself.
+    IEnumerable<RawVariant> FunctionBranches(string text)
+    {
         foreach (Match m in Command.Matches(text))
         {
             if (Scripted.Find(m.Groups[1].Value.Trim()) is not { } fn) continue;
@@ -97,19 +143,57 @@ public sealed class Localisation
             return groups.Select(g =>
             {
                 var substituted = text[..m.Index] + (_map.TryGetValue(g.Key, out var v) ? v : g.Key) + text[(m.Index + m.Length)..];
-                var condition = g.Triggers.Count == 0
-                    ? "otherwise"
-                    : string.Join(" or ", g.Triggers.Select(t => TriggerSummary.Describe(t, Get)).Distinct());
-                var scripts = g.Triggers.OfType<PdxBlock>().Select(t => PdxScriptPrinter.Print(t)).Where(s => s.Length > 0).ToList();
-                return new LocVariant(
-                    Clean(substituted, 1),
-                    FirstIcon(substituted, 1),
-                    condition,
-                    scripts.Count == 0 ? null : string.Join("\n# or\n", scripts),
+                var condition = g.Triggers.Count == 0 ? Otherwise : string.Join(" or ", g.Triggers.Select(Describe).Distinct());
+                var scripts = g.Triggers.Select(Print).Where(s => s.Length > 0).ToList();
+                return new RawVariant(substituted, condition, scripts.Count == 0 ? null : string.Join(OrSeparator, scripts),
                     fallback is not null && g.Key.Equals(fallback, StringComparison.OrdinalIgnoreCase));
             }).ToList();
         }
-        return [];
+        return [new RawVariant(text, Always, null, true)];
+    }
+
+    // The variant as written (the job's own name) plus one per swap_type of the first job it names that has swaps.
+    IEnumerable<RawVariant> JobSwapBranches(RawVariant v)
+    {
+        var text = ExpandFunctions(v.Text, 1);
+        var job = Command.Matches(text)
+            .Select(m => ScopeCall(m.Groups[1].Value.Trim()).Scope)
+            .FirstOrDefault(s => s is not null && Jobs.For(s).Count > 0);
+        if (job is null)
+        {
+            yield return v;
+            yield break;
+        }
+
+        var unconditional = v.Condition is Always or Otherwise;
+        yield return v with { Text = text, Condition = unconditional ? Otherwise : $"{v.Condition}, {Otherwise}" };
+        foreach (var swap in Jobs.For(job))
+        {
+            var swapped = Command.Replace(text, m =>
+            {
+                var (scope, function) = ScopeCall(m.Groups[1].Value.Trim());
+                if (!string.Equals(scope, job, StringComparison.OrdinalIgnoreCase)) return m.Value;
+                return function switch
+                {
+                    "geticon" => $"£job_{swap.Icon}£",
+                    "getnameplural" => JobName(swap.Name, plural: true, 1),
+                    "getname" => JobName(swap.Name, plural: false, 1),
+                    _ => m.Value,
+                };
+            });
+            var condition = Describe(swap.Trigger);
+            yield return new RawVariant(swapped,
+                unconditional ? condition : $"{v.Condition}, {condition}",
+                JoinScripts(v.Script, Print(swap.Trigger) is { Length: > 0 } s ? s : null, AndSeparator),
+                false);
+        }
+    }
+
+    // $refs$ and [GetX] defaults expanded; other commands kept.
+    string ExpandFunctions(string text, int depth)
+    {
+        text = ExpandReferences(text, depth);
+        return Command.Replace(text, m => FunctionText(m.Groups[1].Value.Trim(), depth) is { } raw ? ExpandFunctions(raw, depth + 1) : m.Value);
     }
 
     string? FirstIcon(string text, int depth)
