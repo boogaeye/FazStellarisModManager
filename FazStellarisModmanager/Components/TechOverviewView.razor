@@ -1,0 +1,150 @@
+@using System.Globalization
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="overview" @ref="_host"
+     @onwheel="OnWheel" @onwheel:preventDefault
+     @onmousedown="OnMouseDown" @onmousemove="OnMouseMove" @onmouseup="EndDrag" @onmouseleave="EndDrag"
+     @oncontextmenu:preventDefault>
+    <svg class="overview-svg">
+        <g transform="translate(@F(_tx) @F(_ty)) scale(@_scale.ToString("0.#####", CultureInfo.InvariantCulture))">
+            <OverviewLayer Overview="Overview" Database="Database" IconUri="IconUri" IconVersion="IconVersion" SelectedKey="SelectedKey"
+                           Route="Route" Targets="Targets" Researched="Researched" Detailed="_scale >= DetailScale"
+                           OnNodeClick="NodeClick" OnNodeContext="key => OnToggleResearched.InvokeAsync(key)" />
+        </g>
+    </svg>
+    <div class="overview-controls" @onmousedown:stopPropagation>
+        <button title="Zoom out" @onclick="() => ZoomCentre(1 / ButtonStep)">−</button>
+        <button title="Zoom in" @onclick="() => ZoomCentre(ButtonStep)">+</button>
+        <button title="Show the whole tree" @onclick="FitAsync">Fit</button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TechOverview Overview { get; set; } = default!;
+    [Parameter, EditorRequired] public TechDatabase Database { get; set; } = default!;
+    [Parameter, EditorRequired] public Func<Tech, string?> IconUri { get; set; } = default!;
+    [Parameter] public int IconVersion { get; set; }
+    [Parameter] public string? SelectedKey { get; set; }
+    [Parameter] public ResearchRoute Route { get; set; } = ResearchRoute.Empty;
+    [Parameter] public IReadOnlySet<string> Targets { get; set; } = new HashSet<string>();
+    [Parameter] public IReadOnlySet<string> Researched { get; set; } = new HashSet<string>();
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+    [Parameter] public EventCallback<string> OnToggleResearched { get; set; }
+    [Parameter] public EventCallback<string> OnToggleTarget { get; set; }
+
+    const double MinScale = 0.08, MaxScale = 2, WheelStep = 1.15, ButtonStep = 1.4, DetailScale = 0.35, DragThreshold = 4, FitMargin = 0.95;
+
+    ElementReference _host;
+    IJSObjectReference? _module;
+    double _scale = 0.3, _tx, _ty;
+    double _left, _top, _width, _height;   // host rectangle in client pixels, from the last measurement
+    TechOverview? _fitted;                 // the overview the view was last fitted to
+    string? _shownSelection;
+    bool _centreSelection;
+    bool _down;
+    double _downX, _downY, _lastX, _lastY, _moved;
+
+    protected override void OnParametersSet()
+    {
+        if (!ReferenceEquals(_fitted, Overview) || SelectedKey == _shownSelection) return;
+        _shownSelection = SelectedKey;
+        _centreSelection = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!ReferenceEquals(_fitted, Overview))
+        {
+            _shownSelection = SelectedKey;
+            await FitAsync();
+            return;
+        }
+        if (!_centreSelection) return;
+        _centreSelection = false;
+        if (SelectedKey is null || Overview.Find(SelectedKey) is not { } node || !await MeasureAsync()) return;
+        double sx = node.X * _scale + _tx, sy = node.Y * _scale + _ty;
+        var visible = sx >= 0 && sy >= 0
+            && sx + TechOverviewLayout.NodeWidth * _scale <= _width
+            && sy + TechOverviewLayout.NodeHeight * _scale <= _height;
+        if (visible) return;
+        _tx = _width / 2 - (node.X + TechOverviewLayout.NodeWidth / 2) * _scale;
+        _ty = _height / 2 - (node.Y + TechOverviewLayout.NodeHeight / 2) * _scale;
+        StateHasChanged();
+    }
+
+    async Task<bool> MeasureAsync()
+    {
+        try
+        {
+            _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/overview.js");
+            var r = await _module.InvokeAsync<double[]>("rect", _host);
+            (_left, _top, _width, _height) = (r[0], r[1], r[2], r[3]);
+            return _width > 0 && _height > 0;
+        }
+        catch (JSDisconnectedException) { return false; }
+        catch (JSException) { return false; }
+    }
+
+    async Task FitAsync()
+    {
+        _fitted = Overview;
+        if (!await MeasureAsync()) return;
+        _scale = Math.Clamp(Math.Min(_width / Overview.Width, _height / Overview.Height) * FitMargin, MinScale, MaxScale);
+        _tx = (_width - Overview.Width * _scale) / 2;
+        _ty = (_height - Overview.Height * _scale) / 2;
+        StateHasChanged();
+    }
+
+    async Task OnWheel(WheelEventArgs e)
+    {
+        if (await MeasureAsync()) ZoomAt(e.ClientX - _left, e.ClientY - _top, e.DeltaY < 0 ? WheelStep : 1 / WheelStep);
+    }
+
+    async Task ZoomCentre(double factor)
+    {
+        if (await MeasureAsync()) ZoomAt(_width / 2, _height / 2, factor);
+    }
+
+    // Keeps the map point under (px, py) in place.
+    void ZoomAt(double px, double py, double factor)
+    {
+        var next = Math.Clamp(_scale * factor, MinScale, MaxScale);
+        _tx = px - (px - _tx) * next / _scale;
+        _ty = py - (py - _ty) * next / _scale;
+        _scale = next;
+    }
+
+    void OnMouseDown(MouseEventArgs e)
+    {
+        if (e.Button != 0) return;
+        (_down, _downX, _downY, _lastX, _lastY, _moved) = (true, e.ClientX, e.ClientY, e.ClientX, e.ClientY, 0);
+    }
+
+    void OnMouseMove(MouseEventArgs e)
+    {
+        if (!_down) return;
+        _tx += e.ClientX - _lastX;
+        _ty += e.ClientY - _lastY;
+        (_lastX, _lastY) = (e.ClientX, e.ClientY);
+        _moved = Math.Max(_moved, Math.Abs(e.ClientX - _downX) + Math.Abs(e.ClientY - _downY));
+    }
+
+    // _moved is kept until the next mouse down, so the click that follows a drag can be ignored.
+    void EndDrag() => _down = false;
+
+    Task NodeClick((string Key, MouseEventArgs Args) click)
+    {
+        if (_moved > DragThreshold) return Task.CompletedTask;
+        return click.Args.ShiftKey ? OnToggleTarget.InvokeAsync(click.Key) : OnSelect.InvokeAsync(click.Key);
+    }
+
+    static string F(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is null) return;
+        try { await _module.DisposeAsync(); }
+        catch (JSDisconnectedException) { }
+    }
+}

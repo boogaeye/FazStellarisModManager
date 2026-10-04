@@ -131,3 +131,34 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); cur
 .script { font-family: Consolas, monospace; font-size: .76rem; background: #0b0e13; border: 1px solid var(--border); border-radius: 5px; padding: .4rem .55rem; margin: .25rem 0; overflow-x: auto; }
 .script .sl { white-space: pre; min-height: 1em; }
 .script .sk { color: #9fd2ff; } .script .so { color: var(--muted); } .script .sv { color: #f5d142; } .script .sc { color: var(--muted); font-style: italic; }
+.view-switch { display: flex; gap: .6rem; align-items: center; }
+.seg { display: inline-flex; }
+.seg button { border-radius: 0; }
+.seg button:first-child { border-radius: 6px 0 0 6px; }
+.seg button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.seg button.on { background: #203247; border-color: var(--accent); }
+.route-bar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.route-chip { display: inline-flex; gap: .3rem; align-items: center; border: 1px solid #c9a24a; background: #3a2e12; border-radius: 12px; padding: .1rem .5rem; }
+.route-chip .x { border: 0; background: none; padding: 0 .1rem; color: var(--muted); }
+.overview { position: relative; flex: 1; min-height: 420px; overflow: hidden; background: #0e1218; border: 1px solid var(--border); border-radius: 8px; cursor: grab; user-select: none; }
+.overview-svg { width: 100%; height: 100%; display: block; position: absolute; inset: 0; }
+.overview-controls { position: absolute; top: .5rem; right: .5rem; display: flex; gap: .3rem; }
+.ov-band { fill: #ffffff05; stroke: #ffffff10; }
+.ov-band-label { font-size: 15px; font-weight: 700; }
+.ov-col-label { fill: var(--muted); font-size: 13px; }
+.ov-edge { fill: none; stroke: #3a4757; stroke-width: 1.2; }
+.ov-edge.route { stroke: #f2c983; stroke-width: 2.4; }
+.ov-edge.dim { opacity: .15; }
+.ov-node { cursor: pointer; }
+.ov-node .ov-box { fill: #1a2029; stroke: #2d3744; stroke-width: 1; }
+.ov-node.mod .ov-box { stroke: #e3a33b; }
+.ov-node.tgt .ov-box { stroke: #f2c983; stroke-width: 2.5; }
+.ov-node.sel .ov-box { stroke: #ffffff; stroke-width: 2.5; }
+.ov-node.done .ov-box { stroke-dasharray: 4 3; }
+.ov-node.done .ov-name { fill: #6fcf97; }
+.ov-node.dim { opacity: .22; }
+.ov-node.sel .ov-dot, .ov-node.tgt .ov-dot { stroke: #ffffff; stroke-width: 6; }
+.ov-name { fill: #dbe2ea; font-size: 12px; }
+.route-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+.route-list { margin: .2rem 0; padding-left: 1.4rem; }
+.route-list li.here { font-weight: 600; }

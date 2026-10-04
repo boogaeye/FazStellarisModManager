@@ -1,0 +1,118 @@
+@using System.Globalization
+
+@foreach (var band in Overview.Bands)
+{
+    <rect class="ov-band" x="0" y="@F(band.Y - BandPad)" width="@F(Overview.Width)" height="@F(band.Height - (TechOverviewLayout.RowPitch - TechOverviewLayout.NodeHeight) + 2 * BandPad)" />
+    <g><text class="ov-band-label" x="12" y="@F(band.Y + 22)" fill="@AreaColor(band.Area)">@band.Label</text></g>
+}
+@foreach (var col in Overview.Columns)
+{
+    <g><text class="ov-col-label" x="@F(col.X + TechOverviewLayout.NodeWidth / 2)" y="18" text-anchor="middle">@col.Label</text></g>
+}
+@foreach (var e in Overview.Edges)
+{
+    if (Overview.Find(e.From) is not { } from || Overview.Find(e.To) is not { } to) continue;
+    <path class="@EdgeClass(e)" d="@EdgePath(e, from, to)" />
+}
+@foreach (var n in Overview.Nodes)
+{
+    var t = Database.Techs[n.Key];
+    var key = n.Key;
+    <g class="@NodeClass(t)" @onclick="args => OnNodeClick.InvokeAsync((key, args))"
+       @oncontextmenu="() => OnNodeContext.InvokeAsync(key)" @oncontextmenu:preventDefault>
+        <title>@Tooltip(t)</title>
+        @if (Detailed)
+        {
+            <rect class="ov-box" x="@F(n.X)" y="@F(n.Y)" width="@F(TechOverviewLayout.NodeWidth)" height="@F(TechOverviewLayout.NodeHeight)" rx="4" />
+            <rect x="@F(n.X)" y="@F(n.Y)" width="3" height="@F(TechOverviewLayout.NodeHeight)" fill="@AreaColor(t.Area)" />
+            @if (IconUri(t) is { } icon)
+            {
+                <image href="@icon" x="@F(n.X + 6)" y="@F(n.Y + 5)" width="24" height="24" />
+            }
+            <g><text class="ov-name" x="@F(n.X + 34)" y="@F(n.Y + 21)">@Mark(t)@Trim(t.Name, 20)</text></g>
+        }
+        else
+        {
+            <circle class="ov-dot" cx="@F(n.X + TechOverviewLayout.NodeWidth / 2)" cy="@F(n.Y + TechOverviewLayout.NodeHeight / 2)" r="12" fill="@AreaColor(t.Area)" />
+        }
+    </g>
+}
+
+@code {
+    [Parameter, EditorRequired] public TechOverview Overview { get; set; } = default!;
+    [Parameter, EditorRequired] public TechDatabase Database { get; set; } = default!;
+    [Parameter, EditorRequired] public Func<Tech, string?> IconUri { get; set; } = default!;
+    [Parameter] public int IconVersion { get; set; }
+    [Parameter] public string? SelectedKey { get; set; }
+    [Parameter] public ResearchRoute Route { get; set; } = ResearchRoute.Empty;
+    [Parameter] public IReadOnlySet<string> Targets { get; set; } = new HashSet<string>();
+    [Parameter] public IReadOnlySet<string> Researched { get; set; } = new HashSet<string>();
+    [Parameter] public bool Detailed { get; set; }
+    [Parameter] public EventCallback<(string Key, MouseEventArgs Args)> OnNodeClick { get; set; }
+    [Parameter] public EventCallback<string> OnNodeContext { get; set; }
+
+    const double BandPad = 10;
+
+    // Pan and zoom re-render the parent with unchanged inputs; redraw the ~2,000 elements only when something shown changed.
+    object?[] _shown = [];
+    bool _changed = true;
+
+    protected override void OnParametersSet()
+    {
+        object?[] now = [Overview, Database, IconVersion, SelectedKey, Route, Targets, Researched, Detailed];
+        _changed = now.Length != _shown.Length || now.Where((v, i) => !Equals(v, _shown[i])).Any();
+        _shown = now;
+    }
+
+    protected override bool ShouldRender() => _changed;
+
+    bool RouteOn => Route.Steps.Count > 0;
+
+    string NodeClass(Tech t)
+    {
+        var cls = "ov-node";
+        if (t.Key == SelectedKey) cls += " sel";
+        if (Targets.Contains(t.Key)) cls += " tgt";
+        if (Researched.Contains(t.Key)) cls += " done";
+        if (t.ChangedByMods) cls += " mod";
+        if (RouteOn && !Route.Needed.Contains(t.Key) && !Targets.Contains(t.Key)) cls += " dim";
+        return cls;
+    }
+
+    string EdgeClass(OverviewEdge e) =>
+        !RouteOn ? "ov-edge"
+        : Route.Needed.Contains(e.From) && Route.Needed.Contains(e.To) ? "ov-edge route"
+        : "ov-edge dim";
+
+    string Mark(Tech t) => Researched.Contains(t.Key) ? "✓ " : Targets.Contains(t.Key) ? "★ " : "";
+
+    string Tooltip(Tech t)
+    {
+        var tier = t.IsRepeatable ? "R" : t.Tier?.ToString(CultureInfo.InvariantCulture) ?? "?";
+        var state = Researched.Contains(t.Key) ? " · researched" : Targets.Contains(t.Key) ? " · route target" : "";
+        return $"{t.Name} · Tier {tier} · Cost {t.Cost}{state} (right-click: researched, Shift+click: route target)";
+    }
+
+    static string EdgePath(OverviewEdge e, OverviewNode from, OverviewNode to)
+    {
+        const double w = TechOverviewLayout.NodeWidth, h = TechOverviewLayout.NodeHeight;
+        if (e.Forward)
+        {
+            double x1 = from.X + w, y1 = from.Y + h / 2, x2 = to.X, y2 = to.Y + h / 2, bend = Math.Max(30, (x2 - x1) / 2);
+            return $"M{F(x1)},{F(y1)} C{F(x1 + bend)},{F(y1)} {F(x2 - bend)},{F(y2)} {F(x2)},{F(y2)}";
+        }
+        double sx = from.X + w / 2, sy = from.Y, ex = to.X + w / 2, ey = to.Y, lift = 40 + Math.Abs(sy - ey) / 4;
+        return $"M{F(sx)},{F(sy)} C{F(sx)},{F(sy - lift)} {F(ex)},{F(ey - lift)} {F(ex)},{F(ey)}";
+    }
+
+    static string F(double v) => v.ToString("0.#", CultureInfo.InvariantCulture);
+    static string Trim(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
+
+    static string AreaColor(TechArea a) => a switch
+    {
+        TechArea.Physics => "#3fa7ff",
+        TechArea.Society => "#46c46e",
+        TechArea.Engineering => "#e3a33b",
+        _ => "#8a96a6",
+    };
+}
