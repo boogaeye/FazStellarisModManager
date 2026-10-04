@@ -95,7 +95,7 @@ Mockups (approved): `.superpowers/brainstorm/335-1791100790/content/event-source
     - the description, with newlines kept, `[commands]` highlighted, and "(text varies)" when it does;
     - the options, each with an "Only if: …" line when conditional; an option that grants this tech is outlined in gold and labelled with its effect line(s);
     - strips at the bottom for Immediate ("When the event fires: …") and After ("After any option: …") grants.
-  - **Navigation:** ◀ ▶ step through the event sources; Esc, ✕ or a backdrop click closes it.
+  - **Navigation:** ◀ ▶ step through the event sources (focus returns to the dialog, so Esc and the arrows keep working); Esc, ✕ or a click that starts and ends on the backdrop closes it. Event rows in the list are buttons. An event source without an event record shows "Event details not found."; an event without a picture (diplomatic events) shows no picture area.
 
 ## Errors and performance
 - Unreadable or malformed files become warnings, as before.

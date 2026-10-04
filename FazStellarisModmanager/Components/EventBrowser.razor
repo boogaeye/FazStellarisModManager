@@ -1,26 +1,41 @@
 @using System.Text.RegularExpressions
 
-<div class="modal-backdrop" @onclick="Close">
-    <div class="evbrowser" @onclick:stopPropagation @ref="dialog" tabindex="-1" @onkeydown="Key"
+<div class="modal-backdrop" @onmousedown="() => pressedOnBackdrop = true" @onclick="BackdropClick">
+    <div class="evbrowser" @onclick:stopPropagation @onmousedown="() => pressedOnBackdrop = false" @onmousedown:stopPropagation
+         @ref="dialog" tabindex="-1" @onkeydown="Key"
          role="dialog" aria-modal="true" aria-label="@($"Sources of {Tech.Name}")">
         <div class="evlist">
             <div class="evlist-head">
                 <b>@Tech.Name</b>
-                <button type="button" class="x" title="Close" @onclick="Close">✕</button>
+                <button type="button" class="x" title="Close" aria-label="Close" @onclick="Close">✕</button>
             </div>
             <div class="muted small">Obtained from (@Sources.Count)</div>
             @for (var i = 0; i < Sources.Count; i++)
             {
                 var s = Sources[i];
                 var index = i;
-                <div class="gsrc @(i == Index ? "on" : "") @(s.IsEvent ? "" : "static")" @onclick="() => Select(index)">
-                    <span class="gbadge @GrantText.BadgeClass(s.Grants)">@GrantText.Badge(s.Grants)</span>
-                    <div>@(s.IsEvent ? s.Name : $"{s.Kind}: {s.Name}") <span class="muted small">@s.Id</span></div>
-                </div>
+                if (s.IsEvent)
+                {
+                    <button type="button" class="gsrc @(i == Index ? "on" : "")" @onclick="() => Select(index)">
+                        <span class="gbadge @GrantText.BadgeClass(s.Grants)">@GrantText.Badge(s.Grants)</span>
+                        <div>@s.Name <span class="muted small">@s.Id</span></div>
+                    </button>
+                }
+                else
+                {
+                    <div class="gsrc static">
+                        <span class="gbadge @GrantText.BadgeClass(s.Grants)">@GrantText.Badge(s.Grants)</span>
+                        <div>@($"{s.Kind}: {s.Name}") <span class="muted small">@s.Id</span></div>
+                    </div>
+                }
             }
         </div>
 
-        @if (Current is { } src && Database.Event(src.Id) is { } ev)
+        @if (Current is { IsEvent: true } missing && Database.Event(missing.Id) is null)
+        {
+            <div class="evwin"><div class="evdesc muted">Event details not found.</div></div>
+        }
+        else if (Current is { IsEvent: true } src && Database.Event(src.Id) is { } ev)
         {
             var immediate = src.Grants.Where(g => g.Part == EventPart.Immediate).ToList();
             var after = src.Grants.Where(g => g.Part == EventPart.After).ToList();
@@ -29,17 +44,20 @@
                     @ev.Title
                     <span class="evid">@ev.Id · @ev.Type.Replace('_', ' ') · @ev.Source.SourceName@(ev.Hidden ? " · hidden event (no window in game)" : "")</span>
                 </div>
-                @if (picture is not null)
+                @if (ev.Picture is not null)
                 {
-                    <img class="evpic" src="@picture" alt="" />
-                }
-                else
-                {
-                    <div class="evpic placeholder">@(ev.Picture is null ? "No picture" : pictureLoading ? "Loading picture…" : ev.Picture)</div>
-                }
-                @if (ev.Picture is not null && ev.PictureVaries)
-                {
-                    <div class="muted small evnote">The picture depends on conditions; showing the first.</div>
+                    if (picture is not null)
+                    {
+                        <img class="evpic" src="@picture" alt="" />
+                    }
+                    else
+                    {
+                        <div class="evpic placeholder">@(pictureLoading ? "Loading picture…" : ev.Picture)</div>
+                    }
+                    if (ev.PictureVaries)
+                    {
+                        <div class="muted small evnote">The picture depends on conditions; showing the first.</div>
+                    }
                 }
                 <div class="evdesc">
                     @if (ev.Description is null)
@@ -117,7 +135,9 @@
     string? picture;
     bool pictureLoading;
     string? shownEvent;
+    TechDatabase? shownDatabase;
     bool focused;
+    bool pressedOnBackdrop;
 
     GrantSource? Current => Index >= 0 && Index < Sources.Count ? Sources[Index] : null;
 
@@ -127,7 +147,13 @@
 
     protected override async Task OnParametersSetAsync()
     {
-        if (Current is not { } src || Database.Event(src.Id) is not { } ev || ev.Id == shownEvent) return;
+        // A rebuilt tree: the shown event and picture belong to the old one.
+        if (!ReferenceEquals(shownDatabase, Database))
+        {
+            shownDatabase = Database;
+            (shownEvent, picture, pictureLoading) = (null, null, false);
+        }
+        if (Current is not { IsEvent: true } src || Database.Event(src.Id) is not { } ev || ev.Id == shownEvent) return;
         shownEvent = ev.Id;
         (picture, pictureLoading) = (null, ev.Picture is not null);
         var loaded = await Tree.EventPictureAsync(ev);
@@ -139,6 +165,12 @@
     {
         if (focused) return;
         focused = true;
+        await FocusDialog();
+    }
+
+    // Keeps Esc and the arrow keys working when the focused button (◀ ▶ or a list row) becomes disabled or re-rendered.
+    async Task FocusDialog()
+    {
         try { await dialog.FocusAsync(); }
         catch (Exception ex) when (ex is Microsoft.JSInterop.JSException or InvalidOperationException) { }
     }
@@ -151,11 +183,29 @@
         return at >= 0 && next >= 0 && next < events.Count ? events[next] : null;
     }
 
-    Task Go(int direction) => Step(direction) is { } i ? IndexChanged.InvokeAsync(i) : Task.CompletedTask;
+    async Task Go(int direction)
+    {
+        if (Step(direction) is not { } i) return;
+        await IndexChanged.InvokeAsync(i);
+        await FocusDialog();
+    }
 
-    Task Select(int index) => Sources[index].IsEvent ? IndexChanged.InvokeAsync(index) : Task.CompletedTask;
+    async Task Select(int index)
+    {
+        if (!Sources[index].IsEvent) return;
+        await IndexChanged.InvokeAsync(index);
+        await FocusDialog();
+    }
 
     Task Close() => OnClose.InvokeAsync();
+
+    // Only a click that also started on the backdrop closes: selecting text and releasing outside the dialog does not.
+    Task BackdropClick()
+    {
+        var close = pressedOnBackdrop;
+        pressedOnBackdrop = false;
+        return close ? Close() : Task.CompletedTask;
+    }
 
     Task Key(KeyboardEventArgs e) => e.Key switch
     {
