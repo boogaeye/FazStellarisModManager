@@ -55,7 +55,7 @@ public sealed class SteamWorkshopService(TimeSpan? stallTimeout = null) : IWorks
         try
         {
             progress.Report(new WorkshopProgress(id, WorkshopItemState.Subscribing, 0));
-            if (await Item.GetAsync(id) is not { } item)
+            if (await Item.GetAsync(id) is not { } item || (string.IsNullOrEmpty(item.Title) && item.SizeBytes == 0)) // a missing id comes back as an empty item
                 return Fail(id, progress, "Not found on the Workshop, or not visible to this Steam account.");
             if (!item.IsSubscribed && !await item.Subscribe())
                 return Fail(id, progress, "Steam refused the subscription.");
