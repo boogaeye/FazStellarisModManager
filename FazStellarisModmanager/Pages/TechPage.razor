@@ -99,7 +99,28 @@
             </div>
 
             <div class="tech-focus">
-                @if (selectedKey is not null && db.Techs.TryGetValue(selectedKey, out var sel))
+                <div class="view-switch">
+                    <span class="seg">
+                        <button class="@(wholeTree ? "" : "on")" @onclick="() => wholeTree = false">Focus</button>
+                        <button class="@(wholeTree ? "on" : "")" @onclick="() => wholeTree = true">Whole tree</button>
+                    </span>
+                    @if (wholeTree)
+                    {
+                        <span class="small">Drag to pan · wheel to zoom · right-click: researched · Shift+click: route target</span>
+                    }
+                </div>
+                @if (wholeTree || targets.Count > 0)
+                {
+                    <RouteBar Database="db" Targets="targets" Route="route" ResearchedCount="researched.Count"
+                              OnSelect="key => selectedKey = key" OnRemoveTarget="ToggleTarget" OnClearRoute="ClearRoute" OnUnresearchAll="UnresearchAll" />
+                }
+                @if (wholeTree)
+                {
+                    <TechOverviewView Overview="OverviewFor(db)" Database="db" IconUri="Tree.IconUri" IconVersion="Tree.IconCount"
+                                      SelectedKey="selectedKey" Route="route" Targets="targets" Researched="researched"
+                                      OnSelect="key => selectedKey = key" OnToggleResearched="ToggleResearched" OnToggleTarget="ToggleTarget" />
+                }
+                else if (selectedKey is not null && db.Techs.TryGetValue(selectedKey, out var sel))
                 {
                     <div class="ghead">
                         <span>← Requires</span>
@@ -126,7 +147,9 @@
             <aside class="tech-sidebar">
                 @if (selectedKey is not null && db.Techs.TryGetValue(selectedKey, out var side))
                 {
-                    <TechSidebar Tech="side" Database="db" Tree="Tree" OnSelect="key => selectedKey = key" />
+                    <TechSidebar Tech="side" Database="db" Tree="Tree" OnSelect="key => selectedKey = key"
+                                 Targets="targets" Researched="researched" Route="route"
+                                 OnToggleTarget="ToggleTarget" OnToggleResearched="ToggleResearched" />
                 }
                 else
                 {
@@ -153,6 +176,58 @@
     string? status;
     bool error;
     CancellationTokenSource? searchCts;
+    bool wholeTree;
+    TechTree? stateFor;   // the tree whose saved research state is loaded
+    HashSet<string> researched = new(StringComparer.OrdinalIgnoreCase);
+    HashSet<string> targets = new(StringComparer.OrdinalIgnoreCase);
+    ResearchRoute route = ResearchRoute.Empty;
+    TechOverview? overview;
+    TechDatabase? overviewDb;
+
+    TechOverview OverviewFor(TechDatabase db)
+    {
+        if (!ReferenceEquals(overviewDb, db)) (overview, overviewDb) = (TechOverviewLayout.Build(db), db);
+        return overview!;
+    }
+
+    void SyncResearchState()
+    {
+        if (Tree.Current is not { } tree || ReferenceEquals(stateFor, tree)) return;
+        stateFor = tree;
+        var warnings = new List<string>();
+        var state = Tree.Research.Load(tree.Label, warnings);
+        researched = new HashSet<string>(state.Researched, StringComparer.OrdinalIgnoreCase);
+        targets = new HashSet<string>(state.Targets, StringComparer.OrdinalIgnoreCase);
+        RecomputeRoute();
+        if (warnings.Count > 0) (status, error) = (warnings[0], true);
+    }
+
+    void RecomputeRoute() =>
+        route = targets.Count == 0 || Tree.Current is null ? ResearchRoute.Empty : ResearchPlan.Build(Tree.Current.Database, targets, researched);
+
+    // New set instances on every change: the map compares them by reference to decide whether to redraw.
+    void ChangeResearch(Action<HashSet<string>, HashSet<string>> change)
+    {
+        var r = new HashSet<string>(researched, StringComparer.OrdinalIgnoreCase);
+        var t = new HashSet<string>(targets, StringComparer.OrdinalIgnoreCase);
+        change(r, t);
+        (researched, targets) = (r, t);
+        RecomputeRoute();
+        if (stateFor is null) return;
+        try
+        {
+            Tree.Research.Save(stateFor.Label, new ResearchState([.. researched], [.. targets]));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            (status, error) = ($"Could not save research progress: {ex.Message}", true);
+        }
+    }
+
+    void ToggleResearched(string key) => ChangeResearch((r, _) => { if (!r.Remove(key)) r.Add(key); });
+    void ToggleTarget(string key) => ChangeResearch((_, t) => { if (!t.Remove(key)) t.Add(key); });
+    void ClearRoute() => ChangeResearch((_, t) => t.Clear());
+    void UnresearchAll() => ChangeResearch((r, _) => r.Clear());
 
     TechFilter Filter => new(
         search,
@@ -170,6 +245,7 @@
         {
             choiceIndex = Math.Max(0, choices.ToList().FindIndex(c => c.Label == current.Label));
             selectedKey = current.Database.Techs.Values.FirstOrDefault(t => t.IsStart)?.Key;
+            SyncResearchState();
         }
         else if (!Tree.IsBuilding)
         {
@@ -181,6 +257,7 @@
     {
         if (selectedKey is null && Tree.Current is { } current)
             selectedKey = current.Database.Techs.Values.FirstOrDefault(t => t.IsStart)?.Key;
+        SyncResearchState();
         StateHasChanged();
     });
 
@@ -214,6 +291,7 @@
             choices = Tree.Choices();
             choiceIndex = Math.Max(0, choices.ToList().FindIndex(c => c.Label == selectedLabel));
             await Tree.BuildAsync(choices[choiceIndex]);
+            SyncResearchState();
             var db = Tree.Current!.Database;
             status = $"{db.Techs.Count} technologies from {Tree.Current.Sources.Count} sources.";
             if (selectedKey is null || !db.Techs.ContainsKey(selectedKey))

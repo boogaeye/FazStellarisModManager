@@ -42,6 +42,46 @@
         }
     </div>
 
+    <div class="route-actions">
+        <button @onclick="() => OnToggleTarget.InvokeAsync(Tech.Key)">@(Targets.Contains(Tech.Key) ? "★ Remove from route" : "★ Add to route")</button>
+        <button @onclick="() => OnToggleResearched.InvokeAsync(Tech.Key)">@(Researched.Contains(Tech.Key) ? "✓ Unmark researched" : "✓ Mark researched")</button>
+    </div>
+
+    @if (Targets.Count > 0)
+    {
+        <details open>
+            <summary>Research route (@Route.Steps.Count)</summary>
+            @if (Route.Steps.Count == 0)
+            {
+                <p class="muted small">Everything the route needs is already researched.</p>
+            }
+            <ol class="route-list">
+                @foreach (var stepKey in Route.Steps)
+                {
+                    var step = Database.Techs[stepKey];
+                    var key = step.Key;
+                    <li class="@(key == Tech.Key ? "here" : "")">
+                        <button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(key)">@step.Name</button>
+                        <span class="muted small">· @AreaLetter(step.Area)@StepTier(step)@(Targets.Contains(key) ? " ★" : "")</span>
+                    </li>
+                }
+            </ol>
+            <div class="muted small">Already researched and skipped: @Route.SkippedResearched (+ @Route.SkippedStarting starting techs)</div>
+            @foreach (var m in Route.MissingPrerequisites)
+            {
+                <div class="muted small">@m.Tech needs @m.Prerequisite, which is not in this tree.</div>
+            }
+            @if (Route.Cycles.Count > 0)
+            {
+                <div class="muted small">Prerequisite loop: @string.Join(", ", Route.Cycles)</div>
+            }
+            @foreach (var u in Route.UnknownTargets)
+            {
+                <div class="muted small">Target @u is not in this tree.</div>
+            }
+        </details>
+    }
+
     <details open>
         <summary>Unlocks (@Unlocks.Count)</summary>
         @if (Unlocks.Count == 0)
@@ -167,6 +207,21 @@
     [Parameter, EditorRequired] public TechDatabase Database { get; set; } = default!;
     [Parameter, EditorRequired] public TechTreeService Tree { get; set; } = default!;
     [Parameter] public EventCallback<string> OnSelect { get; set; }
+    [Parameter] public IReadOnlySet<string> Targets { get; set; } = new HashSet<string>();
+    [Parameter] public IReadOnlySet<string> Researched { get; set; } = new HashSet<string>();
+    [Parameter] public ResearchRoute Route { get; set; } = ResearchRoute.Empty;
+    [Parameter] public EventCallback<string> OnToggleTarget { get; set; }
+    [Parameter] public EventCallback<string> OnToggleResearched { get; set; }
+
+    static string AreaLetter(TechArea a) => a switch
+    {
+        TechArea.Physics => "P",
+        TechArea.Society => "S",
+        TechArea.Engineering => "E",
+        _ => "?",
+    };
+
+    static string StepTier(Tech t) => t.IsRepeatable ? "R" : t.Tier?.ToString(CultureInfo.InvariantCulture) ?? "?";
 
     // Bonuses whose name depends on the empire (Physicists / Calculators …) step through their variants on this tick.
     const int VariantIntervalMs = 2500;

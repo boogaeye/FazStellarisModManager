@@ -1,0 +1,60 @@
+@using System.Globalization
+
+<div class="route-bar">
+    <b>Route:</b>
+    @if (Targets.Count == 0)
+    {
+        <span class="muted small">Shift+click techs on the map, or use ★ Add to route in the sidebar.</span>
+    }
+    @foreach (var key in Targets.Order(StringComparer.OrdinalIgnoreCase))
+    {
+        var k = key;
+        var name = Database.Techs.TryGetValue(k, out var t) ? t.Name : k;
+        <span class="route-chip">
+            <button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(k)">@name</button>
+            <button type="button" class="x" title="Remove from route" @onclick="() => OnRemoveTarget.InvokeAsync(k)">✕</button>
+        </span>
+    }
+    @if (Targets.Count > 0)
+    {
+        <span>@Route.Steps.Count techs · @Route.TotalCost.ToString("N0", CultureInfo.InvariantCulture) research@(Route.UnknownCostCount > 0 ? $" + {Route.UnknownCostCount} unknown" : "")</span>
+        <button @onclick="() => OnClearRoute.InvokeAsync()">Clear route</button>
+    }
+    @if (_confirming)
+    {
+        <span>Unresearch @ResearchedCount techs?</span>
+        <button class="danger" @onclick="Confirm">Yes</button>
+        <button @onclick="() => _confirming = false">No</button>
+    }
+    else if (ResearchedCount > 0)
+    {
+        <button @onclick="Ask">Unresearch all (@ResearchedCount)</button>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TechDatabase Database { get; set; } = default!;
+    [Parameter] public IReadOnlySet<string> Targets { get; set; } = new HashSet<string>();
+    [Parameter] public ResearchRoute Route { get; set; } = ResearchRoute.Empty;
+    [Parameter] public int ResearchedCount { get; set; }
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+    [Parameter] public EventCallback<string> OnRemoveTarget { get; set; }
+    [Parameter] public EventCallback OnClearRoute { get; set; }
+    [Parameter] public EventCallback OnUnresearchAll { get; set; }
+
+    const int ConfirmAbove = 10;
+    bool _confirming;
+
+    Task Ask()
+    {
+        if (ResearchedCount <= ConfirmAbove) return OnUnresearchAll.InvokeAsync();
+        _confirming = true;
+        return Task.CompletedTask;
+    }
+
+    Task Confirm()
+    {
+        _confirming = false;
+        return OnUnresearchAll.InvokeAsync();
+    }
+}
