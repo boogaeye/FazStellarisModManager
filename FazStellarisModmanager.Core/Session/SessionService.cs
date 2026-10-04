@@ -17,6 +17,8 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
     volatile SessionHost? _host;
     volatile SessionClient? _client;
     volatile DiffResult? _myDiff;
+    readonly Lock _diffLock = new();
+    (HostTargetUpdate Target, MachineSnapshot Mine)? _diffInputs; // what _myDiff was computed from; guarded by _diffLock
     volatile string? _hostAddress;
     volatile MatchPlan? _lastPlan;
     volatile MachineSnapshot? _mySnapshot;
@@ -103,7 +105,7 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
                     _lastPlan = null;
                     _lastBackupPath = null;
                 }
-                RecomputeDiff();
+                RecomputeDiff(onlyIfInputsChanged: true); // most messages are roster updates: same target, same diff
                 RaiseChanged();
             };
             client.Disconnected += reason => OnDisconnected(client, reason);
@@ -120,7 +122,7 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
             if (ReferenceEquals(_client, client))
             {
                 _client = null;
-                _myDiff = null;
+                ClearDiff();
                 _hostAddress = null;
             }
             await client.DisposeAsync();
@@ -210,7 +212,7 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
         var client = _client;
         _host = null;
         _client = null;
-        _myDiff = null;
+        ClearDiff();
         _hostAddress = null;
         _lastPlan = null;
         _lastBackupPath = null;
@@ -227,7 +229,7 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
     {
         if (!ReferenceEquals(_client, client)) return; // we left on purpose
         _client = null;
-        _myDiff = null;
+        ClearDiff();
         _hostAddress = null;
         _lastPlan = null;
         _lastBackupPath = null;
@@ -315,8 +317,37 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
         RaiseChanged();
     }
 
-    void RecomputeDiff() =>
-        _myDiff = _client is { } client && MySnapshot is { } mine ? ModDiffer.Diff(client.Target.HostSnapshot, mine) : null;
+    /// <summary>
+    /// Diffs my snapshot against the client's current target. Inputs are read under the lock, so the last diff written
+    /// always uses inputs at least as new as any earlier one; with <paramref name="onlyIfInputsChanged"/> the diff is kept
+    /// when it was already computed from the same target and snapshot instances.
+    /// </summary>
+    void RecomputeDiff(bool onlyIfInputsChanged = false)
+    {
+        lock (_diffLock)
+        {
+            if (_client is not { } client || MySnapshot is not { } mine)
+            {
+                _myDiff = null;
+                _diffInputs = null;
+                return;
+            }
+            var target = client.Target;
+            if (onlyIfInputsChanged && _myDiff is not null && _diffInputs is { } last
+                && ReferenceEquals(last.Target, target) && ReferenceEquals(last.Mine, mine)) return;
+            _myDiff = ModDiffer.Diff(target.HostSnapshot, mine);
+            _diffInputs = (target, mine);
+        }
+    }
+
+    void ClearDiff()
+    {
+        lock (_diffLock)
+        {
+            _myDiff = null;
+            _diffInputs = null;
+        }
+    }
 
     void RaiseChanged()
     {

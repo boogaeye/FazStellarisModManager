@@ -21,9 +21,12 @@ public sealed record MatchPlan(
 
     /// <summary>
     /// The host list restricted to mods installed here (in the host order, pointing at this machine descriptors),
-    /// plus the host disabled DLCs and any DLC installed here that the host does not use. Each host mod uses my paired mod (by key, Workshop id, name or files); unpaired host mods with a Workshop id need a Workshop install, others a manual one; content mismatches need a Workshop update when my mod is the Workshop item, otherwise local attention; DLCs the
-    /// host has and this PC lacks are reported in NeedsDlc. <paramref name="hostList"/> and <paramref name="diff"/> must come
-    /// from the same host target.
+    /// plus the host disabled DLCs and any DLC installed here that the host does not use.
+    /// Each host mod uses my paired mod (by key, Workshop id, name or files), except that a mod I have installed under
+    /// the host's exact key beats a copy the diff paired. Unpaired host mods with a Workshop id need a Workshop install,
+    /// others a manual one. Content mismatches need a Workshop update when my mod is the Workshop item, otherwise local
+    /// attention. DLCs the host has and this PC lacks are reported in NeedsDlc.
+    /// <paramref name="hostList"/> and <paramref name="diff"/> must come from the same host target.
     /// </summary>
     public static MatchPlan Create(ModList hostList, DiffResult diff, IReadOnlyList<InstalledMod> library, MachineSnapshot mine)
     {
@@ -35,9 +38,23 @@ public sealed record MatchPlan(
         var hostEntries = hostList.Mods.DistinctBy(e => e.Key, StringComparer.OrdinalIgnoreCase).ToList();
         var partner = new Dictionary<string, InstalledMod>(StringComparer.OrdinalIgnoreCase);
         foreach (var u in diff.Mods)
-            if (u.Status is UnitStatus.Ok or UnitStatus.ContentMismatch && u.MineKey is { } mineKey && byKey.TryGetValue(mineKey, out var paired))
+            if (u.Status is (UnitStatus.Ok or UnitStatus.ContentMismatch) && u.MineKey is { } mineKey && byKey.TryGetValue(mineKey, out var paired))
                 partner.TryAdd(u.Key, paired);
         var taken = new HashSet<string>(partner.Values.Select(i => i.Key), StringComparer.OrdinalIgnoreCase);
+
+        // The diff paired a host mod with a copy (other key), but I also have the host's exact mod installed, e.g. the
+        // Workshop item itself: use that, it is what the host runs. The copy is freed for the library pairing below.
+        var replaced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (hostKey, copy) in partner.ToList())
+            if (!string.Equals(copy.Key, hostKey, StringComparison.OrdinalIgnoreCase)
+                && byKey.TryGetValue(hostKey, out var exact) && !taken.Contains(exact.Key))
+            {
+                partner[hostKey] = exact;
+                taken.Remove(copy.Key);
+                taken.Add(exact.Key);
+                replaced.Add(hostKey);
+            }
+
         var unpaired = hostEntries.Where(e => !partner.ContainsKey(e.Key)).ToList();
         var free = library.Where(i => !taken.Contains(i.Key)).ToList();
         foreach (var p in ModMatcher.Pair(unpaired, free, ModIdentity.Of, ModIdentity.Of, [MatchKind.Key, MatchKind.WorkshopId, MatchKind.Name]))
@@ -66,7 +83,8 @@ public sealed record MatchPlan(
             if (dlc is not null && !disabled.Contains(dlc.Descriptor, StringComparer.OrdinalIgnoreCase)) disabled.Add(dlc.Descriptor);
         }
 
-        var changed = diff.Mods.Where(u => u.Status == UnitStatus.ContentMismatch).ToList();
+        // A replaced copy's differences no longer apply; the mod used instead was not scanned, the rescan will tell.
+        var changed = diff.Mods.Where(u => u.Status == UnitStatus.ContentMismatch && !replaced.Contains(u.Key)).ToList();
         return new MatchPlan(
             new ModList(hostList.Name, apply, disabled),
             workshop,

@@ -165,4 +165,65 @@ public class MatchPlanTests
         Assert.Equal(["ugc:6"], plan.NeedsWorkshopUpdate.Select(u => u.Key));
         Assert.Equal(["ugc:5"], plan.DiffersLocally.Select(u => u.Key));
     }
+
+    static UnitDiff Same(string key, string mineKey, MatchKind match) =>
+        new(key, key, null, UnitStatus.Ok, 1, 1, false, null, null, null, mineKey, match);
+
+    [Fact]
+    public void The_diff_partner_is_used_even_without_a_shared_workshop_id_or_name()
+    {
+        var host = new ModList("H", [new("local:a.mod", "Foo", "mod/a.mod", null)], []);
+        var library = new[] { Inst("local:b.mod", "mod/b.mod", "Bar", null) };
+
+        var plan = MatchPlan.Create(host, Diff(Same("local:a.mod", "local:b.mod", MatchKind.Files)), library, TestSnapshots.Machine("M"));
+
+        Assert.Equal(["mod/b.mod"], plan.ToApply.Mods.Select(m => m.DescriptorRel));
+        Assert.Empty(plan.NeedsManualInstall);
+    }
+
+    [Fact]
+    public void A_mod_the_diff_gave_to_one_host_mod_is_not_reused_for_another()
+    {
+        var host = new ModList("H", [new("local:h1.mod", "One", "mod/h1.mod", null), new("local:h2.mod", "Shared", "mod/h2.mod", null)], []);
+        var library = new[] { Inst("local:x.mod", "mod/x.mod", "Shared", null) };
+
+        var plan = MatchPlan.Create(host, Diff(Same("local:h1.mod", "local:x.mod", MatchKind.Files)), library, TestSnapshots.Machine("M"));
+
+        Assert.Equal(["local:x.mod"], plan.ToApply.Mods.Select(m => m.Key));
+        Assert.Equal(["local:h2.mod"], plan.NeedsManualInstall.Select(e => e.Key));
+    }
+
+    [Fact]
+    public void My_installed_workshop_item_beats_the_copy_the_diff_paired()
+    {
+        var host = new ModList("H", [new("ugc:5", "Five", "mod/ugc_5.mod", "5"), new("ugc:6", "Six", "mod/ugc_6.mod", "6")], []);
+        var library = new[]
+        {
+            Inst("local:copy5.mod", "mod/copy5.mod", "Five", "5"), Inst("ugc:5", "mod/ugc_5.mod", "Five", "5"),
+            Inst("local:copy6.mod", "mod/copy6.mod", "Six", "6"), Inst("ugc:6", "mod/ugc_6.mod", "Six", "6"),
+        };
+        var diff = Diff(
+            Same("ugc:5", "local:copy5.mod", MatchKind.WorkshopId) with { LocalCopyOfWorkshop = true },
+            Changed("ugc:6") with { MineKey = "local:copy6.mod", Match = MatchKind.WorkshopId, LocalCopyOfWorkshop = true });
+
+        var plan = MatchPlan.Create(host, diff, library, TestSnapshots.Machine("M"));
+
+        Assert.Equal(["ugc:5", "ugc:6"], plan.ToApply.Mods.Select(m => m.Key));
+        Assert.Equal(["mod/ugc_5.mod", "mod/ugc_6.mod"], plan.ToApply.Mods.Select(m => m.DescriptorRel));
+        // The copy's differences no longer apply: the Workshop item's files were not compared.
+        Assert.Empty(plan.DiffersLocally);
+        Assert.Empty(plan.NeedsWorkshopUpdate);
+    }
+
+    [Fact]
+    public void A_mod_with_the_host_key_is_not_preferred_when_another_host_mod_has_it()
+    {
+        var host = new ModList("H", [new("local:a.mod", "A", "mod/a.mod", null), new("local:b.mod", "B", "mod/b.mod", null)], []);
+        var library = new[] { Inst("local:b.mod", "mod/b.mod", "Other", null), Inst("local:c.mod", "mod/c.mod", "B", null) };
+        var diff = Diff(Same("local:a.mod", "local:b.mod", MatchKind.Files), Same("local:b.mod", "local:c.mod", MatchKind.Name));
+
+        var plan = MatchPlan.Create(host, diff, library, TestSnapshots.Machine("M"));
+
+        Assert.Equal(["local:b.mod", "local:c.mod"], plan.ToApply.Mods.Select(m => m.Key));
+    }
 }

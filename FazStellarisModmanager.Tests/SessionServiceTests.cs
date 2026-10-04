@@ -85,6 +85,24 @@ public class SessionServiceTests
     }
 
     [Fact]
+    public async Task Roster_updates_do_not_recompute_the_diff()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/local.mod\"]");
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]");
+        await using var other = new Rig("Other", "[\"mod/local.mod\"]");
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+        await Wait.Until(() => client.Session.Players.Count == 2, "client sees itself in the roster");
+        var diff = client.Session.MyDiff;
+
+        await other.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+        await Wait.Until(() => client.Session.Players.Count == 3, "client sees the other player");
+
+        Assert.NotNull(diff);
+        Assert.Same(diff, client.Session.MyDiff);
+    }
+
+    [Fact]
     public async Task Leaving_and_stopping_reset_state()
     {
         await using var host = new Rig("Hosty", "[\"mod/local.mod\"]");
