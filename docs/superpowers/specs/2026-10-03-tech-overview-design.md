@@ -37,7 +37,7 @@ Reading researched techs from a save game is a later sub-project.
 
 ### Layout (`TechOverviewLayout`, Core, pure)
 - **Bands:** one band per area, top to bottom: Physics, Society, Engineering, then Other, which appears only if any tech has area Other.
-- **Columns:** tier 0..max tier in ascending order, then a "Repeatable" column, then a "?" column for techs without a tier, only if any exist. Repeatable techs always go in the Repeatable column, whatever their tier.
+- **Columns:** every tier that some non-repeatable tech uses, in ascending order (no empty columns), then a "Repeatable" column (only if any repeatable tech exists), then a "?" column for techs without a tier, only if any exist. Repeatable techs always go in the Repeatable column, whatever their tier.
 - **Order within a cell** (band × column):
   1. category, case-insensitive, with a null category last;
   2. barycenter: the average row of the tech's prerequisites already placed in earlier columns of any band, on a global row scale. Techs without placed prerequisites sort after those with one;
@@ -87,7 +87,7 @@ Reading researched techs from a save game is a later sub-project.
 - **Unknown keys:** kept, so a key from a temporarily removed mod survives. Only keys in the current tree affect the plan.
 
 ### UI
-- **Map (`TechOverviewView`):** an SVG with an outer `<g transform="translate(x y) scale(s)">`.
+- **Map (`TechOverviewView`):** pan and zoom logic is C#. The only JavaScript is a 5-line module (`wwwroot/js/overview.js`) that measures the map element, because Blazor cannot read element sizes and Fit and zoom-at-cursor need them. The map is an SVG with an outer `<g transform="translate(x y) scale(s)">`.
   - The layer of nodes and edges is a child component that re-renders only when its inputs change: tree, selection, route set, researched set, or level-of-detail bucket. Pan and zoom only re-render the outer transform.
   - **Pan:** drag with the left button anywhere (pointer events with capture). A drag longer than 4 px does not count as a click.
   - **Zoom:** the wheel zooms about the cursor, by a factor of 1.15 per notch, clamped to 0.08..2.
@@ -110,7 +110,7 @@ Reading researched techs from a save game is a later sub-project.
   - target chips with ✕;
   - "N techs · cost" (plus "+ M unknown");
   - **Clear route** (targets only);
-  - **Unresearch all** (researched only; asks for confirmation if more than 10).
+  - **Unresearch all** (researched only; with more than 10 it asks inline: "Unresearch N techs? Yes / No").
 - **Sidebar additions** at the top, under the header:
   - **★ Add to route** / **Remove from route**;
   - **✓ Mark researched** / **Unmark**;
