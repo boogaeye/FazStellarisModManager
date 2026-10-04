@@ -4,14 +4,23 @@ using System.Text;
 namespace FazStellarisModmanager.Tests.TestUtil;
 
 /// <summary>An HttpMessageHandler that answers every request with a function and records the requests.</summary>
-public sealed class FakeHttp(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+public sealed class FakeHttp : HttpMessageHandler
 {
+    readonly Func<HttpRequestMessage, Task<HttpResponseMessage>> _respond;
+
+    public FakeHttp(Func<HttpRequestMessage, HttpResponseMessage> respond) => _respond = r => Task.FromResult(respond(r));
+
+    FakeHttp(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) => _respond = respond;
+
+    /// <summary>For answers that arrive later, e.g. after a test opens a gate.</summary>
+    public static FakeHttp Async(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) => new(respond);
+
     public List<HttpRequestMessage> Requests { get; } = [];
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        Requests.Add(request);
-        return Task.FromResult(respond(request));
+        lock (Requests) Requests.Add(request);
+        return _respond(request);
     }
 
     public static HttpResponseMessage Json(string json, HttpStatusCode status = HttpStatusCode.OK) =>
