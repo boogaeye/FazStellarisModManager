@@ -13,13 +13,13 @@
     <div class="session-forms">
         <section class="panel pad">
             <h2>Host a session</h2>
-            <p class="status">Friends join with your IP address and this port. They must be able to reach it: forward the port on your router, or use Hamachi, ZeroTier or Tailscale.</p>
+            <p class="status">Public IP needed... Will be replaced with a code system later</p>
             <label>Port <input type="number" min="1" max="65535" @bind="hostPort" /></label>
             <div><button class="primary" @onclick="Host" disabled="@Session.IsBusy">Host</button></div>
         </section>
         <section class="panel pad">
             <h2>Join a session</h2>
-            <label>Host address <input @bind="joinAddress" placeholder="203.0.113.5 or 203.0.113.5:27015" /></label>
+            <label>Host address <input @bind="joinAddress" placeholder="IPADDRESS:PORT" /></label>
             <div><button class="primary" @onclick="Join" disabled="@Session.IsBusy">Join</button></div>
         </section>
     </div>
@@ -29,7 +29,7 @@ else
     <div class="toolbar">
         @if (Session.Role == SessionRole.Host)
         {
-            <span>Hosting on port <b>@Session.HostPort</b>. LAN addresses: @(addresses.Count == 0 ? "unknown" : string.Join(", ", addresses)) (friends over the internet need your public IP and a forwarded port)</span>
+            <span>Hosting on port <b>@Session.HostPort</b>. LAN addresses: @(addresses.Count == 0 ? "unknown" : string.Join(", ", addresses))</span>
         }
         else
         {
