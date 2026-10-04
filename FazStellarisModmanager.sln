@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FazStellarisModmanager.Core
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FazStellarisModmanager.Tests", "FazStellarisModmanager.Tests\FazStellarisModmanager.Tests.csproj", "{2DE55A87-519A-4533-B56A-9792789A74A4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FazStellarisModmanager.Steam", "FazStellarisModmanager.Steam\FazStellarisModmanager.Steam.csproj", "{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,6 +57,18 @@ Global
 		{2DE55A87-519A-4533-B56A-9792789A74A4}.Release|x64.Build.0 = Release|Any CPU
 		{2DE55A87-519A-4533-B56A-9792789A74A4}.Release|x86.ActiveCfg = Release|Any CPU
 		{2DE55A87-519A-4533-B56A-9792789A74A4}.Release|x86.Build.0 = Release|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Debug|x64.Build.0 = Debug|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Debug|x86.Build.0 = Debug|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Release|x64.ActiveCfg = Release|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Release|x64.Build.0 = Release|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Release|x86.ActiveCfg = Release|Any CPU
+		{B7B65FD1-176B-4C2D-AB27-DE341B2A5FA5}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
