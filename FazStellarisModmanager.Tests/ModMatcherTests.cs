@@ -76,4 +76,51 @@ public class ModMatcherTests
         Assert.NotEqual(a, c);
         Assert.Null(ModMatcher.Fingerprint([]));
     }
+
+    [Fact]
+    public void Fingerprints_are_computed_only_for_mods_still_unpaired_at_the_files_rule()
+    {
+        var calls = new List<string>();
+        ModIdentity Lazy(string key, string? workshop, string name, string fp) =>
+            new(key, workshop, ModMatcher.NormalizeName(name), () => { calls.Add(key); return fp; });
+
+        // Everything pairs by key, Workshop id or an unambiguous name: no fingerprint is needed.
+        Pair([Lazy("ugc:1", "1", "One", "A"), Lazy("local:a.mod", "2", "Two", "B"), Lazy("local:n.mod", null, "Name", "C")],
+            [Lazy("ugc:1", "1", "One", "A"), Lazy("local:b.mod", "2", "Two", "B"), Lazy("local:m.mod", null, "(X) Name", "D")]);
+        Assert.Empty(calls);
+
+        // Nothing left on my side: the files rule has nothing to pair with.
+        Pair([Lazy("ugc:1", "1", "One", "A"), Lazy("ugc:2", "2", "Two", "B")], [Lazy("ugc:1", "1", "One", "A")]);
+        Assert.Empty(calls);
+
+        // Only the unpaired mods are fingerprinted, each once.
+        Assert.Equal([("ugc:1", "ugc:1", MatchKind.Key), ("local:x.mod", "local:y.mod", MatchKind.Files)],
+            Pair([Lazy("ugc:1", "1", "One", "A"), Lazy("local:x.mod", null, "X", "F")],
+                [Lazy("ugc:1", "1", "One", "A"), Lazy("local:y.mod", null, "Y", "F")]));
+        Assert.Equal(["local:y.mod", "local:x.mod"], calls);
+    }
+
+    [Fact]
+    public void Snapshot_identities_are_cached_per_instance()
+    {
+        var snap = new ModSnapshot("local:a.mod", "A", "mod/a.mod", null, null, null, "", 1, [new ModFile("f", "1", 1)]);
+
+        Assert.Same(ModIdentity.Of(snap), ModIdentity.Of(snap));
+        Assert.Equal(ModMatcher.Fingerprint(snap.Files), ModIdentity.Of(snap).Fingerprint);
+    }
+
+    [Fact]
+    public void A_shared_name_prefers_the_mod_with_the_same_files()
+    {
+        var calls = 0;
+        ModIdentity Lazy(string key, string name, string fp) => new(key, null, ModMatcher.NormalizeName(name), () => { calls++; return fp; });
+
+        Assert.Equal([("local:h.mod", "local:new.mod", MatchKind.Name)],
+            Pair([Lazy("local:h.mod", "Ethics Fix", "FP")], [Lazy("local:old.mod", "Ethics Fix", "OLD"), Lazy("local:new.mod", "(Coll) Ethics Fix", "FP")]));
+        Assert.Equal(3, calls);
+
+        // No identical one: the first still wins.
+        Assert.Equal([("local:h.mod", "local:old.mod", MatchKind.Name)],
+            Pair([Id("local:h.mod", null, "Ethics Fix", "FP")], [Id("local:old.mod", null, "Ethics Fix", "OLD"), Id("local:new.mod", null, "Ethics Fix")]));
+    }
 }

@@ -225,4 +225,17 @@ public class ModDifferTests
 
         Assert.Equal([UnitStatus.Missing, UnitStatus.Extra], r.Dlcs.Select(d => d.Status));
     }
+
+    [Fact]
+    public void A_shared_name_pairs_with_my_identical_copy()
+    {
+        var target = Machine("v4.4", Mod("local:eth.mod", 1, "Ethics Fix", null, ("e", "new")));
+        var mine = Machine("v4.4", Mod("local:old.mod", 1, "Ethics Fix", null, ("e", "old")), Mod("local:coll.mod", 2, "(Coll) Ethics Fix", null, ("e", "new")));
+
+        var r = ModDiffer.Diff(target, mine);
+
+        Assert.Equal(
+            [("local:eth.mod", UnitStatus.Ok, "local:coll.mod", MatchKind.Name), ("local:old.mod", UnitStatus.Extra, "local:old.mod", MatchKind.Key)],
+            r.Mods.Select(m => (m.Key, m.Status, m.MineKey, m.Match)));
+    }
 }
