@@ -5,7 +5,15 @@ using FazStellarisModmanager.Core.Descriptors;
 namespace FazStellarisModmanager.Core.Technology;
 
 /// <summary>One entry of a tech's modifier block, e.g. army_damage_mult = 0.05 shown as "+5% Army Damage".</summary>
-public sealed record StatBonus(string Key, string RawValue, string Name, string Display, bool IsNegative, string? IconTag = null);
+public sealed record StatBonus(string Key, string RawValue, string Name, string Display, bool IsNegative, string? IconTag = null,
+    IReadOnlyList<BonusVariant>? NameVariants = null)
+{
+    /// <summary>Empire-dependent names (e.g. Physicists / Calculators); empty when the name never changes.</summary>
+    public IReadOnlyList<BonusVariant> Variants => NameVariants ?? [];
+}
+
+/// <summary>One empire-dependent name of a stat bonus and the condition (readable and as script) that selects it.</summary>
+public sealed record BonusVariant(string Name, string? IconTag, string Condition, string? ConditionScript, bool IsDefault);
 
 /// <summary>A prereqfor_desc line: Kind is the child block name (ship, custom, …).</summary>
 public sealed record CustomUnlock(string Kind, string Title, string? Description);
@@ -110,13 +118,16 @@ public static class TechDetailsBuilder
     {
         var name = loc.Get("mod_" + key) ?? key;
         var tag = loc.FirstIconTag("mod_" + key);
+        var variants = loc.Variants("mod_" + key)
+            .Select(v => new BonusVariant(v.Text, v.IconTag, v.Condition, v.ConditionScript, v.IsDefault))
+            .ToList();
         raw = ScriptedVariables.Resolve(raw, locals, globals);
         if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || !double.IsFinite(v))
-            return new StatBonus(key, raw, name, raw, false, tag);
+            return new StatBonus(key, raw, name, raw, false, tag, variants);
         var display = key.EndsWith("_mult", StringComparison.OrdinalIgnoreCase) ? Signed(v * 100) + "%"
             : key.EndsWith("_add", StringComparison.OrdinalIgnoreCase) ? Signed(v)
             : raw;
-        return new StatBonus(key, raw, name, display, v < 0, tag);
+        return new StatBonus(key, raw, name, display, v < 0, tag, variants);
     }
 
     static string Signed(double v)

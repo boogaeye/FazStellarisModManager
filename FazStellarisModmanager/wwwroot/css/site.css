@@ -125,6 +125,8 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); cur
 .uchip.mod { border-color: var(--warn); color: var(--warn); }
 .bonus { display: flex; gap: .4rem; align-items: center; margin: .15rem 0; }
 .bonus .pos { color: var(--ok); font-weight: 600; } .bonus .neg { color: var(--danger); font-weight: 600; }
+.bonus.variant { flex-wrap: wrap; }
+.bonus .variant-when { flex-basis: 100%; padding-left: calc(18px + .4rem); margin-top: -.1rem; }
 .custom-unlock, .swap { margin: .2rem 0; }
 .script { font-family: Consolas, monospace; font-size: .76rem; background: #0b0e13; border: 1px solid var(--border); border-radius: 5px; padding: .4rem .55rem; margin: .25rem 0; overflow-x: auto; }
 .script .sl { white-space: pre; min-height: 1em; }

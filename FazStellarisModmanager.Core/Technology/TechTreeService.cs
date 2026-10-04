@@ -111,9 +111,14 @@ public sealed class TechTreeService
     /// <summary>PNG data URI for a stat bonus icon in the current tree, or null (memo lookup, no IO).</summary>
     public string? BonusIconUri(StatBonus bonus) => _current?.Icons.TryGetValue(BonusKey(bonus), out var u) == true ? u : null;
 
+    /// <summary>PNG data URI for one empire-dependent variant of a stat bonus (index into <see cref="StatBonus.Variants"/>), or null.</summary>
+    public string? BonusIconUri(StatBonus bonus, int variant) => _current?.Icons.TryGetValue(VariantKey(bonus, variant), out var u) == true ? u : null;
+
     static string UnlockKey(Unlock u) => $"u:{u.KindFolder}/{u.Id}";
 
     static string BonusKey(StatBonus b) => b.IsNegative ? $"m:{b.Key}:neg" : $"m:{b.Key}";
+
+    static string VariantKey(StatBonus b, int variant) => $"{BonusKey(b)}:v{variant}";
 
     async Task PrewarmAsync(TechTree tree, CancellationToken ct)
     {
@@ -151,6 +156,11 @@ public sealed class TechTreeService
                 {
                     var bonus = b;
                     work.Add((BonusKey(b), () => IconResolver.ForBonus(bonus, Exists, db.Sprites)));
+                    for (var i = 0; i < b.Variants.Count; i++)
+                    {
+                        var variant = bonus with { IconTag = b.Variants[i].IconTag };
+                        work.Add((VariantKey(b, i), () => IconResolver.ForBonus(variant, Exists, db.Sprites)));
+                    }
                 }
 
             var done = 0;

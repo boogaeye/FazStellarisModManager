@@ -34,9 +34,18 @@ public static class IconResolver
 
     static readonly string[] TagSpritePrefixes = ["GFX_text_", "GFX_resource_", "GFX_"];
 
+    // Scope prefixes the game's modifier icons often leave out: country_influence_produces_mult uses mod_influence_produces_mult.
+    static readonly string[] ScopePrefixes = ["country_", "planet_", "pop_", "species_"];
+
+    static readonly Regex ResourceModifier = new(
+        @"^(?:(?:country|planet|pop|species)_)?([a-z_]+?)_(?:produces|upkeep|cost)_(?:mult|add)$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     /// <summary>
     /// Modifier icon, first hit wins: negative variants (mod_&lt;key&gt;_negative, mod_negative_&lt;key&gt;) for a negative value; mod_&lt;key&gt;; mod_&lt;key&gt;_positive;
-    /// the sprite named by the first inline tag of the modifier's name; the general ship icon for per-ship-size modifiers.
+    /// the same without a scope prefix (country_, planet_, pop_, species_); the sprite named by the first inline tag of the modifier's name;
+    /// icons/jobs/&lt;tag&gt;.dds for a job_ tag;
+    /// the resource icon (GFX_resource_&lt;res&gt;) for resource production/upkeep modifiers; the general ship icon for per-ship-size modifiers.
     /// </summary>
     public static IconRef? ForBonus(StatBonus bonus, Func<string, bool> exists, SpriteIndex? sprites = null)
     {
@@ -44,11 +53,26 @@ public static class IconResolver
         var key = bonus.Key;
         if (bonus.IsNegative && (Existing(Mod($"mod_{key}_negative"), exists) ?? Existing(Mod($"mod_negative_{key}"), exists)) is { } neg) return neg;
         if ((Existing(Mod($"mod_{key}"), exists) ?? Existing(Mod($"mod_{key}_positive"), exists)) is { } direct) return direct;
+        foreach (var scope in ScopePrefixes)
+        {
+            if (!key.StartsWith(scope, StringComparison.OrdinalIgnoreCase)) continue;
+            var bare = key[scope.Length..];
+            if (bonus.IsNegative && (Existing(Mod($"mod_{bare}_negative"), exists) ?? Existing(Mod($"mod_negative_{bare}"), exists)) is { } bareNeg)
+                return bareNeg;
+            if (Existing(Mod("mod_" + bare), exists) is { } unscoped) return unscoped;
+        }
 
         if (bonus.IconTag is { Length: > 0 } tag && sprites is not null)
             foreach (var prefix in TagSpritePrefixes)
-                if (sprites.Find(prefix + tag) is { } sprite && exists(sprite.TextureFile))
-                    return new IconRef(sprite.TextureFile, Math.Clamp(sprite.DefaultFrame ?? 1, 1, sprite.Frames), sprite.Frames);
+                if (FromExistingSprite(sprites.Find(prefix + tag), exists) is { } tagged) return tagged;
+        // Job icons from [job.GetIcon] often have no sprite, only the file.
+        if (bonus.IconTag is { Length: > 0 } jobTag && jobTag.StartsWith("job_", StringComparison.OrdinalIgnoreCase)
+            && Existing($"{Icons}/jobs/{jobTag}.dds", exists) is { } job)
+            return job;
+
+        if (sprites is not null && ResourceModifier.Match(key) is { Success: true } r
+            && FromExistingSprite(sprites.Find("GFX_resource_" + r.Groups[1].Value), exists) is { } resource)
+            return resource;
 
         if (ShipFamily.Match(key) is { Success: true } m)
         {
@@ -64,6 +88,9 @@ public static class IconResolver
         }
         return null;
     }
+
+    static IconRef? FromExistingSprite(SpriteInfo? sprite, Func<string, bool> exists) =>
+        sprite is not null && exists(sprite.TextureFile) ? FromSprite(sprite, null) : null;
 
     static IconRef? FromSprite(SpriteInfo? sprite, int? frame) =>
         sprite is null ? null : new IconRef(sprite.TextureFile, Math.Clamp(frame ?? sprite.DefaultFrame ?? 1, 1, sprite.Frames), sprite.Frames);

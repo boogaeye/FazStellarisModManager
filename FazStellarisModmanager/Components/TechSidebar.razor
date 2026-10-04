@@ -1,4 +1,5 @@
 @using System.Globalization
+@implements IDisposable
 
 <div class="tech-sidebar-card">
     <div class="sb-head">
@@ -67,12 +68,27 @@
         @if (Details.Bonuses.Count == 0) { <p class="muted small">None.</p> }
         @foreach (var b in Details.Bonuses)
         {
-            <div class="bonus">
-                <TechIcon Uri="@Tree.BonusIconUri(b)" Size="18" ShowPlaceholder="false" />
-                <span class="@(b.IsNegative ? "neg" : "pos")">@b.Display</span>
-                <span>@b.Name</span>
-                <span class="muted small">(@b.Key = @b.RawValue)</span>
-            </div>
+            if (b.Variants.Count == 0)
+            {
+                <div class="bonus">
+                    <TechIcon Uri="@Tree.BonusIconUri(b)" Size="18" ShowPlaceholder="false" />
+                    <span class="@(b.IsNegative ? "neg" : "pos")">@b.Display</span>
+                    <span>@b.Name</span>
+                    <span class="muted small">(@b.Key = @b.RawValue)</span>
+                </div>
+            }
+            else
+            {
+                var i = _tick % b.Variants.Count;
+                var v = b.Variants[i];
+                <div class="bonus variant" title="@VariantTooltip(b, i)">
+                    <TechIcon Uri="@(Tree.BonusIconUri(b, i) ?? (v.IconTag == b.IconTag ? Tree.BonusIconUri(b) : null))" Size="18" ShowPlaceholder="false" />
+                    <span class="@(b.IsNegative ? "neg" : "pos")">@b.Display</span>
+                    <span>@v.Name</span>
+                    <span class="muted small">(@b.Key = @b.RawValue)</span>
+                    <div class="variant-when muted small">when: @v.Condition@(v.IsDefault ? " (default)" : "") · @(i + 1)/@b.Variants.Count</div>
+                </div>
+            }
         }
         <h4>Custom unlock text</h4>
         @if (Details.CustomUnlocks.Count == 0) { <p class="muted small">None.</p> }
@@ -151,6 +167,60 @@
     [Parameter, EditorRequired] public TechDatabase Database { get; set; } = default!;
     [Parameter, EditorRequired] public TechTreeService Tree { get; set; } = default!;
     [Parameter] public EventCallback<string> OnSelect { get; set; }
+
+    // Bonuses whose name depends on the empire (Physicists / Calculators …) step through their variants on this tick.
+    const int VariantIntervalMs = 2500;
+    int _tick;
+    Timer? _timer;
+    string? _shownTech;
+    volatile bool _disposed;
+
+    protected override void OnParametersSet()
+    {
+        // A newly selected tech starts on its first variant.
+        if (_shownTech != Tech.Key)
+        {
+            _shownTech = Tech.Key;
+            _tick = 0;
+        }
+        var cycles = Details.Bonuses.Any(b => b.Variants.Count > 1);
+        if (cycles && _timer is null)
+            _timer = new Timer(_ => _ = Advance(), null, VariantIntervalMs, VariantIntervalMs);
+        else if (!cycles && _timer is not null)
+        {
+            _timer.Dispose();
+            _timer = null;
+        }
+    }
+
+    async Task Advance()
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed) return;
+                _tick++;
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { /* the renderer went away between ticks */ }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _timer?.Dispose();
+    }
+
+    static string VariantTooltip(StatBonus b, int current)
+    {
+        var lines = b.Variants.Select((v, n) => $"{(n == current ? "▶ " : "   ")}{v.Name} — when {v.Condition}{(v.IsDefault ? " (default)" : "")}");
+        var nl = ((char)10).ToString();
+        var text = "Name depends on the empire:" + nl + string.Join(nl, lines);
+        return b.Variants[current].ConditionScript is { } script ? text + nl + nl + "Condition for this one:" + nl + script : text;
+    }
 
     TechDetails Details => Tech.Details;
     IReadOnlyList<Unlock> Unlocks => Database.Unlocks(Tech.Key);
