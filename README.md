@@ -35,6 +35,23 @@ dotnet test FazStellarisModmanager.Tests
 
 The game folder and the Stellaris user folder (`Documents\Paradox Interactive\Stellaris`) are detected automatically. You can override them in **Settings**. App data (mod lists, backups, caches, research progress) lives in `%AppData%\FazStellarisModmanager`.
 
+## Installing
+
+Download `FazStellarisModManager-win-x64.zip` from the [latest release](https://github.com/boogaeye/FazStellarisModManager/releases/latest). Unzip it into a folder you own, such as `Documents\FazStellarisModManager`; avoid `Program Files`, where the app can't update itself. Then run `FazStellarisModmanager.exe`. No .NET install is needed.
+
+At startup the app checks for a newer release and asks before updating; you can say **Not now**. Turn the check off, or check by hand, in **Settings → Updates**.
+
+## Releasing a new version
+
+Tag the commit with the new version and push the tag:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The **Release** workflow tests the code, builds a self-contained Windows x64 app stamped with that version, and publishes it as a GitHub Release with `FazStellarisModManager-win-x64.zip` attached. Installed copies offer the update the next time they start.
+
 ## Project layout
 
 | Project | Purpose |
