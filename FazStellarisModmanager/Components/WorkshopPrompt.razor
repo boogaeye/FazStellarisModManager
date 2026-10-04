@@ -1,0 +1,260 @@
+@using System.Globalization
+@implements IDisposable
+
+<div class="modal-backdrop">
+    <div class="modal workshop-modal" role="dialog" aria-modal="true" aria-labelledby="ws-title">
+        <h2 id="ws-title">Workshop mods for this host</h2>
+
+        @if (phase == Phase.Choose)
+        {
+            @if (Needs.Items.Count == 0)
+            {
+                <p class="muted">Every Workshop mod the host uses is installed and up to date.</p>
+            }
+            else
+            {
+                <p class="muted small">Ticked mods are subscribed to and downloaded through Steam (Steam shows you as playing Stellaris meanwhile), then the host's list is applied.</p>
+                <div class="ws-tick">
+                    <button type="button" class="link" @onclick="() => SetAll(true)">Tick all</button> ·
+                    <button type="button" class="link" @onclick="() => SetAll(false)">Untick all</button>
+                </div>
+                <ul class="ws-list">
+                    @foreach (var need in Needs.Items)
+                    {
+                        var n = need;
+                        <li>
+                            <label class="inline">
+                                <input type="checkbox" checked="@selected.Contains(n.Id)" @onchange="e => Toggle(n.Id, e.Value is true)" />
+                                <span class="badge @(n.Kind == WorkshopNeedKind.Install ? "workshop" : "local")">@(n.Kind == WorkshopNeedKind.Install ? "Install" : "Update")</span>
+                                <span>@NameOf(n.Id)</span>
+                            </label>
+                            <span class="muted small">Workshop @n.Id@SizeOf(n.Id)</span>
+                        </li>
+                    }
+                </ul>
+                @if (infoError is not null)
+                {
+                    <p class="muted small">Couldn't get details from Steam: @infoError</p>
+                }
+            }
+            @if (Needs.NotInstallable.Count > 0)
+            {
+                <h3>Get these from the host</h3>
+                <p class="muted small">These are the host's own local mods; they aren't on the Workshop.</p>
+                <ul>
+                    @foreach (var name in Needs.NotInstallable)
+                    {
+                        <li>@name</li>
+                    }
+                </ul>
+            }
+            <div class="modal-actions">
+                @if (Needs.Items.Count > 0)
+                {
+                    <button class="primary" disabled="@(selected.Count == 0)" @onclick="() => Run(Needs.Items.Select(i => i.Id).Where(selected.Contains).ToList())">Install/update selected (@selected.Count) and match</button>
+                }
+                <button @onclick="() => Run([])">Match without installing</button>
+                <button @onclick="Close">Close</button>
+            </div>
+        }
+        else if (phase == Phase.Working)
+        {
+            <p>@(Session.Activity ?? "Working…")</p>
+            <ul class="ws-list">
+                @foreach (var id in running)
+                {
+                    var p = progress.GetValueOrDefault(id);
+                    <li>
+                        <span>@NameOf(id)</span>
+                        <span class="muted small">@StateText(p)</span>
+                        <progress max="1" value="@F(p?.Fraction ?? 0)"></progress>
+                    </li>
+                }
+            </ul>
+            <div class="modal-actions">
+                <button @onclick="Session.CancelCurrent">Cancel</button>
+            </div>
+        }
+        else
+        {
+            @if (result is { } r)
+            {
+                @if (r.Items.Count > 0)
+                {
+                    <ul class="ws-list">
+                        @foreach (var item in r.Items)
+                        {
+                            var it = item;
+                            <li>
+                                <span>@NameOf(it.Id)</span>
+                                @if (it.Success)
+                                {
+                                    <span class="status ok">@(KindOf(it.Id) == WorkshopNeedKind.Update ? "Updated" : "Installed")</span>
+                                }
+                                else
+                                {
+                                    <span class="status error">Failed: @it.Error</span>
+                                    <a href="@SteamLink(it.Id)" target="_blank">Open in Steam</a>
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
+                <p>@MatchText(r.Plan)</p>
+                @if (StillDifferent() is { Count: > 0 } diffs)
+                {
+                    <h3>Still different from the host</h3>
+                    <ul>
+                        @foreach (var d in diffs)
+                        {
+                            <li>@(d.MineName ?? d.Name)@(UpdatedHere(d) ? " (updated just now; the host may be on an older version)" : "")</li>
+                        }
+                    </ul>
+                }
+            }
+            @if (error is not null)
+            {
+                <p class="status error">@error</p>
+                @if (running.Count > 0)
+                {
+                    <p class="muted small">You can install these from Steam instead:</p>
+                    <ul>
+                        @foreach (var id in running)
+                        {
+                            <li><a href="@SteamLink(id)" target="_blank">@NameOf(id)</a></li>
+                        }
+                    </ul>
+                }
+            }
+            <div class="modal-actions">
+                <button class="primary" @onclick="Close">Close</button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SessionService Session { get; set; } = default!;
+    [Parameter] public IWorkshopService? Workshop { get; set; }
+    [Parameter, EditorRequired] public WorkshopNeeds Needs { get; set; } = default!;
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    enum Phase { Choose, Working, Done }
+
+    Phase phase = Phase.Choose;
+    readonly HashSet<ulong> selected = [];
+    readonly Dictionary<ulong, WorkshopProgress> progress = [];
+    Dictionary<ulong, WorkshopItemInfo> info = [];
+    List<ulong> running = [];
+    WorkshopMatchResult? result;
+    string? error;
+    string? infoError;
+    WorkshopNeeds? shownNeeds;
+
+    protected override void OnInitialized() => Session.Changed += OnSessionChanged;
+
+    void OnSessionChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ReferenceEquals(shownNeeds, Needs)) return;
+        shownNeeds = Needs;
+        (phase, result, error, infoError) = (Phase.Choose, null, null, null);
+        selected.Clear();
+        foreach (var need in Needs.Items) selected.Add(need.Id);
+        if (Workshop is null || Needs.Items.Count == 0) return;
+        try
+        {
+            var details = await Workshop.GetInfoAsync(Needs.Items.Select(i => i.Id).ToList(), CancellationToken.None);
+            info = details.ToDictionary(d => d.Id);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            infoError = ex.Message;
+        }
+    }
+
+    async Task Run(List<ulong> ids)
+    {
+        (phase, error, result, running) = (Phase.Working, null, null, ids);
+        progress.Clear();
+        try
+        {
+            result = await Session.InstallFromWorkshopAndMatchAsync(ids, new Sink(this));
+        }
+        catch (OperationCanceledException)
+        {
+            error = "Cancelled. The host's list was not applied.";
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            error = ex.Message;
+        }
+        phase = Phase.Done;
+    }
+
+    sealed class Sink(WorkshopPrompt owner) : IProgress<WorkshopProgress>
+    {
+        public void Report(WorkshopProgress value) => _ = owner.InvokeAsync(() =>
+        {
+            owner.progress[value.Id] = value;
+            owner.StateHasChanged();
+        });
+    }
+
+    WorkshopNeed? NeedOf(ulong id) => Needs.Items.FirstOrDefault(i => i.Id == id);
+
+    WorkshopNeedKind? KindOf(ulong id) => NeedOf(id)?.Kind;
+
+    string NameOf(ulong id) =>
+        info.TryGetValue(id, out var i) && i.Title is { Length: > 0 } title ? title : NeedOf(id)?.Name ?? $"Workshop {id}";
+
+    string SizeOf(ulong id) =>
+        info.TryGetValue(id, out var i) && i.SizeBytes is long bytes && bytes > 0 ? " · " + Size(bytes) : "";
+
+    static string Size(long bytes) =>
+        bytes >= 1L << 30 ? $"{bytes / (double)(1L << 30):0.0} GB"
+        : bytes >= 1L << 20 ? $"{bytes / (double)(1L << 20):0.0} MB"
+        : $"{Math.Max(1, bytes / 1024)} KB";
+
+    static string StateText(WorkshopProgress? p) => p?.State switch
+    {
+        null or WorkshopItemState.Waiting => "waiting",
+        WorkshopItemState.Subscribing => "subscribing",
+        WorkshopItemState.Downloading => $"{p.Fraction * 100:0}%",
+        WorkshopItemState.Installed => "done",
+        WorkshopItemState.Failed => "failed" + (p.Message is { } m ? ": " + m : ""),
+        _ => "cancelled",
+    };
+
+    static string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+
+    static string SteamLink(ulong id) => $"steam://url/CommunityFilePage/{id}";
+
+    static string MatchText(MatchPlan plan) => plan.IsComplete
+        ? $"Applied the host's list ({plan.ToApply.Mods.Count} mods) to dlc_load.json. Everything the host uses is installed."
+        : $"Applied the host's list ({plan.ToApply.Mods.Count} installed mods) to dlc_load.json. Some mods still need attention (see below and the Session page).";
+
+    List<UnitDiff> StillDifferent() =>
+        Session.MyDiff?.Mods.Where(m => m.Status is UnitStatus.Missing or UnitStatus.ContentMismatch).ToList() ?? [];
+
+    bool UpdatedHere(UnitDiff d) =>
+        d.Status == UnitStatus.ContentMismatch && result is { } r
+        && ModKeys.WorkshopId(d.MineKey ?? d.Key) is { } id && r.Items.Any(i => i.Id == id && i.Success);
+
+    void Toggle(ulong id, bool on)
+    {
+        if (on) selected.Add(id);
+        else selected.Remove(id);
+    }
+
+    void SetAll(bool on)
+    {
+        selected.Clear();
+        if (on) foreach (var need in Needs.Items) selected.Add(need.Id);
+    }
+
+    Task Close() => OnClose.InvokeAsync();
+}

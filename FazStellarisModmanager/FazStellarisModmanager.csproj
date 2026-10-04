@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FazStellarisModmanager.Core\FazStellarisModmanager.Core.csproj" />
+    <ProjectReference Include="..\FazStellarisModmanager.Steam\FazStellarisModmanager.Steam.csproj" />
   </ItemGroup>
 
 </Project>

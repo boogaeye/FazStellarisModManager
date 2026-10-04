@@ -7,6 +7,8 @@ using FazStellarisModmanager.Core;
 using FazStellarisModmanager.Core.Session;
 using FazStellarisModmanager.Core.Technology;
 using FazStellarisModmanager.Core.Updates;
+using FazStellarisModmanager.Core.Workshop;
+using FazStellarisModmanager.Steam;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FazStellarisModmanager;
@@ -22,8 +24,16 @@ public static class AppServices
         var dataDir = ArgValue(args, "--data-dir");
         var paths = dataDir is null ? AppPaths.Default() : new AppPaths(Path.GetFullPath(dataDir));
         services.AddSingleton(paths);
-        services.AddSingleton(_ => new ModManagerService(paths));
-        services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>()));
+        services.AddSingleton<IWorkshopService>(_ => new SteamWorkshopService());
+        services.AddSingleton(sp =>
+        {
+            var workshop = sp.GetRequiredService<IWorkshopService>();
+            return new ModManagerService(paths)
+            {
+                LaunchBlockedReason = () => workshop.IsActive ? "Wait for the Workshop downloads to finish before launching Stellaris." : null,
+            };
+        });
+        services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>()));
         services.AddSingleton(sp => new TechTreeService(sp.GetRequiredService<ModManagerService>()));
         services.AddSingleton(sp => new UpdateService(
             sp.GetRequiredService<ModManagerService>(),

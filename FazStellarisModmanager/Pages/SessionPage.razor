@@ -1,6 +1,7 @@
 @page "/session"
 @implements IDisposable
 @inject SessionService Session
+@inject IWorkshopService Workshop
 
 <h1>Multiplayer session</h1>
 
@@ -38,7 +39,8 @@ else
         <button @onclick="Rescan" disabled="@Session.IsBusy">Rescan my mods</button>
         @if (Session.Role == SessionRole.Client)
         {
-            <button class="primary" @onclick="Match" disabled="@(Session.IsBusy || Session.MyDiff is null || Session.MyDiff.IsMatch)">Match host</button>
+            <button class="primary" @onclick="OpenOrMatch" disabled="@(Session.IsBusy || Session.MyDiff is null || Session.MyDiff.IsMatch)">Match host</button>
+            <button @onclick="OpenWorkshop" disabled="@(Session.IsBusy || Session.MyDiff is null)">Workshop mods</button>
         }
         @if (Session.IsBusy)
         {
@@ -137,10 +139,50 @@ else
     <p class="status @(error ? "error" : "")">@status</p>
 }
 
+@if (workshopNeeds is { } needs && Session.Role == SessionRole.Client)
+{
+    <WorkshopPrompt Session="Session" Workshop="Workshop" Needs="needs" OnClose="() => workshopNeeds = null" />
+}
+```
+
 @code {
     // My mod's name, plus the host's when it differs.
     static string UnitName(UnitDiff u) =>
         u.MineName is { } mine && mine != u.Name ? $"{mine} (host: {u.Name})" : u.MineName ?? u.Name;
+
+    WorkshopNeeds? workshopNeeds;
+
+    // Match host: when something needs installing (or is host-only), show the Workshop pop-up instead of matching straight away.
+    async Task OpenOrMatch()
+    {
+        try
+        {
+            var needs = WorkshopNeeds.From(await Session.PlanAsync());
+            if (needs.NeedsPrompt)
+            {
+                workshopNeeds = needs;
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            (status, error) = (ex.Message, true);
+            return;
+        }
+        await Match();
+    }
+
+    async Task OpenWorkshop()
+    {
+        try
+        {
+            workshopNeeds = WorkshopNeeds.From(await Session.PlanAsync());
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            (status, error) = (ex.Message, true);
+        }
+    }
 
     int hostPort = SessionProtocol.DefaultPort;
     string joinAddress = "";
