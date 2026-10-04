@@ -1,0 +1,12 @@
+# Normalise line endings in the repository; check out with the platform default.
+* text=auto
+
+# Windows-only files keep CRLF on every checkout.
+*.sln text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets
+*.png binary
+*.ico binary
+*.dds binary
+*.zip binary
