@@ -2,7 +2,7 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 
-<div class="overview" @ref="_host"
+<div class="@(_down ? "overview dragging" : "overview")" @ref="_host"
      @onwheel="OnWheel" @onwheel:preventDefault
      @onmousedown="OnMouseDown" @onmousemove="OnMouseMove" @onmouseup="EndDrag" @onmouseleave="EndDrag"
      @oncontextmenu:preventDefault>
@@ -33,10 +33,10 @@
     [Parameter] public EventCallback<string> OnToggleResearched { get; set; }
     [Parameter] public EventCallback<string> OnToggleTarget { get; set; }
 
-    const double MinScale = 0.08, MaxScale = 2, WheelStep = 1.15, ButtonStep = 1.4, DetailScale = 0.35, DragThreshold = 4, FitMargin = 0.95;
+    const double MinScale = 0.08, MaxScale = 2, WheelBase = 1.0015, WheelMaxStep = 1.5, ButtonStep = 1.4, DetailScale = 0.35, DragThreshold = 4, FitMargin = 0.95;
 
     ElementReference _host;
-    IJSObjectReference? _module;
+    Task<IJSObjectReference>? _moduleTask;
     double _scale = 0.3, _tx, _ty;
     double _left, _top, _width, _height;   // host rectangle in client pixels, from the last measurement
     TechOverview? _fitted;                 // the overview the view was last fitted to
@@ -44,6 +44,14 @@
     bool _centreSelection;
     bool _down;
     double _downX, _downY, _lastX, _lastY, _moved;
+    bool _skipRender;   // set by a handler that changed nothing shown; ComponentBase re-renders after every event otherwise
+
+    protected override bool ShouldRender()
+    {
+        if (!_skipRender) return true;
+        _skipRender = false;
+        return false;
+    }
 
     protected override void OnParametersSet()
     {
@@ -77,8 +85,9 @@
     {
         try
         {
-            _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/overview.js");
-            var r = await _module.InvokeAsync<double[]>("rect", _host);
+            _moduleTask ??= JS.InvokeAsync<IJSObjectReference>("import", "./js/overview.js").AsTask();
+            var module = await _moduleTask;
+            var r = await module.InvokeAsync<double[]>("rect", _host);
             (_left, _top, _width, _height) = (r[0], r[1], r[2], r[3]);
             return _width > 0 && _height > 0;
         }
@@ -96,9 +105,12 @@
         StateHasChanged();
     }
 
+    // Scaled by the delta so touchpads (many small deltas) zoom no faster than a mouse; a ~100 notch gives about 1.16.
     async Task OnWheel(WheelEventArgs e)
     {
-        if (await MeasureAsync()) ZoomAt(e.ClientX - _left, e.ClientY - _top, e.DeltaY < 0 ? WheelStep : 1 / WheelStep);
+        if (e.DeltaY == 0) { _skipRender = true; return; }
+        var factor = Math.Clamp(Math.Pow(WheelBase, -e.DeltaY), 1 / WheelMaxStep, WheelMaxStep);
+        if (await MeasureAsync()) ZoomAt(e.ClientX - _left, e.ClientY - _top, factor);
     }
 
     async Task ZoomCentre(double factor)
@@ -123,7 +135,7 @@
 
     void OnMouseMove(MouseEventArgs e)
     {
-        if (!_down) return;
+        if (!_down) { _skipRender = true; return; }
         _tx += e.ClientX - _lastX;
         _ty += e.ClientY - _lastY;
         (_lastX, _lastY) = (e.ClientX, e.ClientY);
@@ -131,7 +143,11 @@
     }
 
     // _moved is kept until the next mouse down, so the click that follows a drag can be ignored.
-    void EndDrag() => _down = false;
+    void EndDrag()
+    {
+        if (!_down) { _skipRender = true; return; }
+        _down = false;
+    }
 
     Task NodeClick((string Key, MouseEventArgs Args) click)
     {
@@ -143,8 +159,8 @@
 
     public async ValueTask DisposeAsync()
     {
-        if (_module is null) return;
-        try { await _module.DisposeAsync(); }
+        if (_moduleTask is not { IsCompletedSuccessfully: true }) return;
+        try { await _moduleTask.Result.DisposeAsync(); }
         catch (JSDisconnectedException) { }
     }
 }

@@ -19,7 +19,7 @@
     var t = Database.Techs[n.Key];
     var key = n.Key;
     <g class="@NodeClass(t)" @onclick="args => OnNodeClick.InvokeAsync((key, args))"
-       @oncontextmenu="() => OnNodeContext.InvokeAsync(key)" @oncontextmenu:preventDefault>
+       @oncontextmenu="() => OnNodeContext.InvokeAsync(key)">
         <title>@Tooltip(t)</title>
         @if (Detailed)
         {
@@ -33,7 +33,8 @@
         }
         else
         {
-            <circle class="ov-dot" cx="@F(n.X + TechOverviewLayout.NodeWidth / 2)" cy="@F(n.Y + TechOverviewLayout.NodeHeight / 2)" r="12" fill="@AreaColor(t.Area)" />
+            <rect class="ov-hit" x="@F(n.X)" y="@F(n.Y)" width="@F(TechOverviewLayout.NodeWidth)" height="@F(TechOverviewLayout.NodeHeight)" fill="transparent" />
+            <circle class="ov-dot" cx="@F(n.X + TechOverviewLayout.NodeWidth / 2)" cy="@F(n.Y + TechOverviewLayout.NodeHeight / 2)" r="@F(TechOverviewLayout.NodeHeight / 2)" fill="@AreaColor(t.Area)" />
         }
     </g>
 }
@@ -65,6 +66,9 @@
     }
 
     protected override bool ShouldRender() => _changed;
+
+    // An event handler here (node click, context menu) re-renders through StateHasChanged; redraw only if the inputs changed since.
+    protected override void OnAfterRender(bool firstRender) => _changed = false;
 
     bool RouteOn => Route.Steps.Count > 0;
 

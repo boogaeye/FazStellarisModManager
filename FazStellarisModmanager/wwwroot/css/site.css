@@ -141,6 +141,7 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); cur
 .route-chip { display: inline-flex; gap: .3rem; align-items: center; border: 1px solid #c9a24a; background: #3a2e12; border-radius: 12px; padding: .1rem .5rem; }
 .route-chip .x { border: 0; background: none; padding: 0 .1rem; color: var(--muted); }
 .overview { position: relative; flex: 1; min-height: 420px; overflow: hidden; background: #0e1218; border: 1px solid var(--border); border-radius: 8px; cursor: grab; user-select: none; }
+.overview.dragging { cursor: grabbing; }
 .overview-svg { width: 100%; height: 100%; display: block; position: absolute; inset: 0; }
 .overview-controls { position: absolute; top: .5rem; right: .5rem; display: flex; gap: .3rem; }
 .ov-band { fill: #ffffff05; stroke: #ffffff10; }
@@ -157,7 +158,9 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); cur
 .ov-node.done .ov-box { stroke-dasharray: 4 3; }
 .ov-node.done .ov-name { fill: #6fcf97; }
 .ov-node.dim { opacity: .22; }
-.ov-node.sel .ov-dot, .ov-node.tgt .ov-dot { stroke: #ffffff; stroke-width: 6; }
+.ov-node.done .ov-dot { opacity: .45; }
+.ov-node.tgt .ov-dot { stroke: #f2c983; stroke-width: 6; }
+.ov-node.sel .ov-dot { stroke: #ffffff; stroke-width: 6; }
 .ov-name { fill: #dbe2ea; font-size: 12px; }
 .route-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
 .route-list { margin: .2rem 0; padding-left: 1.4rem; }
