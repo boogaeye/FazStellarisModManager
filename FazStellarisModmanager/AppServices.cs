@@ -1,8 +1,12 @@
 using System;
+using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
+using System.Threading;
 using FazStellarisModmanager.Core;
 using FazStellarisModmanager.Core.Session;
 using FazStellarisModmanager.Core.Technology;
+using FazStellarisModmanager.Core.Updates;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FazStellarisModmanager;
@@ -21,6 +25,19 @@ public static class AppServices
         services.AddSingleton(_ => new ModManagerService(paths));
         services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>()));
         services.AddSingleton(sp => new TechTreeService(sp.GetRequiredService<ModManagerService>()));
+        services.AddSingleton(sp => new UpdateService(
+            sp.GetRequiredService<ModManagerService>(),
+            new HttpClient { Timeout = Timeout.InfiniteTimeSpan },
+            UpdateService.VersionOf(typeof(AppServices).Assembly),
+            AppContext.BaseDirectory,
+            StartAndExit));
+    }
+
+    // Starts the update script, then closes the app so the script can replace its files.
+    static void StartAndExit(ProcessStartInfo script)
+    {
+        Process.Start(script)?.Dispose();
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(() => System.Windows.Application.Current.Shutdown());
     }
 
     static string? ArgValue(string[] args, string name)

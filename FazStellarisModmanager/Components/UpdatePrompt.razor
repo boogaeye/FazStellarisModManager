@@ -1,0 +1,57 @@
+@implements IDisposable
+@inject UpdateService Updates
+
+@if (Updates.Offer is { } offer)
+{
+    <div class="modal-backdrop">
+        <div class="modal" role="dialog" aria-labelledby="update-title">
+            <h2 id="update-title">Version @offer.Version is available</h2>
+            <p class="muted">You have version @Updates.Current. @offer.Name</p>
+            @if (!string.IsNullOrWhiteSpace(offer.Notes))
+            {
+                <pre class="release-notes">@offer.Notes</pre>
+            }
+            @if (Updates.IsInstalling)
+            {
+                <p>Downloading the update… @((int)Math.Round((Updates.DownloadProgress ?? 0) * 100))%</p>
+                <progress max="1" value="@((Updates.DownloadProgress ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture))"></progress>
+                <p class="muted small">The app will close and restart when the update is ready.</p>
+            }
+            else
+            {
+                @if (Updates.InstallError is { } err)
+                {
+                    <p class="status error">Update failed: @err</p>
+                }
+                @if (Updates.InstallBlocker() is { } reason)
+                {
+                    <p class="muted small">@reason</p>
+                }
+                <div class="modal-actions">
+                    @if (Updates.InstallBlocker() is null)
+                    {
+                        <button class="primary" @onclick="() => Updates.InstallAsync()">Update now</button>
+                    }
+                    else
+                    {
+                        <a class="button primary" href="@offer.PageUrl" target="_blank">Open release page</a>
+                    }
+                    <button @onclick="Updates.Dismiss">Not now</button>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    protected override void OnInitialized() => Updates.Changed += OnChanged;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) _ = Updates.CheckAtStartupAsync();
+    }
+
+    void OnChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Updates.Changed -= OnChanged;
+}
