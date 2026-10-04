@@ -28,6 +28,11 @@ jobs:
       - name: Publish (self-contained, win-x64)
         run: dotnet publish FazStellarisModmanager/FazStellarisModmanager.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o publish
 
+      # Only copies with this marker next to the exe update themselves (developer builds don't).
+      - name: Release marker
+        shell: pwsh
+        run: Set-Content publish/FazStellarisModmanager.release '${{ steps.version.outputs.version }}'
+
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path publish/* -DestinationPath FazStellarisModManager-win-x64.zip

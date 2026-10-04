@@ -16,6 +16,7 @@ public class UpdateServiceTests
         var http = new FakeHttp(respond);
         var started = new List<ProcessStartInfo>();
         var appDir = Directory.CreateDirectory(Path.Combine(tmp.Path, "app")).FullName;
+        File.WriteAllText(Path.Combine(appDir, UpdateInstaller.ReleaseMarker), "0.1.0");
         var service = new UpdateService(new ModManagerService(paths), new HttpClient(http), new Version(0, 1, 0), appDir, started.Add,
             "owner/repo", startupDelay: TimeSpan.Zero, workRoot: Path.Combine(tmp.Path, "work"));
         return new Setup(service, http, started, appDir);
@@ -74,7 +75,7 @@ public class UpdateServiceTests
         await s.Service.InstallAsync();
 
         var psi = Assert.Single(s.Started);
-        Assert.Equal("powershell.exe", psi.FileName);
+        Assert.Equal(UpdateInstallerTests.PowerShellExe, psi.FileName);
         var args = psi.ArgumentList.ToList();
         Assert.Equal(Environment.ProcessId.ToString(), args[args.IndexOf("-ProcessId") + 1]);
         Assert.Equal(s.AppDir, args[args.IndexOf("-Target") + 1]);
