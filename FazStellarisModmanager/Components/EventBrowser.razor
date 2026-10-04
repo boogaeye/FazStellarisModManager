@@ -1,0 +1,167 @@
+@using System.Text.RegularExpressions
+
+<div class="modal-backdrop" @onclick="Close">
+    <div class="evbrowser" @onclick:stopPropagation @ref="dialog" tabindex="-1" @onkeydown="Key"
+         role="dialog" aria-modal="true" aria-label="@($"Sources of {Tech.Name}")">
+        <div class="evlist">
+            <div class="evlist-head">
+                <b>@Tech.Name</b>
+                <button type="button" class="x" title="Close" @onclick="Close">✕</button>
+            </div>
+            <div class="muted small">Obtained from (@Sources.Count)</div>
+            @for (var i = 0; i < Sources.Count; i++)
+            {
+                var s = Sources[i];
+                var index = i;
+                <div class="gsrc @(i == Index ? "on" : "") @(s.IsEvent ? "" : "static")" @onclick="() => Select(index)">
+                    <span class="gbadge @GrantText.BadgeClass(s.Grants)">@GrantText.Badge(s.Grants)</span>
+                    <div>@(s.IsEvent ? s.Name : $"{s.Kind}: {s.Name}") <span class="muted small">@s.Id</span></div>
+                </div>
+            }
+        </div>
+
+        @if (Current is { } src && Database.Event(src.Id) is { } ev)
+        {
+            var immediate = src.Grants.Where(g => g.Part == EventPart.Immediate).ToList();
+            var after = src.Grants.Where(g => g.Part == EventPart.After).ToList();
+            <div class="evwin">
+                <div class="evtitle">
+                    @ev.Title
+                    <span class="evid">@ev.Id · @ev.Type.Replace('_', ' ') · @ev.Source.SourceName@(ev.Hidden ? " · hidden event (no window in game)" : "")</span>
+                </div>
+                @if (picture is not null)
+                {
+                    <img class="evpic" src="@picture" alt="" />
+                }
+                else
+                {
+                    <div class="evpic placeholder">@(ev.Picture is null ? "No picture" : pictureLoading ? "Loading picture…" : ev.Picture)</div>
+                }
+                @if (ev.Picture is not null && ev.PictureVaries)
+                {
+                    <div class="muted small evnote">The picture depends on conditions; showing the first.</div>
+                }
+                <div class="evdesc">
+                    @if (ev.Description is null)
+                    {
+                        <span class="muted">No description.</span>
+                    }
+                    else
+                    {
+                        foreach (var part in Commands.Split(ev.Description))
+                        {
+                            if (part.Length > 1 && part[0] == '[' && part[^1] == ']')
+                            {
+                                <span class="evcmd">@part</span>
+                            }
+                            else
+                            {
+                                <text>@part</text>
+                            }
+                        }
+                    }
+                    @if (ev.DescriptionVaries)
+                    {
+                        <div class="muted small">(the text depends on conditions; showing the first)</div>
+                    }
+                </div>
+                @if (immediate.Count > 0)
+                {
+                    <div class="evstrip">When the event fires: @string.Join("; ", immediate.Select(Effect))</div>
+                }
+                <div class="evopts">
+                    @for (var i = 0; i < ev.Options.Count; i++)
+                    {
+                        var option = ev.Options[i];
+                        var optionIndex = i;
+                        var mine = src.Grants.Where(g => g.Part == EventPart.Option && g.OptionIndex == optionIndex).ToList();
+                        <div class="evopt @(mine.Count > 0 ? "gives" : "")">
+                            @if (option.Condition is not null)
+                            {
+                                <span class="cnd">Only if: @option.Condition</span>
+                            }
+                            @foreach (var g in mine)
+                            {
+                                <span class="gtag">★ @Effect(g)</span>
+                            }
+                            @option.Name
+                        </div>
+                    }
+                </div>
+                @if (after.Count > 0)
+                {
+                    <div class="evstrip">After any option: @string.Join("; ", after.Select(Effect))</div>
+                }
+                <div class="evnav">
+                    <button type="button" class="link" disabled="@(Step(-1) is null)" @onclick="() => Go(-1)">◀ Previous</button>
+                    <span class="muted">Event @(EventIndexes.IndexOf(Index) + 1) of @EventIndexes.Count</span>
+                    <button type="button" class="link" disabled="@(Step(1) is null)" @onclick="() => Go(1)">Next ▶</button>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Tech Tech { get; set; } = default!;
+    [Parameter, EditorRequired] public TechDatabase Database { get; set; } = default!;
+    [Parameter, EditorRequired] public TechTreeService Tree { get; set; } = default!;
+    [Parameter, EditorRequired] public IReadOnlyList<GrantSource> Sources { get; set; } = [];
+    [Parameter] public int Index { get; set; }
+    [Parameter] public EventCallback<int> IndexChanged { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    static readonly Regex Commands = new(@"(\[[^\[\]]+\])", RegexOptions.Compiled);
+
+    ElementReference dialog;
+    string? picture;
+    bool pictureLoading;
+    string? shownEvent;
+    bool focused;
+
+    GrantSource? Current => Index >= 0 && Index < Sources.Count ? Sources[Index] : null;
+
+    List<int> EventIndexes => Enumerable.Range(0, Sources.Count).Where(i => Sources[i].IsEvent).ToList();
+
+    string Effect(TechGrant g) => GrantText.Effect(g, Tech.Name);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Current is not { } src || Database.Event(src.Id) is not { } ev || ev.Id == shownEvent) return;
+        shownEvent = ev.Id;
+        (picture, pictureLoading) = (null, ev.Picture is not null);
+        var loaded = await Tree.EventPictureAsync(ev);
+        if (shownEvent != ev.Id) return;
+        (picture, pictureLoading) = (loaded, false);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focused) return;
+        focused = true;
+        try { await dialog.FocusAsync(); }
+        catch (Exception ex) when (ex is Microsoft.JSInterop.JSException or InvalidOperationException) { }
+    }
+
+    int? Step(int direction)
+    {
+        var events = EventIndexes;
+        var at = events.IndexOf(Index);
+        var next = at + direction;
+        return at >= 0 && next >= 0 && next < events.Count ? events[next] : null;
+    }
+
+    Task Go(int direction) => Step(direction) is { } i ? IndexChanged.InvokeAsync(i) : Task.CompletedTask;
+
+    Task Select(int index) => Sources[index].IsEvent ? IndexChanged.InvokeAsync(index) : Task.CompletedTask;
+
+    Task Close() => OnClose.InvokeAsync();
+
+    Task Key(KeyboardEventArgs e) => e.Key switch
+    {
+        "Escape" => Close(),
+        "ArrowLeft" => Go(-1),
+        "ArrowRight" => Go(1),
+        _ => Task.CompletedTask,
+    };
+}

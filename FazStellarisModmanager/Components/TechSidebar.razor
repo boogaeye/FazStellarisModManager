@@ -106,6 +106,39 @@
     </details>
 
     <details open>
+        <summary>Obtained from (@Grants.Count)</summary>
+        @if (Grants.Count == 0)
+        {
+            <p class="muted small">No event or other game object gives, progresses or offers this technology.</p>
+        }
+        @for (var i = 0; i < Grants.Count; i++)
+        {
+            var g = Grants[i];
+            var index = i;
+            <div class="gsrc">
+                <span class="gbadge @GrantText.BadgeClass(g.Grants)">@GrantText.Badge(g.Grants)</span>
+                @if (g.IsEvent)
+                {
+                    <div>
+                        <button type="button" class="link" @onclick="() => browserIndex = index">@g.Name</button>
+                        <span class="muted small">@g.Id · @GrantText.Where(g, Database.Event(g.Id))</span>
+                    </div>
+                }
+                else
+                {
+                    <div>@g.Kind: <b>@g.Name</b> <span class="muted small">@g.Id</span></div>
+                }
+            </div>
+        }
+    </details>
+
+    @if (browserIndex is int shownIndex && shownIndex < Grants.Count)
+    {
+        <EventBrowser Tech="Tech" Database="Database" Tree="Tree" Sources="Grants" Index="shownIndex"
+                      IndexChanged="i => browserIndex = i" OnClose="() => browserIndex = null" />
+    }
+
+    <details open>
         <summary>Effects</summary>
         <h4>Stat bonuses</h4>
         @if (Details.Bonuses.Count == 0) { <p class="muted small">None.</p> }
@@ -232,6 +265,7 @@
     // Bonuses whose name depends on the empire (Physicists / Calculators …) step through their variants on this tick.
     const int VariantIntervalMs = 2500;
     int _tick;
+    int? browserIndex;
     Timer? _timer;
     string? _shownTech;
     volatile bool _disposed;
@@ -243,6 +277,7 @@
         {
             _shownTech = Tech.Key;
             _tick = 0;
+            browserIndex = null;
         }
         var cycles = Details.Bonuses.Any(b => b.Variants.Count > 1);
         if (cycles && _timer is null)
@@ -285,5 +320,6 @@
 
     TechDetails Details => Tech.Details;
     IReadOnlyList<Unlock> Unlocks => Database.Unlocks(Tech.Key);
+    IReadOnlyList<GrantSource> Grants => Database.GrantSources(Tech.Key);
     string TierText => Tech.IsRepeatable ? "R" : Tech.Tier?.ToString(CultureInfo.InvariantCulture) ?? "?";
 }
