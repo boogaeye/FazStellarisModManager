@@ -55,6 +55,7 @@
 
     protected override void OnParametersSet()
     {
+        _skipRender = false; // new inputs from the parent must always render
         if (!ReferenceEquals(_fitted, Overview) || SelectedKey == _shownSelection) return;
         _shownSelection = SelectedKey;
         _centreSelection = true;

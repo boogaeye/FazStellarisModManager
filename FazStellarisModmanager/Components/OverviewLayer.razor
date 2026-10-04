@@ -65,10 +65,14 @@
         _shown = now;
     }
 
-    protected override bool ShouldRender() => _changed;
+    protected override bool ShouldRender()
+    {
+        var render = _changed;
+        _changed = false;
+        return render;
+    }
 
     // An event handler here (node click, context menu) re-renders through StateHasChanged; redraw only if the inputs changed since.
-    protected override void OnAfterRender(bool firstRender) => _changed = false;
 
     bool RouteOn => Route.Steps.Count > 0;
 

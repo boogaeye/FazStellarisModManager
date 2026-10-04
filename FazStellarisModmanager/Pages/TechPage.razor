@@ -242,7 +242,8 @@
     void ToggleTarget(string key) => ChangeResearch((_, t) => { if (!t.Remove(key)) t.Add(key); });
     void RemoveTarget(string key) => ChangeResearch((_, t) => t.Remove(key));
     void ClearRoute() => ChangeResearch((_, t) => t.Clear());
-    void UnresearchAll() => ChangeResearch((r, _) => r.Clear());
+    // Only marks of techs in this tree: marks from mods that are currently off are kept (spec: unknown keys survive).
+    void UnresearchAll() => ChangeResearch((r, _) => r.RemoveWhere(k => stateFor?.Database.Techs.ContainsKey(k) ?? true));
 
     TechFilter Filter => new(
         search,
