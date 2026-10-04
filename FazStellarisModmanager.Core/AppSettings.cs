@@ -3,8 +3,8 @@ using FazStellarisModmanager.Core.IO;
 
 namespace FazStellarisModmanager.Core;
 
-/// <summary>User overrides. Null means auto-detect (game dir, user dir) or machine name (player name).</summary>
-public sealed record AppSettings(string? GameDir = null, string? UserDir = null, string? PlayerName = null);
+/// <summary>User overrides. Null means auto-detect (game dir, user dir) or machine name (player name). CheckForUpdates defaults to on.</summary>
+public sealed record AppSettings(string? GameDir = null, string? UserDir = null, string? PlayerName = null, bool CheckForUpdates = true);
 
 public static class SettingsStore
 {
