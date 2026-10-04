@@ -21,9 +21,18 @@ public sealed record TechOverview(
     double Height)
 {
     Dictionary<string, OverviewNode>? _byKey;
+    IReadOnlyList<OverviewNode>? _byKeyFor;
 
-    public OverviewNode? Find(string key) =>
-        (_byKey ??= Nodes.ToDictionary(n => n.Key, StringComparer.OrdinalIgnoreCase)).GetValueOrDefault(key);
+    /// <summary>The node for a key (case-insensitive). The index is rebuilt when <see cref="Nodes"/> is replaced (a <c>with</c> copy).</summary>
+    public OverviewNode? Find(string key)
+    {
+        if (_byKey is null || !ReferenceEquals(_byKeyFor, Nodes))
+        {
+            _byKey = Nodes.ToDictionary(n => n.Key, StringComparer.OrdinalIgnoreCase);
+            _byKeyFor = Nodes;
+        }
+        return _byKey.GetValueOrDefault(key);
+    }
 }
 
 /// <summary>
@@ -74,6 +83,7 @@ public static class TechOverviewLayout
                 double Barycenter(Tech t)
                 {
                     var rows = t.Prerequisites
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
                         .Select(p => db.Techs.TryGetValue(p, out var pre) ? pre : null)
                         .OfType<Tech>()
                         .Where(pre => column.TryGetValue(pre.Key, out var pc) && pc < current)

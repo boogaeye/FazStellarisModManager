@@ -115,4 +115,20 @@ public class TechOverviewLayoutTests
         Assert.Equal("Other", o.Bands[3].Label);
         Assert.Equal(["Tier 0"], o.Columns.Select(c => c.Label));
     }
+
+    [Fact]
+    public void A_with_copy_finds_its_own_nodes()
+    {
+        var (db, cleanup) = Db(Tree);
+        using var _ = cleanup;
+
+        var o = TechOverviewLayout.Build(db);
+        Assert.NotNull(o.Find("p0"));
+
+        var copy = o with { Nodes = [new OverviewNode("only", TechArea.Physics, 0, 0, 1, 2)] };
+
+        Assert.Null(copy.Find("p0"));
+        Assert.Equal(1, copy.Find("ONLY")!.X);
+        Assert.NotNull(o.Find("p0"));
+    }
 }

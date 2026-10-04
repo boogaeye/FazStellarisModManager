@@ -22,7 +22,10 @@ public sealed class ResearchStateStore(string directory)
 
     public string Directory { get; } = directory;
 
-    /// <summary>The saved state; <see cref="ResearchState.Empty"/> when there is none. A corrupt file gives the empty state plus a warning.</summary>
+    /// <summary>
+    /// The saved state; <see cref="ResearchState.Empty"/> when there is none. A corrupt file gives the empty state plus a warning, and is
+    /// copied to "&lt;file&gt;.bad" next to it (best effort) so the next save does not lose it.
+    /// </summary>
     public ResearchState Load(string label, ICollection<string>? warnings = null)
     {
         var path = PathFor(label);
@@ -34,7 +37,16 @@ public sealed class ResearchStateStore(string directory)
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            warnings?.Add($"Research progress for '{label}' could not be read: {ex.Message}");
+            var backup = path + ".bad";
+            var backedUp = false;
+            try
+            {
+                File.Copy(path, backup, overwrite: true);
+                backedUp = true;
+            }
+            catch (Exception copyEx) when (copyEx is IOException or UnauthorizedAccessException) { }
+            warnings?.Add($"Research progress for '{label}' could not be read: {ex.Message}"
+                + (backedUp ? $" The file was copied to {Path.GetFileName(backup)}." : ""));
             return ResearchState.Empty;
         }
     }

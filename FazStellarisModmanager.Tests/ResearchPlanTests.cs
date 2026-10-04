@@ -16,6 +16,8 @@ public class ResearchPlanTests
         rep = { area = physics tier = 1 cost = 40 levels = -1 prerequisites = { "a" } }
         loop1 = { area = physics tier = 1 cost = 1 prerequisites = { "loop2" } }
         loop2 = { area = physics tier = 1 cost = 1 prerequisites = { "loop1" } }
+        after = { area = physics tier = 2 cost = 1 prerequisites = { "loop2" } }
+        f = { area = society tier = 3 cost = 1 prerequisites = { "ghost" "GHOST" "e" } }
         """;
 
     static (TechDatabase Db, IDisposable Cleanup) Db()
@@ -113,5 +115,56 @@ public class ResearchPlanTests
 
         Assert.Empty(route.Steps);
         Assert.Equal(0, route.TotalCost);
+    }
+
+    [Fact]
+    public void A_duplicate_missing_prerequisite_is_reported_once_and_sorted()
+    {
+        var (db, cleanup) = Db();
+        using var _ = cleanup;
+
+        var route = ResearchPlan.Build(db, ["f"], []);
+
+        Assert.Equal([new MissingPrerequisite("e", "ghost"), new MissingPrerequisite("f", "ghost")], route.MissingPrerequisites);
+    }
+
+    [Fact]
+    public void A_tech_downstream_of_a_loop_is_in_Cycles()
+    {
+        var (db, cleanup) = Db();
+        using var _ = cleanup;
+
+        var route = ResearchPlan.Build(db, ["after"], []);
+
+        Assert.Equal(["loop1", "loop2", "after"], route.Steps);
+        Assert.Equal(["loop1", "loop2", "after"], route.Cycles);
+    }
+
+    [Fact]
+    public void Null_and_blank_keys_are_ignored()
+    {
+        var (db, cleanup) = Db();
+        using var _ = cleanup;
+
+        var route = ResearchPlan.Build(db, [null!, " ", "a"], [null!, ""]);
+
+        Assert.Equal(["a"], route.Steps);
+        Assert.Empty(route.UnknownTargets);
+    }
+
+    [Fact]
+    public void A_with_copy_reports_the_new_Needed()
+    {
+        var (db, cleanup) = Db();
+        using var _ = cleanup;
+
+        var route = ResearchPlan.Build(db, ["a"], []);
+        Assert.Contains("a", route.Needed);
+
+        var copy = route with { Steps = ["b"] };
+
+        Assert.Contains("B", copy.Needed);
+        Assert.DoesNotContain("a", copy.Needed);
+        Assert.Contains("a", route.Needed);
     }
 }

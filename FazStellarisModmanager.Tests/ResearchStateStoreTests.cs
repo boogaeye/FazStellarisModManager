@@ -49,4 +49,44 @@ public class ResearchStateStoreTests
         Assert.Empty(blank.Targets);
         Assert.Single(warnings);
     }
+
+    [Fact]
+    public void A_corrupt_file_is_backed_up_next_to_it()
+    {
+        using var tmp = new TempDir();
+        var store = new ResearchStateStore(Path.Combine(tmp.Path, "research"));
+        Directory.CreateDirectory(store.Directory);
+        var path = store.PathFor("Bad");
+        File.WriteAllText(path, "{ not json");
+        var warnings = new List<string>();
+
+        Assert.Same(ResearchState.Empty, store.Load("Bad", warnings));
+
+        Assert.Equal("{ not json", File.ReadAllText(path + ".bad"));
+        Assert.Contains(".bad", Assert.Single(warnings));
+    }
+
+    [Fact]
+    public void An_array_root_gives_empty_state_and_a_warning()
+    {
+        using var tmp = new TempDir();
+        var store = new ResearchStateStore(Path.Combine(tmp.Path, "research"));
+        Directory.CreateDirectory(store.Directory);
+        File.WriteAllText(store.PathFor("Arr"), "[]");
+        var warnings = new List<string>();
+
+        Assert.Same(ResearchState.Empty, store.Load("Arr", warnings));
+        Assert.Single(warnings);
+    }
+
+    [Fact]
+    public void Targets_are_sorted_and_deduplicated_on_save()
+    {
+        using var tmp = new TempDir();
+        var store = new ResearchStateStore(Path.Combine(tmp.Path, "research"));
+
+        store.Save("L", new ResearchState([], ["z", "b", "B", " ", "a"]));
+
+        Assert.Equal(["a", "b", "z"], store.Load("L").Targets);
+    }
 }
