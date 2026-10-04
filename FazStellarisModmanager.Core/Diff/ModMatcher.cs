@@ -85,7 +85,7 @@ public static class ModMatcher
     {
         if (files.Count == 0) return null;
         var lines = files
-            .Select(f => f.Path.Replace((char)92, '/').ToLowerInvariant() + "|" + f.Md5.ToLowerInvariant())
+            .Select(f => (f.Path ?? "").Replace((char)92, '/').ToLowerInvariant() + "|" + (f.Md5 ?? "").ToLowerInvariant())
             .Order(StringComparer.Ordinal);
         return Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(string.Join((char)10, lines))));
     }

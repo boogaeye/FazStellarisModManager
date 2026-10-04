@@ -78,6 +78,13 @@ public class ModMatcherTests
     }
 
     [Fact]
+    public void Fingerprints_tolerate_files_without_a_path_or_hash()
+    {
+        // Snapshots come from peers over the network, so fields declared non-null can still arrive as null.
+        Assert.NotNull(ModMatcher.Fingerprint([new ModFile(null!, null!, 1), new ModFile("a.txt", "aa", 1)]));
+    }
+
+    [Fact]
     public void Fingerprints_are_computed_only_for_mods_still_unpaired_at_the_files_rule()
     {
         var calls = new List<string>();
