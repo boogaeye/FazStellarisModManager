@@ -106,6 +106,23 @@ public class TechDatabaseTests
         Assert.Contains("00_t.txt", db.Warnings[1]);
     }
 
+    [Fact]
+    public void Duplicate_warnings_are_kept_once_in_order()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("base/common/technology/00_t.txt", "tech_a = { area = physics }");
+        // Both the unlock scan and the grant scan read common/buildings, so both would warn about it.
+        var file = tmp.Write("base/common/buildings/00_b.txt", "building_x = { prerequisites = { tech_a } }");
+        using var source = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "base"), isBaseGame: true);
+        using var hold = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var db = TechDatabase.Build([source], ["dup", "earlier", "dup"]);
+
+        Assert.Equal(["dup", "earlier"], db.Warnings.Take(2));
+        Assert.Single(db.Warnings, w => w.Contains("00_b.txt"));
+        Assert.Equal(3, db.Warnings.Count);
+    }
+
     static (TempDir Tmp, List<ContentSource> Sources) Dirs(params (string Name, bool Base, (string Rel, string Text)[] Files)[] defs)
     {
         var tmp = new TempDir();

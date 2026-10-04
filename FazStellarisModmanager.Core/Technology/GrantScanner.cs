@@ -26,6 +26,21 @@ public sealed class GrantIndex
     public int EventCount => _events.Count;
 }
 
+/// <summary>Event and common/ files parsed by <see cref="GrantScanner.Read"/>, in load order, with the script library they were filtered by.</summary>
+public sealed class GrantFiles
+{
+    internal GrantFiles(ScriptLibrary library, List<GrantScanner.ParsedFile> events, List<GrantScanner.ParsedFile> common)
+    {
+        Library = library;
+        Events = events;
+        Common = common;
+    }
+
+    internal ScriptLibrary Library { get; }
+    internal List<GrantScanner.ParsedFile> Events { get; }
+    internal List<GrantScanner.ParsedFile> Common { get; }
+}
+
 /// <summary>
 /// Scans events/ (first definition of an event id wins; <c>base = id</c> inheritance is resolved across files) and common/ objects
 /// (last (folder, id) wins) for tech grants. Files at the same path in a later source replace earlier ones; files are read in
@@ -49,8 +64,24 @@ public static class GrantScanner
 
     /// <param name="techKey">Maps a tech key to the database's spelling, or null when there is no such tech.</param>
     public static GrantIndex Scan(IReadOnlyList<ContentSource> sources, Localisation loc, ScriptLibrary library,
-        Func<string, string?> techKey, ICollection<string> warnings, CancellationToken ct = default)
+        Func<string, string?> techKey, ICollection<string> warnings, CancellationToken ct = default) =>
+        Scan(Read(sources, library, warnings, ct), loc, techKey, ct);
+
+    /// <summary>
+    /// Reads and parses the event and common/ files. Needs no localisation or tech list, so it can run while those load.
+    /// </summary>
+    public static GrantFiles Read(IReadOnlyList<ContentSource> sources, ScriptLibrary library, ICollection<string> warnings, CancellationToken ct = default)
     {
+        var events = ParseAll(sources, "events", f => true, null, warnings, ct);
+        var common = ParseAll(sources, "common", rel => rel.Split('/') is { Length: >= 3 } p && !ExcludedCommon.Contains(p[1]), Prefilter(library), warnings, ct);
+        return new GrantFiles(library, events, common);
+    }
+
+    /// <summary>Finds the grants in files read by <see cref="Read"/>.</summary>
+    /// <param name="techKey">Maps a tech key to the database's spelling, or null when there is no such tech.</param>
+    public static GrantIndex Scan(GrantFiles files, Localisation loc, Func<string, string?> techKey, CancellationToken ct = default)
+    {
+        var library = files.Library;
         string Describe(PdxBlock? b) => TriggerSummary.Describe(b, loc.Get, n => loc.ScriptedTriggers.TryGetValue(n, out var t) ? t : null);
         var finder = new GrantFinder(library, Describe);
 
@@ -67,7 +98,7 @@ public static class GrantScanner
 
         // Events: first definition per id wins; inheritance is resolved once every definition is known.
         var definitions = new Dictionary<string, EventDefinition>(StringComparer.OrdinalIgnoreCase);
-        foreach (var file in ParseAll(sources, "events", f => true, null, warnings, ct))
+        foreach (var file in files.Events)
             foreach (var e in file.Root.Entries)
                 if (e.Value is PdxBlock block && IsEventKey(e.Key) && block.GetString("id") is { } id)
                     definitions.TryAdd(id, new EventDefinition(e.Key, block, file.Src));
@@ -88,21 +119,29 @@ public static class GrantScanner
             return resolved[id] = result;
         }
 
-        var events = new Dictionary<string, GameEvent>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (id, definition) in definitions)
+        // Resolve in order (memoised, single-threaded), then analyse in parallel and merge in order.
+        var ordered = definitions.ToArray();
+        var blocks = new PdxBlock[ordered.Length];
+        for (var i = 0; i < ordered.Length; i++)
         {
             ct.ThrowIfCancellationRequested();
-            var block = Resolve(id, 0, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-            var analysed = AnalyseEvent(definition.Type, id, block, definition.Src, loc, finder, Describe, techKey);
-            if (analysed is null) continue;
-            events[id] = analysed.Value.Event;
-            AddSource(new PendingSource("Event", GrantSource.EventsFolder, id, analysed.Value.Event.Title, definition.Src, analysed.Value.Grants));
+            blocks[i] = Resolve(ordered[i].Key, 0, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        }
+        var analysed = new (GameEvent Event, List<TechGrantFor> Grants)?[ordered.Length];
+        Parallel.For(0, ordered.Length, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, i =>
+            analysed[i] = AnalyseEvent(ordered[i].Value.Type, ordered[i].Key, blocks[i], ordered[i].Value.Src, loc, finder, Describe, techKey));
+
+        var events = new Dictionary<string, GameEvent>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < ordered.Length; i++)
+        {
+            if (analysed[i] is not { } a) continue;
+            events[ordered[i].Key] = a.Event;
+            AddSource(new PendingSource("Event", GrantSource.EventsFolder, ordered[i].Key, a.Event.Title, ordered[i].Value.Src, a.Grants));
         }
 
         // common/ objects: last (folder, id) wins. Objects of files that cannot grant still replace earlier definitions.
-        var prefilter = Prefilter(library);
         var objects = new Dictionary<string, PendingSource?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var file in ParseAll(sources, "common", rel => rel.Split('/') is { Length: >= 3 } p && !ExcludedCommon.Contains(p[1]), prefilter, warnings, ct))
+        foreach (var file in files.Common)
         {
             ct.ThrowIfCancellationRequested();
             var folder = file.Src.File.Split('/')[1];
@@ -137,7 +176,7 @@ public static class GrantScanner
     sealed record PendingSource(string Kind, string KindFolder, string Id, string Name, TechSourceRef Source, List<TechGrantFor> Grants);
 
     /// <summary>A parsed file, or (DefinedOnly set, Root empty) the object ids of a base file the pre-filter ruled out.</summary>
-    sealed record ParsedFile(TechSourceRef Src, PdxBlock Root, IReadOnlyList<string>? DefinedOnly);
+    internal sealed record ParsedFile(TechSourceRef Src, PdxBlock Root, IReadOnlyList<string>? DefinedOnly);
 
     sealed record EventDefinition(string Type, PdxBlock Block, TechSourceRef Src);
 

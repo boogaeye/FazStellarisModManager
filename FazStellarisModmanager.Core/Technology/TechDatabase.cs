@@ -57,7 +57,7 @@ public sealed class TechDatabase
     {
         Techs = techs;
         _dependents = dependents;
-        Warnings = warnings;
+        Warnings = warnings.Distinct().ToList();
         _unlocks = unlocks;
         Sprites = sprites;
         _grants = grants;
@@ -157,81 +157,109 @@ public sealed class TechDatabase
         IProgress<string>? progress = null, CancellationToken ct = default)
     {
         var warnings = new List<string>(earlierWarnings ?? []);
-        progress?.Report("Collecting technology files…");
-        var techFiles = Winners(sources, TechFolder, topLevelOnly: true);
-        var variableFiles = Winners(sources, VariablesFolder, topLevelOnly: false);
-
-        var globals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var f in variableFiles.Values.OrderBy(f => f.Rel, LoadOrder))
-            if (TryRead(f.Source, f.Rel, warnings) is { } text)
-                foreach (var (k, v) in ScriptedVariables.Parse(text)) globals[k] = v;
-
-        var defs = new Dictionary<string, (TechDefinition Def, TechSourceRef Src, Dictionary<string, string> Locals)>(StringComparer.OrdinalIgnoreCase);
-        var overridden = new Dictionary<string, List<TechSourceRef>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var f in techFiles.Values.OrderBy(f => f.Rel, LoadOrder))
+        // Reading and parsing the files searched for grants (scripted effects, every event file, common/) depends on nothing
+        // else, so it starts first and overlaps the tech files and localisation.
+        var grantWarnings = new List<string>();
+        var grantRead = Task.Run(() => GrantScanner.Read(sources, ScriptLibrary.Load(sources, grantWarnings, ct), grantWarnings, ct), ct);
+        Task<GrantIndex>? grantScan = null;
+        var unlockWarnings = new List<string>();
+        var spriteWarnings = new List<string>();
+        var techs = new Dictionary<string, Tech>(StringComparer.OrdinalIgnoreCase);
+        IReadOnlyDictionary<string, IReadOnlyList<Unlock>> unlocks;
+        SpriteIndex sprites;
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            progress?.Report($"Reading {f.Source.Name}: {f.Rel}");
-            if (TryRead(f.Source, f.Rel, warnings) is not { } text) continue;
+            progress?.Report("Collecting technology files…");
+            var techFiles = Winners(sources, TechFolder, topLevelOnly: true);
+            var variableFiles = Winners(sources, VariablesFolder, topLevelOnly: false);
 
-            // Files this one replaced at file level: their techs count as overridden by this file.
-            var replaced = new List<(TechSourceRef Ref, HashSet<string> Keys)>();
-            foreach (var (rs, rrel) in f.Replaced)
-                if (TryRead(rs, rrel, warnings) is { } old)
-                    replaced.Add((new TechSourceRef(rs.Name, rs.IsBaseGame, rrel),
-                        TechParser.Parse(old).Select(d => d.Key).ToHashSet(StringComparer.OrdinalIgnoreCase)));
+            var globals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in variableFiles.Values.OrderBy(f => f.Rel, LoadOrder))
+                if (TryRead(f.Source, f.Rel, warnings) is { } text)
+                    foreach (var (k, v) in ScriptedVariables.Parse(text)) globals[k] = v;
 
-            var locals = ScriptedVariables.Parse(text);
-            var src = new TechSourceRef(f.Source.Name, f.Source.IsBaseGame, f.Rel);
-            foreach (var def in TechParser.Parse(text))
+            var defs = new Dictionary<string, (TechDefinition Def, TechSourceRef Src, Dictionary<string, string> Locals)>(StringComparer.OrdinalIgnoreCase);
+            var overridden = new Dictionary<string, List<TechSourceRef>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in techFiles.Values.OrderBy(f => f.Rel, LoadOrder))
             {
-                if (!overridden.TryGetValue(def.Key, out var list)) overridden[def.Key] = list = [];
-                if (defs.TryGetValue(def.Key, out var previous) && previous.Src != src) list.Add(previous.Src);
-                foreach (var (r, keys) in replaced)
-                    if (keys.Contains(def.Key)) list.Add(r);
-                defs[def.Key] = (def, src, locals);
+                ct.ThrowIfCancellationRequested();
+                progress?.Report($"Reading {f.Source.Name}: {f.Rel}");
+                if (TryRead(f.Source, f.Rel, warnings) is not { } text) continue;
+
+                // Files this one replaced at file level: their techs count as overridden by this file.
+                var replaced = new List<(TechSourceRef Ref, HashSet<string> Keys)>();
+                foreach (var (rs, rrel) in f.Replaced)
+                    if (TryRead(rs, rrel, warnings) is { } old)
+                        replaced.Add((new TechSourceRef(rs.Name, rs.IsBaseGame, rrel),
+                            TechParser.Parse(old).Select(d => d.Key).ToHashSet(StringComparer.OrdinalIgnoreCase)));
+
+                var locals = ScriptedVariables.Parse(text);
+                var src = new TechSourceRef(f.Source.Name, f.Source.IsBaseGame, f.Rel);
+                foreach (var def in TechParser.Parse(text))
+                {
+                    if (!overridden.TryGetValue(def.Key, out var list)) overridden[def.Key] = list = [];
+                    if (defs.TryGetValue(def.Key, out var previous) && previous.Src != src) list.Add(previous.Src);
+                    foreach (var (r, keys) in replaced)
+                        if (keys.Contains(def.Key)) list.Add(r);
+                    defs[def.Key] = (def, src, locals);
+                }
+            }
+
+            progress?.Report("Reading localisation…");
+            var loc = Localisation.Load(sources, warnings);
+            loc.Scripted = ScriptedLoc.Build(sources, warnings, ct);
+            progress?.Report("Reading job swaps…");
+            loc.Jobs = JobSwaps.From(CommonDefinitions.Load(sources, "common/pop_jobs", warnings, ct));
+            loc.ScriptedTriggers = CommonDefinitions.Load(sources, "common/scripted_triggers", warnings, ct);
+
+            // Finding the grants needs the localisation and the tech keys (the winning definitions' spelling); it runs alongside
+            // the unlock and sprite scans.
+            var techKeys = defs.ToDictionary(kv => kv.Key, kv => kv.Value.Def.Key, StringComparer.OrdinalIgnoreCase);
+            grantScan = Task.Run(async () =>
+                GrantScanner.Scan(await grantRead, loc, key => techKeys.TryGetValue(key, out var k) ? k : null, ct), ct);
+
+            progress?.Report("Finding what each technology unlocks…");
+            unlocks = UnlockScanner.Scan(sources, loc, unlockWarnings, ct);
+            progress?.Report("Reading sprite definitions…");
+            sprites = SpriteIndex.Build(sources, spriteWarnings, ct);
+
+            var annotationCache = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (key, (def, src, locals)) in defs)
+            {
+                var tierText = def.Tier is null ? null : ScriptedVariables.Resolve(def.Tier, locals, globals);
+                techs[key] = new Tech(
+                    def.Key,
+                    loc.Get(def.Key) ?? def.Key,
+                    loc.Get(def.Key + "_desc"),
+                    ParseArea(def.Area),
+                    int.TryParse(tierText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var tier) ? tier : null,
+                    def.Category,
+                    def.Cost is null ? "?" : ScriptedVariables.Resolve(def.Cost, locals, globals),
+                    def.Prerequisites,
+                    def.IsStart,
+                    def.IsRare,
+                    def.IsDangerous,
+                    def.IsRepeatable,
+                    def.Icon ?? def.Key,
+                    def.Dlcs,
+                    src,
+                    overridden.TryGetValue(key, out var o) ? o.Distinct().ToList() : [],
+                    TechDetailsBuilder.Build(def.Key, def.Block, loc, locals, globals, annotationCache));
             }
         }
-
-        progress?.Report("Reading localisation…");
-        var loc = Localisation.Load(sources, warnings);
-        loc.Scripted = ScriptedLoc.Build(sources, warnings, ct);
-        progress?.Report("Reading job swaps…");
-        loc.Jobs = JobSwaps.From(CommonDefinitions.Load(sources, "common/pop_jobs", warnings, ct));
-        loc.ScriptedTriggers = CommonDefinitions.Load(sources, "common/scripted_triggers", warnings, ct);
-        progress?.Report("Finding what each technology unlocks…");
-        var unlocks = UnlockScanner.Scan(sources, loc, warnings, ct);
-        progress?.Report("Reading sprite definitions…");
-        var sprites = SpriteIndex.Build(sources, warnings, ct);
-
-        var techs = new Dictionary<string, Tech>(StringComparer.OrdinalIgnoreCase);
-        var annotationCache = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (key, (def, src, locals)) in defs)
+        catch
         {
-            var tierText = def.Tier is null ? null : ScriptedVariables.Resolve(def.Tier, locals, globals);
-            techs[key] = new Tech(
-                def.Key,
-                loc.Get(def.Key) ?? def.Key,
-                loc.Get(def.Key + "_desc"),
-                ParseArea(def.Area),
-                int.TryParse(tierText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var tier) ? tier : null,
-                def.Category,
-                def.Cost is null ? "?" : ScriptedVariables.Resolve(def.Cost, locals, globals),
-                def.Prerequisites,
-                def.IsStart,
-                def.IsRare,
-                def.IsDangerous,
-                def.IsRepeatable,
-                def.Icon ?? def.Key,
-                def.Dlcs,
-                src,
-                overridden.TryGetValue(key, out var o) ? o.Distinct().ToList() : [],
-                TechDetailsBuilder.Build(def.Key, def.Block, loc, locals, globals, annotationCache));
+            // Let the grant tasks finish before the caller disposes the sources.
+            try { Task.WaitAll([grantRead, grantScan ?? Task.CompletedTask], CancellationToken.None); }
+            catch (Exception) { /* their own failure is secondary */ }
+            throw;
         }
 
         progress?.Report("Finding events and other sources that grant technologies…");
-        var library = ScriptLibrary.Load(sources, warnings, ct);
-        var grants = GrantScanner.Scan(sources, loc, library, key => techs.TryGetValue(key, out var t) ? t.Key : null, warnings, ct);
+        var grants = grantScan.GetAwaiter().GetResult();
+        warnings.AddRange(unlockWarnings);
+        warnings.AddRange(spriteWarnings);
+        warnings.AddRange(grantWarnings);
 
         var dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var t in techs.Values)

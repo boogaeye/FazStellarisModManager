@@ -99,7 +99,8 @@ Mockups (approved): `.superpowers/brainstorm/335-1791100790/content/event-source
 
 ## Errors and performance
 - Unreadable or malformed files become warnings, as before.
-- The scans read files in parallel and merge in load order. Pictures load on demand, and only for opened events.
+- The scans read files in parallel and merge in load order. In `TechDatabase.Build`, reading and parsing the grant files (`ScriptLibrary.Load` + `GrantScanner.Read`) starts first and overlaps the tech files and localisation; finding the grants (`GrantScanner.Scan`, events analysed in parallel) then runs alongside the unlock and sprite scans. Each task has its own warning list; they are merged as earlier warnings, unlocks, sprites, grants, and duplicate warnings are dropped (keeping order).
+- Pictures load on demand, and only for opened events: one decode per sprite per tree; a missing or failed picture is not remembered, so it is retried.
 - Only events that grant a tech are kept in memory.
 
 ## Testing

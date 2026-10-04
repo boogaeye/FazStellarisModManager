@@ -152,4 +152,31 @@ public class TechTreeServiceTests
         var bonus = Assert.Single(db.Techs["tech_a"].Details.Bonuses);
         Assert.StartsWith("data:image/png;base64,", tree.BonusIconUri(bonus));
     }
+
+    [Fact]
+    public async Task Event_pictures_are_decoded_once_and_a_missing_picture_is_retried()
+    {
+        var fake = new FakeInstall();
+        using var _cleanup = fake;
+        fake.Write("lib/steamapps/common/Stellaris/common/technology/00_t.txt", "tech_a = { area = physics start_tech = yes }");
+        fake.Write("lib/steamapps/common/Stellaris/events/e.txt",
+            "country_event = { id = e.1 picture = GFX_evt_x option = { give_technology = { tech = tech_a } } }");
+        fake.Write("lib/steamapps/common/Stellaris/interface/e.gfx",
+            "spriteTypes = { spriteType = { name = \"GFX_evt_x\" texturefile = \"gfx/event_pictures/x.dds\" } }");
+        var paths = new AppPaths(fake.DataDir);
+        SettingsStore.Save(paths.Settings, new AppSettings(UserDir: fake.UserDir));
+        var tree = new TechTreeService(new ModManagerService(paths, _ => fake.GameDir));
+        await tree.BuildAsync(tree.Choices()[0]);
+        var ev = tree.Current!.Database.Event("e.1")!;
+
+        Assert.Null(await tree.EventPictureAsync(ev));
+
+        var dds = Path.Combine(fake.GameDir, "gfx", "event_pictures", "x.dds");
+        Directory.CreateDirectory(Path.GetDirectoryName(dds)!);
+        File.WriteAllBytes(dds, DdsBuilder.Bgra32(1, 1, (5, 5, 5, 255)));
+        var both = await Task.WhenAll(tree.EventPictureAsync(ev), tree.EventPictureAsync(ev));
+
+        Assert.StartsWith("data:image/png;base64,", both[0]);
+        Assert.Equal(both[0], both[1]);
+    }
 }
