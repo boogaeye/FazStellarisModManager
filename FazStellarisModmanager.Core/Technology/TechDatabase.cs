@@ -50,15 +50,17 @@ public sealed class TechDatabase
 
     readonly Dictionary<string, IReadOnlyList<string>> _dependents;
     readonly IReadOnlyDictionary<string, IReadOnlyList<Unlock>> _unlocks;
+    readonly GrantIndex _grants;
 
     TechDatabase(Dictionary<string, Tech> techs, Dictionary<string, IReadOnlyList<string>> dependents, List<string> warnings, List<string> sourceNames,
-        IReadOnlyDictionary<string, IReadOnlyList<Unlock>> unlocks, SpriteIndex sprites)
+        IReadOnlyDictionary<string, IReadOnlyList<Unlock>> unlocks, SpriteIndex sprites, GrantIndex grants)
     {
         Techs = techs;
         _dependents = dependents;
         Warnings = warnings;
         _unlocks = unlocks;
         Sprites = sprites;
+        _grants = grants;
         AllUnlocks = unlocks.Values.SelectMany(l => l).DistinctBy(u => u.KindFolder + "|" + u.Id, StringComparer.OrdinalIgnoreCase).ToList();
         SourceNames = sourceNames;
         Categories = techs.Values.Select(t => t.Category).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
@@ -79,6 +81,12 @@ public sealed class TechDatabase
 
     /// <summary>Things in common/ that require the tech (excluding other techs), sorted by kind then name.</summary>
     public IReadOnlyList<Unlock> Unlocks(string techKey) => _unlocks.TryGetValue(techKey, out var list) ? list : [];
+
+    /// <summary>Events and other game objects that give, progress or offer the tech: events first, then others, each by name.</summary>
+    public IReadOnlyList<GrantSource> GrantSources(string techKey) => _grants.For(techKey);
+
+    /// <summary>An event that grants some tech, by id; null for other events.</summary>
+    public GameEvent? Event(string id) => _grants.Event(id);
 
     /// <summary>Every distinct unlock object (an object unlocked by several techs appears once).</summary>
     public IReadOnlyList<Unlock> AllUnlocks { get; }
@@ -221,6 +229,10 @@ public sealed class TechDatabase
                 TechDetailsBuilder.Build(def.Key, def.Block, loc, locals, globals, annotationCache));
         }
 
+        progress?.Report("Finding events and other sources that grant technologies…");
+        var library = ScriptLibrary.Load(sources, warnings, ct);
+        var grants = GrantScanner.Scan(sources, loc, library, key => techs.TryGetValue(key, out var t) ? t.Key : null, warnings, ct);
+
         var dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var t in techs.Values)
             foreach (var p in t.Prerequisites)
@@ -234,7 +246,7 @@ public sealed class TechDatabase
             .Where(n => techs.Values.Any(t => t.Source.SourceName == n)).ToList();
         return new TechDatabase(techs,
             dependents.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value.Order(StringComparer.Ordinal).ToList(), StringComparer.OrdinalIgnoreCase),
-            warnings, sourceNames, unlocks, sprites);
+            warnings, sourceNames, unlocks, sprites, grants);
     }
 
     static Dictionary<string, FileWinner> Winners(IReadOnlyList<ContentSource> sources, string folder, bool topLevelOnly)

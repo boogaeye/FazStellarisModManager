@@ -6,7 +6,7 @@ namespace FazStellarisModmanager.Core.Technology;
 /// <summary>Stateless decoder: finds tech icons across sources (last wins), converts DDS to PNG once (disk cache), returns data URIs. Does IO, so never call it on the UI thread.</summary>
 public sealed class IconCache(string directory)
 {
-    const int MaxIconSize = 64;
+    public const int MaxIconSize = 64;
     public const string IconFolder = "gfx/interface/icons/technologies";
 
     /// <summary>"data:image/png;base64,…" for the icon, or null if no source has it or it can't be decoded.</summary>
@@ -16,8 +16,8 @@ public sealed class IconCache(string directory)
         return DataUri(sources, IconResolver.ForTech(iconKey));
     }
 
-    /// <summary>"data:image/png;base64,…" for the texture (cropped to its frame), or null when no source has it, the path is unsafe/not .dds, or it can't be decoded.</summary>
-    public string? DataUri(IReadOnlyList<ContentSource> sources, IconRef icon)
+    /// <summary>"data:image/png;base64,…" for the texture (cropped to its frame, scaled to fit <paramref name="maxSize"/>), or null when no source has it, the path is unsafe/not .dds, or it can't be decoded.</summary>
+    public string? DataUri(IReadOnlyList<ContentSource> sources, IconRef icon, int maxSize = MaxIconSize)
     {
         var rel = icon.Path.Replace((char)92, '/');
         if (!rel.EndsWith(".dds", StringComparison.OrdinalIgnoreCase) || rel.StartsWith('/') || rel.Contains(':') || rel.Split('/').Contains("..")) return null;
@@ -27,8 +27,8 @@ public sealed class IconCache(string directory)
             {
                 var source = sources[i];
                 if (!source.Exists(rel)) continue;
-                var id = $"{source.Name}|{icon.CacheId}|{source.Stamp(rel)}";
-                return Load(source, rel, icon, id);
+                var id = $"{source.Name}|{icon.CacheId}|{source.Stamp(rel)}" + (maxSize == MaxIconSize ? "" : $"|{maxSize}");
+                return Load(source, rel, icon, id, maxSize);
             }
             return null;
         }
@@ -59,7 +59,7 @@ public sealed class IconCache(string directory)
         catch (Exception ex) when (ex is not OutOfMemoryException) { }
     }
 
-    string? Load(ContentSource source, string rel, IconRef icon, string id)
+    string? Load(ContentSource source, string rel, IconRef icon, string id, int maxSize)
     {
         var path = Path.Combine(directory, Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes(id))) + ".png");
         try
@@ -82,7 +82,7 @@ public sealed class IconCache(string directory)
                 }
                 var (w, h, rgba) = DdsDecoder.Decode(dds);
                 if (icon.Frames > 1 && w >= icon.Frames) (w, h, rgba) = CropFrame(w, h, rgba, icon.Frame, icon.Frames);
-                if (w > MaxIconSize || h > MaxIconSize) (w, h, rgba) = Downscale(w, h, rgba, MaxIconSize);
+                if (w > maxSize || h > maxSize) (w, h, rgba) = Downscale(w, h, rgba, maxSize);
                 png = PngEncoder.Encode(w, h, rgba);
                 Directory.CreateDirectory(directory);
                 var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";

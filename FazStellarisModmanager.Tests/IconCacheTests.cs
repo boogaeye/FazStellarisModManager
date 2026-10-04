@@ -140,4 +140,23 @@ public class IconCacheTests
 
         Assert.Null(new IconCache(Path.Combine(tmp.Path, "cache")).DataUri([s], new IconRef(path)));
     }
+
+    [Fact]
+    public void A_larger_max_size_keeps_event_pictures_big()
+    {
+        using var tmp = new TempDir();
+        var pixels = new (byte R, byte G, byte B, byte A)[200 * 100];
+        for (int i = 0; i < pixels.Length; i++) pixels[i] = (10, 20, 30, 255);
+        using var s = Source(tmp, "base", DdsBuilder.Bgra32(200, 100, pixels));
+        var cache = new IconCache(Path.Combine(tmp.Path, "cache"));
+        static (int, int) Size(string uri)
+        {
+            var png = Convert.FromBase64String(uri["data:image/png;base64,".Length..]);
+            static int BE(byte[] b, int o) => (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3];
+            return (BE(png, 16), BE(png, 20));
+        }
+
+        Assert.Equal((200, 100), Size(cache.DataUri([s], new IconRef(IconRel), 512)!));
+        Assert.Equal((64, 32), Size(cache.DataUri([s], new IconRef(IconRel))!));
+    }
 }

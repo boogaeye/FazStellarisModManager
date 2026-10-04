@@ -10,6 +10,8 @@ public sealed record TechTree(string Label, TechDatabase Database, IReadOnlyList
 {
     /// <summary>Icon key to PNG data URI (null = no/undecodable icon), filled by the background prewarm.</summary>
     internal ConcurrentDictionary<string, string?> Icons { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    internal ConcurrentDictionary<string, Task<string?>> Pictures { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>UI facade: builds trees off the UI thread (one at a time) and serves icons. <see cref="Changed"/> may fire on any thread.</summary>
@@ -110,6 +112,21 @@ public sealed class TechTreeService
     }
 
     /// <summary>PNG data URI for a tech's icon in the current tree, or null.</summary>
+    /// <summary>Largest side, in pixels, of event pictures (the game's are 450 x 150).</summary>
+    public const int EventPictureSize = 512;
+
+    /// <summary>PNG data URI of an event's picture, decoded once per tree on the thread pool; null when the sprite or texture is missing.</summary>
+    public Task<string?> EventPictureAsync(GameEvent ev)
+    {
+        if (_current is not { } tree || ev.Picture is not { } sprite) return Task.FromResult<string?>(null);
+        return tree.Pictures.GetOrAdd(sprite, name => Task.Run(() =>
+        {
+            if (tree.Database.Sprites.Find(name) is not { } info) return null;
+            var icon = new IconRef(info.TextureFile, Math.Clamp(info.DefaultFrame ?? 1, 1, info.Frames), info.Frames);
+            return _icons.DataUri(tree.Sources, icon, EventPictureSize);
+        }));
+    }
+
     public string? IconUri(Tech tech) => _current?.Icons.TryGetValue(tech.IconKey, out var u) == true ? u : null;
 
     /// <summary>PNG data URI for an unlock's icon in the current tree, or null (memo lookup, no IO).</summary>

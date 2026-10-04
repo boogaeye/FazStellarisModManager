@@ -170,4 +170,21 @@ public class TechDatabaseTests
             foreach (var s in sources) s.Dispose();
         }
     }
+
+    [Fact]
+    public void Grant_sources_and_events_are_part_of_the_database()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("g/common/technology/00_t.txt", "tech_a = { area = physics tier = 1 }");
+        tmp.Write("g/events/e.txt", "country_event = { id = e.1 title = e.1.name option = { name = OK give_technology = { tech = TECH_A } } }");
+        using var source = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "g"), isBaseGame: true);
+
+        var db = TechDatabase.Build([source]);
+
+        var grant = Assert.Single(db.GrantSources("tech_a"));
+        Assert.Equal(("e.1", true), (grant.Id, grant.IsEvent));
+        Assert.Equal("e.1.name", db.Event("e.1")!.Title);
+        Assert.Empty(db.GrantSources("tech_missing"));
+        Assert.Null(db.Event("nope"));
+    }
 }
