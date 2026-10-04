@@ -21,9 +21,8 @@ public sealed record MatchPlan(
 
     /// <summary>
     /// The host list restricted to mods installed here (in the host order, pointing at this machine descriptors),
-    /// plus the host disabled DLCs and any DLC installed here that the host does not use. Missing mods and content
-    /// mismatches are reported, split into Workshop (fixable by sub-project 3) and local (manual); DLCs the host has
-    /// and this PC lacks are reported in NeedsDlc. <paramref name="hostList"/> and <paramref name="diff"/> must come
+    /// plus the host disabled DLCs and any DLC installed here that the host does not use. Each host mod uses my paired mod (by key, Workshop id, name or files); unpaired host mods with a Workshop id need a Workshop install, others a manual one; content mismatches need a Workshop update when my mod is the Workshop item, otherwise local attention; DLCs the
+    /// host has and this PC lacks are reported in NeedsDlc. <paramref name="hostList"/> and <paramref name="diff"/> must come
     /// from the same host target.
     /// </summary>
     public static MatchPlan Create(ModList hostList, DiffResult diff, IReadOnlyList<InstalledMod> library, MachineSnapshot mine)
@@ -31,15 +30,26 @@ public sealed record MatchPlan(
         var byKey = new Dictionary<string, InstalledMod>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in library) byKey.TryAdd(m.Key, m);
 
+        // My partner for each host mod: first the pairing the diff made (enabled mods, using files too), then a pairing
+        // against my whole library (installed but not enabled) by key, Workshop id or name.
+        var hostEntries = hostList.Mods.DistinctBy(e => e.Key, StringComparer.OrdinalIgnoreCase).ToList();
+        var partner = new Dictionary<string, InstalledMod>(StringComparer.OrdinalIgnoreCase);
+        foreach (var u in diff.Mods)
+            if (u.Status is UnitStatus.Ok or UnitStatus.ContentMismatch && u.MineKey is { } mineKey && byKey.TryGetValue(mineKey, out var paired))
+                partner.TryAdd(u.Key, paired);
+        var taken = new HashSet<string>(partner.Values.Select(i => i.Key), StringComparer.OrdinalIgnoreCase);
+        var unpaired = hostEntries.Where(e => !partner.ContainsKey(e.Key)).ToList();
+        var free = library.Where(i => !taken.Contains(i.Key)).ToList();
+        foreach (var p in ModMatcher.Pair(unpaired, free, ModIdentity.Of, ModIdentity.Of, [MatchKind.Key, MatchKind.WorkshopId, MatchKind.Name]))
+            partner.TryAdd(p.Target.Key, p.Mine);
+
         var apply = new List<ModListEntry>();
         var workshop = new List<ModListEntry>();
         var manual = new List<ModListEntry>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var e in hostList.Mods)
+        foreach (var e in hostEntries)
         {
-            if (!seen.Add(e.Key)) continue;
-            if (byKey.TryGetValue(e.Key, out var inst)) apply.Add(new ModListEntry(inst.Key, inst.Name, inst.DescriptorRel, inst.RemoteId));
-            else if (ModKeys.WorkshopId(e.Key) is not null) workshop.Add(e);
+            if (partner.TryGetValue(e.Key, out var inst)) apply.Add(new ModListEntry(inst.Key, inst.Name, inst.DescriptorRel, inst.RemoteId));
+            else if (ModMatcher.WorkshopIdOf(e.Key, e.RemoteId) is not null) workshop.Add(e);
             else manual.Add(e);
         }
 
@@ -61,8 +71,8 @@ public sealed record MatchPlan(
             new ModList(hostList.Name, apply, disabled),
             workshop,
             manual,
-            changed.Where(u => ModKeys.WorkshopId(u.Key) is not null).ToList(),
-            changed.Where(u => ModKeys.WorkshopId(u.Key) is null).ToList(),
+            changed.Where(u => ModKeys.WorkshopId(u.MineKey ?? u.Key) is not null).ToList(),
+            changed.Where(u => ModKeys.WorkshopId(u.MineKey ?? u.Key) is null).ToList(),
             diff.Dlcs.Where(d => d.Status == UnitStatus.Missing).ToList());
     }
 

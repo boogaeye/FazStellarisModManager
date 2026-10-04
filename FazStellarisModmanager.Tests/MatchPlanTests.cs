@@ -122,4 +122,47 @@ public class MatchPlanTests
         Assert.Equal(new[] { "dlc:dlc003" }, plan.NeedsDlc.Select(u => u.Key));
         Assert.False(plan.IsComplete);
     }
+
+    static InstalledMod Inst(string key, string rel, string name, string? remoteId) =>
+        new(key, name, rel, remoteId, null, null, "", key.StartsWith("ugc:") ? ModSource.Workshop : ModSource.Local, []);
+
+    [Fact]
+    public void Uses_my_copies_and_offers_workshop_installs_for_host_copies_with_a_workshop_id()
+    {
+        var host = new ModList("H",
+        [
+            new("ugc:5", "Five", "mod/ugc_5.mod", "5"),
+            new("local:hostcopy.mod", "(H) Seven", "mod/hostcopy.mod", "7"),
+            new("local:eth.mod", "(H) Ethics Fix", "mod/eth.mod", null),
+            new("local:only.mod", "Only host", "mod/only.mod", null),
+        ], []);
+        var library = new[]
+        {
+            Inst("local:8cde_1.mod", "mod/8cde_1.mod", "(Mine) Five", "5"),
+            Inst("local:mine_eth.mod", "mod/mine_eth.mod", "Ethics Fix", null),
+        };
+
+        var plan = MatchPlan.Create(host, Diff(), library, TestSnapshots.Machine("M"));
+
+        Assert.Equal(["local:8cde_1.mod", "local:mine_eth.mod"], plan.ToApply.Mods.Select(m => m.Key));
+        Assert.Equal(["mod/8cde_1.mod", "mod/mine_eth.mod"], plan.ToApply.Mods.Select(m => m.DescriptorRel));
+        Assert.Equal(["local:hostcopy.mod"], plan.NeedsWorkshopInstall.Select(e => e.Key));
+        Assert.Equal(["local:only.mod"], plan.NeedsManualInstall.Select(e => e.Key));
+    }
+
+    [Fact]
+    public void Differences_need_a_workshop_update_only_when_my_mod_is_the_workshop_item()
+    {
+        var host = new ModList("H", [new("ugc:5", "Five", "mod/ugc_5.mod", "5"), new("ugc:6", "Six", "mod/ugc_6.mod", "6")], []);
+        var library = new[] { Inst("local:copy.mod", "mod/copy.mod", "Five", "5"), Inst("ugc:6", "mod/ugc_6.mod", "Six", "6") };
+        var diff = Diff(
+            Changed("ugc:5") with { MineKey = "local:copy.mod", Match = MatchKind.WorkshopId, LocalCopyOfWorkshop = true },
+            Changed("ugc:6") with { MineKey = "ugc:6" });
+
+        var plan = MatchPlan.Create(host, diff, library, TestSnapshots.Machine("M"));
+
+        Assert.Equal(["local:copy.mod", "ugc:6"], plan.ToApply.Mods.Select(m => m.Key));
+        Assert.Equal(["ugc:6"], plan.NeedsWorkshopUpdate.Select(u => u.Key));
+        Assert.Equal(["ugc:5"], plan.DiffersLocally.Select(u => u.Key));
+    }
 }

@@ -31,6 +31,14 @@
 @Section("DLC differences", Diff.Dlcs.Where(d => d.Status != UnitStatus.Ok).ToList())
 
 @code {
+    static string MatchText(MatchKind kind) => kind switch
+    {
+        MatchKind.WorkshopId => "Workshop id",
+        MatchKind.Name => "name",
+        MatchKind.Files => "identical files",
+        _ => "key",
+    };
+
     [Parameter, EditorRequired] public DiffResult Diff { get; set; } = default!;
     [Parameter] public string Who { get; set; } = "you";
 
@@ -61,6 +69,14 @@
                     {
                         <li>
                             <span class="name">@u.Name</span> <span class="badge">@u.Key</span>
+                            @if (u.Match != MatchKind.Key && u.MineKey is { } mineKey)
+                            {
+                                <span class="badge">matched by @MatchText(u.Match) with @mineKey</span>
+                            }
+                            @if (u.LocalCopyOfWorkshop)
+                            {
+                                <span class="badge local" title="One side uses the Steam Workshop item, the other a local copy of it">local copy of Workshop @(ModMatcher.WorkshopIdOf(u.Key, u.RemoteId) ?? ModMatcher.WorkshopIdOf(u.MineKey ?? "", null))</span>
+                            }
                             @if (u.Files is { } f)
                             {
                                 <details>

@@ -14,6 +14,10 @@
                 var inList = current.Any(e => SameKey(e.Key, m.Key));
                 <li class="@(inList ? "in-list" : "")">
                     <span class="badge @m.Source.ToString().ToLowerInvariant()">@(m.Source == ModSource.Workshop ? "Workshop" : "Local")</span>
+                    @if (m.Source == ModSource.Local && ModMatcher.WorkshopIdOf(m.Key, m.RemoteId) is { } workshopId)
+                    {
+                        <span class="badge local" title="This local mod is a copy of a Steam Workshop item">local copy of Workshop @workshopId</span>
+                    }
                     <span class="name" title="@m.DescriptorRel">@m.Name</span>
                     @if (!inList)
                     {

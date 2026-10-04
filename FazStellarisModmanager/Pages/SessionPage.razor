@@ -91,7 +91,7 @@ else
             @if (plan.NeedsWorkshopInstall.Count > 0)
             {
                 <p class="status error">Not installed. Subscribe to these on the Steam Workshop, then click Rescan my mods:</p>
-                <ul>@foreach (var e in plan.NeedsWorkshopInstall) { <li>@e.Name (Workshop id @ModKeys.WorkshopId(e.Key))</li> }</ul>
+                <ul>@foreach (var e in plan.NeedsWorkshopInstall) { <li>@e.Name (Workshop id @ModMatcher.WorkshopIdOf(e.Key, e.RemoteId))</li> }</ul>
             }
             @if (plan.NeedsWorkshopUpdate.Count > 0)
             {
