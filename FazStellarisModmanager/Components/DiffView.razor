@@ -26,6 +26,8 @@
 
 @Section($"Missing (the host has these, {Who} don't)", Diff.Mods.Where(m => m.Status == UnitStatus.Missing).ToList())
 @Section("Different files", Diff.Mods.Where(m => m.Status == UnitStatus.ContentMismatch).ToList())
+@* Informational: these pair fine, only through a local copy or under a different name. *@
+@Section("Matched through a local copy or different name", Diff.Mods.Where(m => m.Status == UnitStatus.Ok && m.Match != MatchKind.Key).ToList())
 @Section($"Extra ({Who} have these, the host doesn't)", Diff.Mods.Where(m => m.Status == UnitStatus.Extra).ToList())
 @Section("Load order differs", Diff.Mods.Where(m => m.OutOfOrder).ToList())
 @Section("DLC differences", Diff.Dlcs.Where(d => d.Status != UnitStatus.Ok).ToList())
@@ -75,7 +77,7 @@
                             }
                             @if (u.LocalCopyOfWorkshop)
                             {
-                                <span class="badge local" title="One side uses the Steam Workshop item, the other a local copy of it">local copy of Workshop @(ModMatcher.WorkshopIdOf(u.Key, u.RemoteId) ?? ModMatcher.WorkshopIdOf(u.MineKey ?? "", null))</span>
+                                <span class="badge local" title="One side uses the Steam Workshop item, the other a local copy of it">local copy of Workshop @(ModMatcher.WorkshopIdOf(u.Key, u.RemoteId))</span>
                             }
                             @if (u.Files is { } f)
                             {

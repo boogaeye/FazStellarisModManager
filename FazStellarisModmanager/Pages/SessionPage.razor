@@ -96,7 +96,18 @@ else
             @if (plan.NeedsWorkshopUpdate.Count > 0)
             {
                 <p class="status error">Out of date. Let Steam update these (or unsubscribe and resubscribe):</p>
-                <ul>@foreach (var u in plan.NeedsWorkshopUpdate) { <li>@u.Name</li> }</ul>
+                <ul>
+                    @foreach (var u in plan.NeedsWorkshopUpdate)
+                    {
+                        <li>
+                            @UnitName(u)
+                            @if (u.LocalCopyOfWorkshop)
+                            {
+                                <span class="status">the host uses a local copy; a Steam update may not match it</span>
+                            }
+                        </li>
+                    }
+                </ul>
             }
             @if (plan.NeedsManualInstall.Count > 0)
             {
@@ -106,7 +117,7 @@ else
             @if (plan.DiffersLocally.Count > 0)
             {
                 <p class="status error">Local mods whose files differ from the host's:</p>
-                <ul>@foreach (var u in plan.DiffersLocally) { <li>@u.Name</li> }</ul>
+                <ul>@foreach (var u in plan.DiffersLocally) { <li>@UnitName(u)</li> }</ul>
             }
             @if (plan.NeedsDlc.Count > 0)
             {
@@ -127,6 +138,10 @@ else
 }
 
 @code {
+    // My mod's name, plus the host's when it differs.
+    static string UnitName(UnitDiff u) =>
+        u.MineName is { } mine && mine != u.Name ? $"{mine} (host: {u.Name})" : u.MineName ?? u.Name;
+
     int hostPort = SessionProtocol.DefaultPort;
     string joinAddress = "";
     string? selectedId;
