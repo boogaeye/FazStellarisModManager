@@ -12,4 +12,5 @@ public sealed class AppPaths(string root)
     public string HashCache => Path.Combine(Root, "hashcache.json");
     public string Settings => Path.Combine(Root, "settings.json");
     public string Icons => Path.Combine(Root, "icons");
+    public string Research => Path.Combine(Root, "research");
 }

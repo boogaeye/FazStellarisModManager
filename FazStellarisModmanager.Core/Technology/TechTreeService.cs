@@ -30,6 +30,7 @@ public sealed class TechTreeService
     {
         _manager = manager;
         _icons = new IconCache(manager.Paths.Icons);
+        Research = new ResearchStateStore(manager.Paths.Research);
         _ = Task.Run(() =>
         {
             try { _icons.Prune(TimeSpan.FromDays(60)); }
@@ -43,6 +44,12 @@ public sealed class TechTreeService
     /// <summary>The current icon prewarm (or a completed task); await it in tests.</summary>
     public Task IconsReady => _prewarm;
     public event Action? Changed;
+
+    /// <summary>Researched marks and route targets, saved per mod-list choice label.</summary>
+    public ResearchStateStore Research { get; }
+
+    /// <summary>How many icons of the current tree are ready; changes while the background prewarm runs.</summary>
+    public int IconCount => _current?.Icons.Count ?? 0;
 
     public IReadOnlyList<TechTreeChoice> Choices() =>
         [new TechTreeChoice(CurrentGameLabel, null), .. _manager.Lists.LoadAll().Select(l => new TechTreeChoice(l.Name, l.Name))];
