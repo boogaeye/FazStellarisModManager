@@ -43,6 +43,9 @@ public class ModMatcherTests
         Assert.Equal([("ugc:1", "ugc:1", MatchKind.Key)],
             Pair([Id("ugc:1", "1", "A")], [Id("local:copy.mod", "1", "A"), Id("ugc:1", "1", "A")]));
         Assert.Empty(Pair([Id("local:a.mod", "5", "Same")], [Id("local:b.mod", null, "Same")]));
+        Assert.Empty(Pair([Id("local:a.mod", null, "Same")], [Id("local:b.mod", "5", "Same")]));
+        Assert.Empty(Pair([Id("local:a.mod", null, "")], [Id("local:b.mod", null, "")]));
+        Assert.Equal([("local:A.mod", "local:a.mod", MatchKind.Key)], Pair([Id("local:A.mod")], [Id("local:a.mod")]));
         Assert.Empty(Pair([Id("local:a.mod", null, "Same")], [Id("local:b.mod", null, "Same")], [MatchKind.Key]));
     }
 
@@ -63,6 +66,7 @@ public class ModMatcherTests
         Assert.Null(ModMatcher.WorkshopIdOf("local:x.mod", "0"));
         Assert.Null(ModMatcher.WorkshopIdOf("local:x.mod", "abc"));
         Assert.Null(ModMatcher.WorkshopIdOf("local:x.mod", null));
+        Assert.Null(ModMatcher.WorkshopIdOf("ugc:0", null));
     }
 
     [Fact]

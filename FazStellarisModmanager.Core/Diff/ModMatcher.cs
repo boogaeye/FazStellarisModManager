@@ -70,7 +70,7 @@ public static class ModMatcher
     /// <summary>The Workshop id of a ugc:&lt;id&gt; key, else of a positive numeric remote_file_id, else null.</summary>
     public static string? WorkshopIdOf(string key, string? remoteId)
     {
-        if (ModKeys.WorkshopId(key) is { } fromKey) return fromKey.ToString(CultureInfo.InvariantCulture);
+        if (ModKeys.WorkshopId(key) is { } fromKey) return fromKey > 0 ? fromKey.ToString(CultureInfo.InvariantCulture) : null;
         return ulong.TryParse(remoteId?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0
             ? id.ToString(CultureInfo.InvariantCulture)
             : null;
@@ -87,7 +87,7 @@ public static class ModMatcher
         var lines = files
             .Select(f => (f.Path ?? "").Replace((char)92, '/').ToLowerInvariant() + "|" + (f.Md5 ?? "").ToLowerInvariant())
             .Order(StringComparer.Ordinal);
-        return Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(string.Join((char)10, lines))));
+        return Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes(string.Join((char)10, lines))));
     }
 
     public static List<ModPair<TTarget, TMine>> Pair<TTarget, TMine>(IReadOnlyList<TTarget> targets, IReadOnlyList<TMine> mine,
