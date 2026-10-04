@@ -80,8 +80,12 @@ public sealed class ModManagerService
         lock (_gate) return DlcLoadFile.Write(Resolve().UserDir, list.ToDlcLoad(), _paths.Backups);
     }
 
+    /// <summary>When set and returning a reason, <see cref="Launch"/> refuses with that reason (e.g. while Workshop downloads run).</summary>
+    public Func<string?>? LaunchBlockedReason { get; set; }
+
     public void Launch()
     {
+        if (LaunchBlockedReason?.Invoke() is { } reason) throw new InvalidOperationException(reason);
         lock (_gate)
         {
             var game = Resolve().GameDir

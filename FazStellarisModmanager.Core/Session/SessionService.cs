@@ -2,6 +2,7 @@ using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Hashing;
 using FazStellarisModmanager.Core.Lists;
 using FazStellarisModmanager.Core.Snapshots;
+using FazStellarisModmanager.Core.Workshop;
 
 namespace FazStellarisModmanager.Core.Session;
 
@@ -11,8 +12,9 @@ public enum SessionRole { None, Host, Client }
 /// UI-facing multiplayer state. One operation (host, join, rescan, match, leave) runs at a time;
 /// <see cref="Changed"/> may fire on any thread.
 /// </summary>
-public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
+public sealed class SessionService(ModManagerService manager, IWorkshopService? workshop = null) : IAsyncDisposable
 {
+    readonly IWorkshopService? _workshop = workshop;
     readonly SemaphoreSlim _op = new(1, 1);
     volatile SessionHost? _host;
     volatile SessionClient? _client;
@@ -152,7 +154,10 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
     }, ct);
 
     /// <summary>Client only: writes the host's list (installed mods, host order) to dlc_load.json, then rescans and reports.</summary>
-    public Task<MatchPlan> MatchHostAsync(CancellationToken ct = default) => Exclusive(async ct =>
+    public Task<MatchPlan> MatchHostAsync(CancellationToken ct = default) => Exclusive(MatchCoreAsync, ct);
+
+    // Runs inside Exclusive. Shared by Match host and Workshop install-then-match.
+    async Task<MatchPlan> MatchCoreAsync(CancellationToken ct)
     {
         var client = _client ?? throw new InvalidOperationException("Not connected to a host.");
         var mine = MySnapshot ?? throw new InvalidOperationException("Your mods have not been scanned yet.");
@@ -187,6 +192,53 @@ public sealed class SessionService(ModManagerService manager) : IAsyncDisposable
                 throw new InvalidOperationException($"Applied the host's list, but the rescan did not finish: {ex.Message}. Click Rescan my mods.", ex);
             throw;
         }
+    }
+
+    /// <summary>Client only: what Match host would do right now (the library is refreshed), without applying anything.</summary>
+    public Task<MatchPlan> PlanAsync(CancellationToken ct = default) => Exclusive(async ct =>
+    {
+        var client = _client ?? throw new InvalidOperationException("Not connected to a host.");
+        var mine = MySnapshot ?? throw new InvalidOperationException("Your mods have not been scanned yet.");
+        var target = client.Target;
+        SetActivity("Checking what the host's list needs…");
+        await manager.RefreshLibraryAsync();
+        ct.ThrowIfCancellationRequested();
+        return await Task.Run(() => MatchPlan.Create(target.HostList, ModDiffer.Diff(target.HostSnapshot, mine), manager.Library, mine), CancellationToken.None);
+    }, ct);
+
+    /// <summary>
+    /// Client only: downloads the given Workshop items (subscribing when needed), then matches the host like <see cref="MatchHostAsync"/>.
+    /// Per-item failures don't stop the match; Steam being unavailable or a cancel does (nothing is applied then).
+    /// With no ids this is a plain match. Installing needs a Workshop service.
+    /// </summary>
+    public Task<WorkshopMatchResult> InstallFromWorkshopAndMatchAsync(IReadOnlyList<ulong> ids, IProgress<WorkshopProgress> progress,
+        CancellationToken ct = default) => Exclusive(async ct =>
+    {
+        var client = _client ?? throw new InvalidOperationException("Not connected to a host.");
+        IReadOnlyList<WorkshopItemResult> items = [];
+        if (ids.Count > 0)
+        {
+            var service = _workshop ?? throw new InvalidOperationException("Steam Workshop support is not available in this build.");
+            SetActivity($"Downloading {ids.Count} Workshop mod(s)…");
+            await client.SendBusyAsync("Downloading Workshop mods…", CancellationToken.None);
+            try
+            {
+                items = await service.InstallAsync(ids, progress, ct);
+                ct.ThrowIfCancellationRequested();
+            }
+            catch
+            {
+                // Never leave the host showing "Downloading…": put our last known snapshot back.
+                if (_mySnapshot is { } last)
+                {
+                    try { await client.SendSnapshotAsync(last, CancellationToken.None); }
+                    catch { /* best effort */ }
+                }
+                throw;
+            }
+        }
+        var plan = await MatchCoreAsync(ct);
+        return new WorkshopMatchResult(items, plan);
     }, ct);
 
     /// <summary>Cancels the running operation, if any; it throws OperationCanceledException to its caller.</summary>

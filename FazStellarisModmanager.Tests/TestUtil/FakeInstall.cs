@@ -41,6 +41,13 @@ public sealed class FakeInstall : IDisposable
         _tmp.Write("user/dlc_load.json", "{\"disabled_dlcs\":[],\"enabled_mods\":[\"mod/local.mod\"]}");
     }
 
+    /// <summary>A downloaded Workshop item: lib/steamapps/workshop/content/281990/&lt;id&gt; with a descriptor and one file.</summary>
+    public void AddWorkshopItem(ulong id)
+    {
+        _tmp.Write($"lib/steamapps/workshop/content/281990/{id}/descriptor.mod", $"name=\"Workshop {id}\"" + (char)10 + "supported_version=\"v4.*\"" + (char)10);
+        _tmp.Write($"lib/steamapps/workshop/content/281990/{id}/common/w{id}.txt", $"ws {id}");
+    }
+
     public string Write(string relative, string content) => _tmp.Write(relative, content);
 
     public void Dispose() => _tmp.Dispose();

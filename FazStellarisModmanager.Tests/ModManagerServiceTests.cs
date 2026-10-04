@@ -126,4 +126,13 @@ public class ModManagerServiceTests
 
         Assert.Throws<InvalidDataException>(() => svc.ImportCurrent("Current"));
     }
+
+    [Fact]
+    public void Launch_is_refused_while_a_reason_blocks_it()
+    {
+        using var fake = new FakeInstall();
+        var manager = new ModManagerService(new AppPaths(fake.DataDir), _ => fake.GameDir) { LaunchBlockedReason = () => "busy downloading" };
+
+        Assert.Equal("busy downloading", Assert.Throws<InvalidOperationException>(manager.Launch).Message);
+    }
 }

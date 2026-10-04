@@ -3,7 +3,9 @@ using System.Net.Sockets;
 using FazStellarisModmanager.Core;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Game;
+using FazStellarisModmanager.Core.Lists;
 using FazStellarisModmanager.Core.Session;
+using FazStellarisModmanager.Core.Workshop;
 using FazStellarisModmanager.Tests.TestUtil;
 
 namespace FazStellarisModmanager.Tests;
@@ -16,12 +18,12 @@ public class SessionServiceTests
         public FakeInstall Fake { get; } = new();
         public SessionService Session { get; }
 
-        public Rig(string playerName, string enabledModsJson)
+        public Rig(string playerName, string enabledModsJson, Func<FakeInstall, IWorkshopService>? workshop = null)
         {
             var paths = new AppPaths(Fake.DataDir);
             SettingsStore.Save(paths.Settings, new AppSettings(UserDir: Fake.UserDir, PlayerName: playerName));
             Fake.Write("user/dlc_load.json", "{\"disabled_dlcs\":[],\"enabled_mods\":" + enabledModsJson + "}");
-            Session = new SessionService(new ModManagerService(paths, _ => Fake.GameDir));
+            Session = new SessionService(new ModManagerService(paths, _ => Fake.GameDir), workshop?.Invoke(Fake));
         }
 
         public async ValueTask DisposeAsync()
@@ -196,5 +198,66 @@ public class SessionServiceTests
     {
         await using var host = new Rig("Hosty", "[]");
         await Assert.ThrowsAsync<ArgumentException>(() => host.Session.HostAsync(port));
+    }
+
+    sealed class NoProgress : IProgress<WorkshopProgress>
+    {
+        public void Report(WorkshopProgress value) { }
+    }
+
+    [Fact]
+    public async Task Workshop_install_downloads_missing_mods_then_matches_the_host()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/ugc_222.mod\",\"mod/local.mod\"]");
+        host.Fake.AddWorkshopItem(222);
+        FakeWorkshop? workshop = null;
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]", f => workshop = new FakeWorkshop(id => { f.AddWorkshopItem(id); return true; }));
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+
+        var needs = WorkshopNeeds.From(await client.Session.PlanAsync());
+        Assert.Equal([222UL], needs.Items.Select(i => i.Id));
+        Assert.Equal(["mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
+
+        var result = await client.Session.InstallFromWorkshopAndMatchAsync([222UL], new NoProgress());
+
+        Assert.Equal([222UL], workshop!.Requested);
+        Assert.True(Assert.Single(result.Items).Success);
+        Assert.True(result.Plan.IsComplete);
+        Assert.Equal(["mod/ugc_222.mod", "mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
+        Assert.True(client.Session.MyDiff!.IsMatch);
+    }
+
+    [Fact]
+    public async Task A_failed_workshop_item_is_reported_and_the_rest_is_still_matched()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/ugc_222.mod\",\"mod/local.mod\"]");
+        host.Fake.AddWorkshopItem(222);
+        await using var client = new Rig("Cli", "[]", _ => new FakeWorkshop(_ => false));
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+
+        var result = await client.Session.InstallFromWorkshopAndMatchAsync([222UL], new NoProgress());
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal((false, "Not available."), (item.Success, item.Error));
+        Assert.Equal(["mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
+        Assert.Equal(["ugc:222"], result.Plan.NeedsWorkshopInstall.Select(e => e.Key));
+        Assert.False(client.Session.MyDiff!.IsMatch);
+    }
+
+    [Fact]
+    public async Task Matching_without_installing_needs_no_workshop_service_but_installing_does()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/local.mod\"]");
+        await using var client = new Rig("Cli", "[]");
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+
+        var result = await client.Session.InstallFromWorkshopAndMatchAsync([], new NoProgress());
+
+        Assert.Empty(result.Items);
+        Assert.Equal(["mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.Session.InstallFromWorkshopAndMatchAsync([5UL], new NoProgress()));
     }
 }
