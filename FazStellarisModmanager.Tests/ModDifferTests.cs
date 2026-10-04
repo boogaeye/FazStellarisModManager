@@ -170,4 +170,59 @@ public class ModDifferTests
 
         Assert.Equal(UnitStatus.Ok, Assert.Single(r.Mods).Status);
     }
+
+    static ModSnapshot Mod(string key, int order, string name, string? remoteId, params (string Path, string Md5)[] files) =>
+        new(key, name, $"mod/{key}.mod", remoteId, null, null, "", order, files.Select(f => new ModFile(f.Path, f.Md5, 1)).ToList());
+
+    [Fact]
+    public void A_local_copy_of_a_workshop_mod_is_the_same_mod()
+    {
+        var target = Machine("v4.4", Mod("ugc:5", 1, "Mod Five", "5", ("f", "1")));
+        var mine = Machine("v4.4", Mod("local:8cde_1.mod", 1, "(Coll) Mod Five", "5", ("f", "1")));
+
+        var r = ModDiffer.Diff(target, mine);
+
+        var u = Assert.Single(r.Mods);
+        Assert.Equal((UnitStatus.Ok, "local:8cde_1.mod", MatchKind.WorkshopId, true, "(Coll) Mod Five"),
+            (u.Status, u.MineKey, u.Match, u.LocalCopyOfWorkshop, u.MineName));
+        Assert.True(r.IsMatch);
+    }
+
+    [Fact]
+    public void Prefixed_names_and_identical_files_pair_local_mods()
+    {
+        var target = Machine("v4.4", Mod("local:a.mod", 1, "Ethics Fix", null, ("e", "1")), Mod("local:b.mod", 2, "Sound", null, ("s", "1")));
+        var mine = Machine("v4.4", Mod("local:c.mod", 1, "(Coll) Ethics Fix", null, ("e", "2")), Mod("local:d.mod", 2, "Totally different", null, ("s", "1")));
+
+        var r = ModDiffer.Diff(target, mine);
+
+        Assert.Equal(
+            [("local:a.mod", UnitStatus.ContentMismatch, "local:c.mod", MatchKind.Name), ("local:b.mod", UnitStatus.Ok, "local:d.mod", MatchKind.Files)],
+            r.Mods.Select(m => (m.Key, m.Status, m.MineKey, m.Match)));
+        Assert.All(r.Mods, m => Assert.False(m.LocalCopyOfWorkshop));
+    }
+
+    [Fact]
+    public void Load_order_is_compared_across_pairs()
+    {
+        var target = Machine("v4.4", Mod("ugc:1", 1, "One", "1", ("a", "1")), Mod("ugc:2", 2, "Two", "2", ("b", "1")));
+        var mine = Machine("v4.4", Mod("local:two.mod", 1, "Two", "2", ("b", "1")), Mod("local:one.mod", 2, "One", "1", ("a", "1")));
+
+        var r = ModDiffer.Diff(target, mine);
+
+        Assert.Equal(1, r.Mods.Count(m => m.OutOfOrder));
+        Assert.False(r.OrderMatches);
+        Assert.All(r.Mods, m => Assert.Equal(UnitStatus.Ok, m.Status));
+    }
+
+    [Fact]
+    public void Dlcs_pair_only_by_key()
+    {
+        var target = Machine("v4.4") with { Dlcs = [Unit("dlc:dlc001", 1, ("x", "crc32:1"))] };
+        var mine = Machine("v4.4") with { Dlcs = [Unit("dlc:dlc002", 1, ("x", "crc32:1"))] };
+
+        var r = ModDiffer.Diff(target, mine);
+
+        Assert.Equal([UnitStatus.Missing, UnitStatus.Extra], r.Dlcs.Select(d => d.Status));
+    }
 }
