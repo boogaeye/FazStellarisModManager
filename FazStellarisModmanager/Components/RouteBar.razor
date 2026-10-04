@@ -9,15 +9,22 @@
     @foreach (var key in Targets.Order(StringComparer.OrdinalIgnoreCase))
     {
         var k = key;
-        var name = Database.Techs.TryGetValue(k, out var t) ? t.Name : k;
         <span class="route-chip">
-            <button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(k)">@name</button>
+            @if (Database.Techs.TryGetValue(k, out var t))
+            {
+                var canonical = t.Key;
+                <button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(canonical)">@t.Name</button>
+            }
+            else
+            {
+                <span class="muted" title="@($"{k} (not in this tree)")">@k</span>
+            }
             <button type="button" class="x" title="Remove from route" @onclick="() => OnRemoveTarget.InvokeAsync(k)">✕</button>
         </span>
     }
     @if (Targets.Count > 0)
     {
-        <span>@Route.Steps.Count techs · @Route.TotalCost.ToString("N0", CultureInfo.InvariantCulture) research@(Route.UnknownCostCount > 0 ? $" + {Route.UnknownCostCount} unknown" : "")</span>
+        <span>@Route.Steps.Count techs · @Route.TotalCost.ToString("N0", CultureInfo.InvariantCulture) research points@(Route.UnknownCostCount > 0 ? $" + {Route.UnknownCostCount} unknown" : "")</span>
         <button @onclick="() => OnClearRoute.InvokeAsync()">Clear route</button>
     }
     @if (_confirming)
@@ -44,6 +51,11 @@
 
     const int ConfirmAbove = 10;
     bool _confirming;
+
+    protected override void OnParametersSet()
+    {
+        if (ResearchedCount == 0) _confirming = false;
+    }
 
     Task Ask()
     {

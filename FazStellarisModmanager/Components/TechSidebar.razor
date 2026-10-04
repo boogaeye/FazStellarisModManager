@@ -49,23 +49,26 @@
 
     @if (Targets.Count > 0)
     {
-        <details open>
+        <details open="@(Route.Steps.Count <= MaxOpenRoute)">
             <summary>Research route (@Route.Steps.Count)</summary>
             @if (Route.Steps.Count == 0)
             {
                 <p class="muted small">Everything the route needs is already researched.</p>
             }
-            <ol class="route-list">
-                @foreach (var stepKey in Route.Steps)
-                {
-                    var step = Database.Techs[stepKey];
-                    var key = step.Key;
-                    <li class="@(key == Tech.Key ? "here" : "")">
-                        <button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(key)">@step.Name</button>
-                        <span class="muted small">· @AreaLetter(step.Area)@StepTier(step)@(Targets.Contains(key) ? " ★" : "")</span>
-                    </li>
-                }
-            </ol>
+            else
+            {
+                <ol class="route-list">
+                    @foreach (var stepKey in Route.Steps)
+                    {
+                        if (!Database.Techs.TryGetValue(stepKey, out var step)) continue;
+                        var key = step.Key;
+                        <li class="@(key == Tech.Key ? "here" : "")">
+                            <button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(key)">@step.Name</button>
+                            <span class="muted small">· @AreaLetter(step.Area)@StepTier(step)@(Targets.Contains(key) ? " ★" : "")</span>
+                        </li>
+                    }
+                </ol>
+            }
             <div class="muted small">Already researched and skipped: @Route.SkippedResearched (+ @Route.SkippedStarting starting techs)</div>
             @foreach (var m in Route.MissingPrerequisites)
             {
@@ -212,6 +215,9 @@
     [Parameter] public ResearchRoute Route { get; set; } = ResearchRoute.Empty;
     [Parameter] public EventCallback<string> OnToggleTarget { get; set; }
     [Parameter] public EventCallback<string> OnToggleResearched { get; set; }
+
+    // A longer route starts collapsed so the rest of the sidebar stays in view.
+    const int MaxOpenRoute = 30;
 
     static string AreaLetter(TechArea a) => a switch
     {

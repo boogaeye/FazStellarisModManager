@@ -109,14 +109,21 @@
                         <span class="small">Drag to pan · wheel to zoom · right-click: researched · Shift+click: route target</span>
                     }
                 </div>
-                @if (wholeTree || targets.Count > 0)
+                @if (researchMessage is not null)
                 {
-                    <RouteBar Database="db" Targets="targets" Route="route" ResearchedCount="researched.Count"
-                              OnSelect="key => selectedKey = key" OnRemoveTarget="ToggleTarget" OnClearRoute="ClearRoute" OnUnresearchAll="UnresearchAll" />
+                    <div class="status error">@researchMessage</div>
+                }
+                @{ var researchedInTree = researched.Count(k => db.Techs.ContainsKey(k)); }
+                @if (wholeTree || targets.Count > 0 || researchedInTree > 0)
+                {
+                    <RouteBar Database="db" Targets="targets" Route="route" ResearchedCount="researchedInTree"
+                              OnSelect="key => selectedKey = key" OnRemoveTarget="RemoveTarget" OnClearRoute="ClearRoute" OnUnresearchAll="UnresearchAll" />
                 }
                 @if (wholeTree)
                 {
-                    <TechOverviewView Overview="OverviewFor(db)" Database="db" IconUri="Tree.IconUri" IconVersion="Tree.IconCount"
+                    @* While icons load, redraw the map every 250 icons rather than on every progress tick. *@
+                    <TechOverviewView Overview="OverviewFor(db)" Database="db" IconUri="Tree.IconUri"
+                                      IconVersion="@(Tree.IconsReady.IsCompleted ? -1 : Tree.IconCount / 250)"
                                       SelectedKey="selectedKey" Route="route" Targets="targets" Researched="researched"
                                       OnSelect="key => selectedKey = key" OnToggleResearched="ToggleResearched" OnToggleTarget="ToggleTarget" />
                 }
@@ -178,6 +185,7 @@
     CancellationTokenSource? searchCts;
     bool wholeTree;
     TechTree? stateFor;   // the tree whose saved research state is loaded
+    string? researchMessage;   // load warning or save error for the research state; shown under the view switch
     HashSet<string> researched = new(StringComparer.OrdinalIgnoreCase);
     HashSet<string> targets = new(StringComparer.OrdinalIgnoreCase);
     ResearchRoute route = ResearchRoute.Empty;
@@ -190,20 +198,25 @@
         return overview!;
     }
 
+    // A rebuild of the same mod list keeps the in-memory sets (they are already saved); another list loads its own file.
     void SyncResearchState()
     {
         if (Tree.Current is not { } tree || ReferenceEquals(stateFor, tree)) return;
+        var sameList = stateFor is not null && stateFor.Label == tree.Label;
         stateFor = tree;
-        var warnings = new List<string>();
-        var state = Tree.Research.Load(tree.Label, warnings);
-        researched = new HashSet<string>(state.Researched, StringComparer.OrdinalIgnoreCase);
-        targets = new HashSet<string>(state.Targets, StringComparer.OrdinalIgnoreCase);
+        if (!sameList)
+        {
+            var warnings = new List<string>();
+            var state = Tree.Research.Load(tree.Label, warnings);
+            researched = new HashSet<string>(state.Researched, StringComparer.OrdinalIgnoreCase);
+            targets = new HashSet<string>(state.Targets, StringComparer.OrdinalIgnoreCase);
+            researchMessage = warnings.Count > 0 ? warnings[0] : null;
+        }
         RecomputeRoute();
-        if (warnings.Count > 0) (status, error) = (warnings[0], true);
     }
 
     void RecomputeRoute() =>
-        route = targets.Count == 0 || Tree.Current is null ? ResearchRoute.Empty : ResearchPlan.Build(Tree.Current.Database, targets, researched);
+        route = targets.Count == 0 || stateFor is null ? ResearchRoute.Empty : ResearchPlan.Build(stateFor.Database, targets, researched);
 
     // New set instances on every change: the map compares them by reference to decide whether to redraw.
     void ChangeResearch(Action<HashSet<string>, HashSet<string>> change)
@@ -217,15 +230,17 @@
         try
         {
             Tree.Research.Save(stateFor.Label, new ResearchState([.. researched], [.. targets]));
+            researchMessage = null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            (status, error) = ($"Could not save research progress: {ex.Message}", true);
+            researchMessage = $"Could not save research progress: {ex.Message}";
         }
     }
 
     void ToggleResearched(string key) => ChangeResearch((r, _) => { if (!r.Remove(key)) r.Add(key); });
     void ToggleTarget(string key) => ChangeResearch((_, t) => { if (!t.Remove(key)) t.Add(key); });
+    void RemoveTarget(string key) => ChangeResearch((_, t) => t.Remove(key));
     void ClearRoute() => ChangeResearch((_, t) => t.Clear());
     void UnresearchAll() => ChangeResearch((r, _) => r.Clear());
 
@@ -258,8 +273,28 @@
         if (selectedKey is null && Tree.Current is { } current)
             selectedKey = current.Database.Techs.Values.FirstOrDefault(t => t.IsStart)?.Key;
         SyncResearchState();
+        WatchIcons();
         StateHasChanged();
     });
+
+    // The last progress report comes just before IconsReady completes, so the map's final icon redraw (IconVersion -1) needs its own render.
+    Task? watchedIcons;
+
+    void WatchIcons()
+    {
+        var ready = Tree.IconsReady;
+        if (ready.IsCompleted || ReferenceEquals(ready, watchedIcons)) return;
+        watchedIcons = ready;
+        _ = RenderWhenDone(ready);
+    }
+
+    async Task RenderWhenDone(Task ready)
+    {
+        try { await ready; }
+        catch (Exception) { /* cancelled or failed: still redraw with what loaded */ }
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { /* the page went away */ }
+    }
 
     async Task SearchChanged()
     {
