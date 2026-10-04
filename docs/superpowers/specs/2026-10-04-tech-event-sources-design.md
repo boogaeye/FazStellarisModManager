@@ -41,8 +41,8 @@ Mockups (approved): `.superpowers/brainstorm/335-1791100790/content/event-source
   - `give_technology`: block `tech`, or a string.
   - `add_tech_progress`: block `tech` + `progress`. The progress is parsed as an invariant double; it is null when it is not a number.
   - `add_research_option`: a string, or block `tech`.
-- **Conditions:** `if`/`else_if` add the condition from their `limit` (worded by `TriggerSummary`, scripted triggers expanded). `else` adds "otherwise". A child of `random_list` adds "by chance". Conditions accumulate, joined with "; ".
-- **Skipped (trigger) blocks:** `limit`, `trigger`, `exclusive_trigger`, `allow`, `potential`, `ai_chance`, `weight`, `modifier`. Every other block is walked as an effect scope.
+- **Conditions:** `if` adds the condition from its `limit` (worded by `TriggerSummary`, scripted triggers expanded); `else_if` adds the same prefixed with "otherwise, " (e.g. "otherwise, Gestalt"). `else` adds "otherwise". A child of `random_list` or `locked_random_list` adds "by chance". In `switch = { trigger = T  case = { … }  default = { … } }` each case adds "T = case" ("not T = case" for `inverted_switch`) and `default` adds "otherwise"; the `trigger` entry itself is not walked. Conditions accumulate, joined with "; ".
+- **Skipped (trigger) blocks:** `limit`, `trigger`, `exclusive_trigger`, `allow`, `potential`, `ai_chance`, `weight`, `modifier`, and `tooltip` (it only displays its contents; vanilla repeats real grants inside tooltips). The `effect` block of `create_country` is skipped too, since it runs for the newly created country. Every other block is walked as an effect scope.
 - **Scripted effects:** a key naming a scripted effect, with value `yes` or a parameter block, is walked with its parameters substituted. `via` records the name of the effect the original block called, i.e. the outermost one.
 - **Inline scripts:** expanded and walked transparently.
 - **Limits:** recursion stops at depth 6, and a call stack guards against cycles.

@@ -47,8 +47,51 @@ public class GrantFinderTests
             """));
 
         Assert.Equal(
-            [("tech_a", "Civic: civic_x"), ("tech_b", "Gestalt"), ("tech_c", "otherwise; by chance"), ("tech_d", (string?)null)],
+            [("tech_a", "Civic: civic_x"), ("tech_b", "otherwise, Gestalt"), ("tech_c", "otherwise; by chance"), ("tech_d", (string?)null)],
             found.Select(f => (f.Tech, f.Condition)));
+    }
+
+    [Fact]
+    public void Tooltips_and_the_effect_block_of_create_country_are_skipped()
+    {
+        var found = Finder().Find(P("""
+            tooltip = { give_technology = { tech = tech_tooltip } }
+            create_country = {
+                name = random
+                effect = { give_technology = { tech = tech_new_country } }
+            }
+            owner = { effect = { give_technology = { tech = tech_a } } }
+            """));
+
+        Assert.Equal(["tech_a"], found.Select(f => f.Tech));
+    }
+
+    [Fact]
+    public void Switch_cases_become_conditions()
+    {
+        var found = Finder().Find(P("""
+            switch = {
+                trigger = has_origin
+                origin_a = { give_technology = { tech = tech_a } }
+                default = { add_research_option = tech_b }
+            }
+            inverted_switch = {
+                trigger = has_civic
+                civic_x = { add_tech_progress = { tech = tech_c progress = 0.5 } }
+            }
+            """));
+
+        Assert.Equal(
+            [("tech_a", "has_origin = origin_a"), ("tech_b", "otherwise"), ("tech_c", "not has_civic = civic_x")],
+            found.Select(f => (f.Tech, f.Condition)));
+    }
+
+    [Fact]
+    public void Locked_random_lists_are_by_chance()
+    {
+        var found = Finder().Find(P("locked_random_list = { 10 = { give_technology = { tech = tech_a } } }"));
+
+        Assert.Equal([("tech_a", "by chance")], found.Select(f => (f.Tech, f.Condition)));
     }
 
     [Fact]
