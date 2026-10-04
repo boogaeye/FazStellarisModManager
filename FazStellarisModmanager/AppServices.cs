@@ -27,6 +27,7 @@ public static class AppServices
         services.AddSingleton(sp => new TechTreeService(sp.GetRequiredService<ModManagerService>()));
         services.AddSingleton(sp => new UpdateService(
             sp.GetRequiredService<ModManagerService>(),
+            // No overall timeout: the download has its own stall timeout and the checker its own 15 s limit.
             new HttpClient { Timeout = Timeout.InfiniteTimeSpan },
             UpdateService.VersionOf(typeof(AppServices).Assembly),
             AppContext.BaseDirectory,

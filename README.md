@@ -39,7 +39,7 @@ The game folder and the Stellaris user folder (`Documents\Paradox Interactive\St
 
 Download `FazStellarisModManager-win-x64.zip` from the [latest release](https://github.com/boogaeye/FazStellarisModManager/releases/latest). Unzip it into a folder you own, such as `Documents\FazStellarisModManager`; avoid `Program Files`, where the app can't update itself. Then run `FazStellarisModmanager.exe`. No .NET install is needed.
 
-At startup the app checks for a newer release and asks before updating; you can say **Not now**. Turn the check off, or check by hand, in **Settings → Updates**.
+At startup the app checks for a newer release and asks before updating; you can say **Not now**. Turn the check off, or check by hand, in **Settings → Updates**. Updating in place only works for a copy installed from the release zip; a copy built from source is updated from source. On PCs where policy blocks PowerShell scripts, the app can't update itself: download the new zip from the release page and unzip it over the old folder.
 
 ## Releasing a new version
 

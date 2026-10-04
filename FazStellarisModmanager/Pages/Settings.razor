@@ -34,6 +34,10 @@
 <h2>Updates</h2>
 <div class="form">
     <p class="status">Version @Updates.Current@UpdateStatusText</p>
+    @if (Updates.PreviousFailure is { } previous)
+    {
+        <p class="muted small">The last update attempt failed: @previous</p>
+    }
     <label class="inline">
         <input type="checkbox" @bind="checkForUpdates" @bind:after="SaveUpdateSetting" />
         Check for updates at startup
@@ -77,8 +81,10 @@
         null => "",
         { Status: UpdateStatus.UpToDate } => " is the latest.",
         { Status: UpdateStatus.Available, Update: { } u } => $" — version {u.Version} is available.",
+        { Status: UpdateStatus.Available } => " — a newer version is available.",
         { Status: UpdateStatus.NoReleases } => " — no releases have been published yet.",
-        { Error: var e } => $" — the last check failed: {e}",
+        { Error: { } e } => $" — the last check failed: {e}",
+        _ => " — the last check failed.",
     };
 
     void SaveUpdateSetting()
@@ -90,6 +96,7 @@
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             (error, message) = (true, ex.Message);
+            checkForUpdates = Manager.Settings.CheckForUpdates;
         }
     }
 

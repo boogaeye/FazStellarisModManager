@@ -4,9 +4,14 @@
 @if (Updates.Offer is { } offer)
 {
     <div class="modal-backdrop">
-        <div class="modal" role="dialog" aria-labelledby="update-title">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="update-title" aria-describedby="update-description"
+             tabindex="-1" @onkeydown="OnKeyDown">
             <h2 id="update-title">Version @offer.Version is available</h2>
-            <p class="muted">You have version @Updates.Current. @offer.Name</p>
+            <p id="update-description" class="muted">You have version @Updates.Current. @offer.Name</p>
+            @if (Updates.PreviousFailure is { } previous)
+            {
+                <p class="muted small">The last update attempt failed: @previous</p>
+            }
             @if (!string.IsNullOrWhiteSpace(offer.Notes))
             {
                 <pre class="release-notes">@offer.Notes</pre>
@@ -16,6 +21,9 @@
                 <p>Downloading the update… @((int)Math.Round((Updates.DownloadProgress ?? 0) * 100))%</p>
                 <progress max="1" value="@((Updates.DownloadProgress ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture))"></progress>
                 <p class="muted small">The app will close and restart when the update is ready.</p>
+                <div class="modal-actions">
+                    <button @onclick="Updates.CancelInstall">Cancel</button>
+                </div>
             }
             else
             {
@@ -30,11 +38,11 @@
                 <div class="modal-actions">
                     @if (Updates.InstallBlocker() is null)
                     {
-                        <button class="primary" @onclick="() => Updates.InstallAsync()">Update now</button>
+                        <button class="primary" @ref="primary" @onclick="() => Updates.InstallAsync()">Update now</button>
                     }
                     else
                     {
-                        <a class="button primary" href="@offer.PageUrl" target="_blank">Open release page</a>
+                        <a class="button primary" @ref="primary" href="@offer.PageUrl" target="_blank">Open release page</a>
                     }
                     <button @onclick="Updates.Dismiss">Not now</button>
                 </div>
@@ -44,11 +52,26 @@
 }
 
 @code {
+    ElementReference primary;
+    UpdateInfo? focusedFor;
+
     protected override void OnInitialized() => Updates.Changed += OnChanged;
 
-    protected override void OnAfterRender(bool firstRender)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender) _ = Updates.CheckAtStartupAsync();
+        if (Updates.Offer is null) focusedFor = null;
+        else if (!ReferenceEquals(Updates.Offer, focusedFor) && !Updates.IsInstalling && primary.Id is not null)
+        {
+            focusedFor = Updates.Offer;
+            try { await primary.FocusAsync(); }
+            catch (JSException) { /* focus is a nicety */ }
+        }
+    }
+
+    void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape" && !Updates.IsInstalling) Updates.Dismiss();
     }
 
     void OnChanged() => _ = InvokeAsync(StateHasChanged);

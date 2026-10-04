@@ -17,7 +17,11 @@
             </ErrorContent>
         </ErrorBoundary>
     </main>
-    <UpdatePrompt />
+    @* The update prompt is optional: if it ever throws, hide it rather than take the page down. *@
+    <ErrorBoundary>
+        <ChildContent><UpdatePrompt /></ChildContent>
+        <ErrorContent></ErrorContent>
+    </ErrorBoundary>
 </div>
 
 @code {
