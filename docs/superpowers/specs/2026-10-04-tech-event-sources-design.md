@@ -49,14 +49,14 @@ Mockups (approved): `.superpowers/brainstorm/335-1791100790/content/event-source
 - **Dynamic techs:** only tech keys present in the tech database count, so unresolved `$TECH$` and `event_target:` values drop out.
 
 ### Event scan (`EventScanner`)
-- **Files:** `events/**/*.txt` from all sources, with per-path override, processed in load order. For each id the first definition wins; every parsed definition counts as "seen".
-- **Pre-filter:** base-game files are parsed only if they contain one of the three effect names, `inline_script`, or the name of a scripted effect that (transitively) mentions an effect name. Mod files are always parsed.
+- **Files:** `events/**/*.txt` from all sources, with per-path override, processed in load order. Every file is parsed (no pre-filter: the base game's 13 MB of events parse in about 0.4 s), so for each id the first definition wins exactly.
+- **Inheritance:** `base = <event id>` is resolved after all definitions are collected, so the base may be in another file. A derived event takes title, desc and picture from its base unless it sets its own (desc is not inherited with `desc_clear = yes`); the base's options come first, then its own, unless `option_clear = yes` (option indices count over the merged list); `immediate` and `after` are inherited when it has none. Chains are followed up to 5 deep; cycles are ignored.
 - **Expansion:** event-level `inline_script` entries are expanded in place, so injected options are seen.
 - **Grants:** `immediate` gives part Immediate, each `option` (0-based index) gives part Option, and `after` gives part After.
 - **Event model**, kept only for events that grant a tech in the database:
   - id and type (the block key);
   - Title: the localised `title`, or the first `text` of a title block; the event id when it is missing;
-  - Description: the first desc entry. A key is localised; a block uses its first `text`, searched depth-first through `first_valid`, `random_valid` and nested `desc`. DescriptionVaries is true when there are several desc entries or any block form.
+  - Description: the first desc entry. A key is localised; a block uses its first `text`, searched depth-first through `first_valid`, `random_valid`, nested `desc` and `trigger = { text = …  if = { limit = { … } text = … }  success_text = { text = … } }` (limit blocks skipped). Titles and option names use the same lookup. DescriptionVaries is true when there are several desc entries or any block form.
   - Picture: a sprite name from the string, or from the first block's `picture`. PictureVaries uses the same rule as the description.
   - Hidden: `hide_window = yes`.
   - Options: a localised name (a key, or a name block's first `text`; `option N` when missing) and a Condition from `trigger` or `exclusive_trigger`.
@@ -64,10 +64,12 @@ Mockups (approved): `.superpowers/brainstorm/335-1791100790/content/event-source
 - **Localisation:** handled by `Localisation.Get`. Commands such as `[From.Planet.GetName]` stay in the text, and the UI highlights them.
 
 ### Other sources (`ObjectGrantScanner`)
-- **Folders:** every `common/` folder except technology, scripted_effects, inline_scripts, scripted_triggers, scripted_variables, script_values, defines, pop_jobs, random_names, name_lists and on_actions.
-- **Rules:** the same per-path override, load order, and last (folder, id) wins. Base files are pre-filtered like events.
+- **Folders:** every `common/` folder except technology, scripted_effects, inline_scripts, scripted_triggers, scripted_variables, script_values, defines, pop_jobs, random_names, name_lists, on_actions and solar_system_initializers. The initializers are excluded on purpose: their grants go to scripted NPC empires at galaxy generation and would add hundreds of rows of noise.
+- **Rules:** the same per-path override, load order, and last (folder, id) wins.
+- **Pre-filter:** a base-game file is parsed only if it contains (case-insensitive substring, via `SearchValues`) one of the three effect names, `inline_script`, or the name of a scripted effect that (transitively) mentions one. Skipped base files still have their top-level object ids read (a light scan honouring comments, strings and an inner `key = …`), so they replace earlier definitions as objects without grants. Mod files are always parsed.
+- **Duplicates:** identical grants of one source (same part, option, kind, progress, condition and via) are kept once.
 - **Grants:** `GrantFinder` walks each top-level object block.
-- **Naming:** the source shows as its kind (`UnlockScanner.KindName(folder)`) and its localised name (`loc.Get(id) ?? id`).
+- **Naming:** the source shows as its kind (`UnlockScanner.KindName(folder)`) and its localised name (`UnlockScanner.UnlockName`: the id, `id_name`, then the folder's prefixes with and without `_name`, e.g. `council_agenda_<id>_name`; the id when none is localised).
 
 ### Model and API
 - `TechGrant(Kind, Progress, Part, OptionIndex, Condition, Via)`.

@@ -45,14 +45,19 @@ public static class UnlockScanner
         ["starbase_modules"] = ["sm_"],
         ["starbase_buildings"] = ["sm_", "sb_"],
         ["edicts"] = ["edict_"],
+        ["council_agendas"] = ["council_agenda_"],
     };
 
-    static string UnlockName(Localisation loc, string folder, string id)
+    /// <summary>
+    /// The localised name of a common/ object: the id, then id + "_name", then each folder prefix with and without "_name"
+    /// (e.g. council_agenda_agenda_x_name); the id itself when none is localised.
+    /// </summary>
+    internal static string UnlockName(Localisation loc, string folder, string id)
     {
-        if (loc.Get(id) is { } n) return n;
+        if ((loc.Get(id) ?? loc.Get(id + "_name")) is { } n) return n;
         if (LocPrefixes.TryGetValue(folder, out var prefixes))
             foreach (var p in prefixes)
-                if (loc.Get(p + id) is { } pn) return pn;
+                if ((loc.Get(p + id) ?? loc.Get(p + id + "_name")) is { } pn) return pn;
         return id;
     }
 
