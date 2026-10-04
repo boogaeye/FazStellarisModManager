@@ -23,8 +23,8 @@ public sealed class UpdateInstaller(HttpClient http, TimeSpan? stallTimeout = nu
     readonly TimeSpan _stall = stallTimeout ?? TimeSpan.FromSeconds(30);
 
     // Must run on Windows PowerShell 5.1. Steps:
-    // 1. Wait for the app to exit (twice $WaitSeconds at most). If it is still running, write the failure marker and
-    //    stop without touching anything or restarting.
+    // 1. Wait for the app to exit (twice $WaitSeconds at most). If it, or another copy running from the app folder, is still
+    //    running, write the failure marker and stop without touching anything or restarting.
     // 2. Back up the app folder (without the WebView2 cache) into backup\. If that fails, nothing is changed.
     // 3. Copy the new files over the old ones (files only the old version had stay). If that fails, restore the backup.
     // 4. Restart the app (new or restored version). On success remove the unpacked files, the backup and the zip.
@@ -65,6 +65,16 @@ public sealed class UpdateInstaller(HttpClient http, TimeSpan? stallTimeout = nu
             }
         }
 
+        # Another copy running from the same folder would keep its files locked and make every copy retry; stop early instead.
+        $prefix = $Target + '\'
+        $others = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            try { $_.Path -and $_.Path.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase) } catch { $false }
+        })
+        if ($others.Count -gt 0) {
+            Write-Failure ('another copy of the app is still running from ' + $Target + ', so nothing was changed. Close it and update again.')
+            exit 1
+        }
+
         robocopy $Target $backup /E /XD '*.WebView2' /R:2 /W:1 /NP "/LOG+:$log" | Out-Null
         $code = $LASTEXITCODE
         Write-Log ('backup robocopy exit code ' + $code)
@@ -74,13 +84,18 @@ public sealed class UpdateInstaller(HttpClient http, TimeSpan? stallTimeout = nu
             exit 1
         }
 
-        robocopy $Source $Target /E /IS /IT /R:20 /W:1 /NP "/LOG+:$log" | Out-Null
+        robocopy $Source $Target /E /IS /IT /R:3 /W:1 /NP "/LOG+:$log" | Out-Null
         $code = $LASTEXITCODE
         Write-Log ('copy robocopy exit code ' + $code)
         if ($code -ge 8) {
-            robocopy $backup $Target /E /IS /IT /R:20 /W:1 /NP "/LOG+:$log" | Out-Null
-            Write-Log ('restore robocopy exit code ' + $LASTEXITCODE)
-            Write-Failure 'copying the new files failed; the previous version was restored.'
+            robocopy $backup $Target /E /IS /IT /R:3 /W:1 /NP "/LOG+:$log" | Out-Null
+            $restore = $LASTEXITCODE
+            Write-Log ('restore robocopy exit code ' + $restore)
+            if ($restore -ge 8) {
+                Write-Failure ('copying the new files failed and restoring the previous version also failed; the backup is kept in ' + $backup + '.')
+            } else {
+                Write-Failure 'copying the new files failed; the previous version was restored.'
+            }
             Start-App
             exit 1
         }
