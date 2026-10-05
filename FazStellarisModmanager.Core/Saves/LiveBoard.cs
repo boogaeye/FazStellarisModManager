@@ -49,6 +49,9 @@ public static class LiveBoard
             .ToList();
     }
 
+    /// <summary>Stats where a smaller value ranks better.</summary>
+    public static bool LowerIsBetter(BoardStat s) => s == BoardStat.EmpireSize;
+
     public static StatValue? Value(BoardRow row, BoardStat stat) => stat switch
     {
         BoardStat.Score => row.Score,
@@ -74,18 +77,29 @@ public static class LiveBoard
             if (stat == BoardStat.Score) continue;
             var values = known.Select(r => Value(r, stat)?.Real ?? 0).ToList();
             for (var i = 0; i < known.Count; i++)
-                result[known[i].Id][stat] = 1 + values.Count(v => v > values[i]);
+                result[known[i].Id][stat] = 1 + (LowerIsBetter(stat) ? values.Count(v => v < values[i]) : values.Count(v => v > values[i]));
         }
         return result.ToDictionary(kv => kv.Key, kv => (IReadOnlyDictionary<BoardStat, int>)kv.Value);
     }
 
-    /// <summary>Victory order for Score; otherwise known rows by the stat (highest first, ties by victory rank), then unknown rows by victory rank.</summary>
-    public static IReadOnlyList<BoardRow> Sort(IReadOnlyList<BoardRow> rows, BoardStat stat)
+    /// <summary>
+    /// Best-first (rank #1 first) or worst-first. Score uses victory order; other stats order known rows by value with ties
+    /// by victory rank. Worst-first puts unknown rows last, in victory order. Best-first Score is plain victory order.
+    /// </summary>
+    public static IReadOnlyList<BoardRow> Sort(IReadOnlyList<BoardRow> rows, BoardStat stat, bool worstFirst = false)
     {
-        if (stat == BoardStat.Score) return rows.OrderBy(r => r.Rank).ThenBy(r => r.Id).ToList();
-        return rows.OrderBy(r => r.Known ? 0 : 1)
-            .ThenByDescending(r => Value(r, stat)?.Real ?? 0)
-            .ThenBy(r => r.Rank).ThenBy(r => r.Id).ToList();
+        if (stat == BoardStat.Score)
+        {
+            if (!worstFirst) return rows.OrderBy(r => r.Rank).ThenBy(r => r.Id).ToList();
+            return rows.Where(r => r.Known).OrderByDescending(r => r.Rank).ThenBy(r => r.Id).Concat(rows.Where(r => !r.Known).OrderBy(r => r.Rank).ThenBy(r => r.Id)).ToList();
+        }
+        var descending = LowerIsBetter(stat) == worstFirst;
+        var k = rows.Where(r => r.Known);
+        var ordered = descending
+            ? k.OrderByDescending(r => Value(r, stat)?.Real ?? 0)
+            : k.OrderBy(r => Value(r, stat)?.Real ?? 0);
+        return ordered.ThenBy(r => r.Rank).ThenBy(r => r.Id)
+            .Concat(rows.Where(r => !r.Known).OrderBy(r => r.Rank).ThenBy(r => r.Id)).ToList();
     }
 }
 

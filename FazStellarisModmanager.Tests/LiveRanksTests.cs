@@ -71,3 +71,66 @@ public class LiveRanksTests
         Assert.Equal(6, LiveBoard.Value(rows[0], BoardStat.Pops)!.Value.Real);
     }
 }
+
+public class LiveRanksDirectionTests
+{
+    static SaveCountry C(int id, int rank, double economy = 2, double size = 5, IReadOnlyList<int>? contacts = null) =>
+        new(id, "default", "Empire", new Dictionary<string, string>(), null, null, rank, 10, 1, economy, 3, 4, size, 6, null, contacts ?? [], []);
+
+    static GameSnapshot S(params SaveCountry[] countries) =>
+        new("Save", "2300.01.01", "v", "x.sav", DateTime.UtcNow, [new SavePlayer("Alice", 0)], countries);
+
+    [Fact]
+    public void Empire_size_ranks_smallest_first()
+    {
+        var rows = LiveBoard.Build(S(C(0, 1, size: 30, contacts: [1, 2, 3]), C(1, 2, size: 10), C(2, 3, size: 10), C(3, 4, size: 50)), viewerId: 0);
+        var ranks = LiveBoard.Ranks(rows);
+        Assert.Equal(1, ranks[1][BoardStat.EmpireSize]);
+        Assert.Equal(1, ranks[2][BoardStat.EmpireSize]);
+        Assert.Equal(3, ranks[0][BoardStat.EmpireSize]);
+        Assert.Equal(4, ranks[3][BoardStat.EmpireSize]);
+        Assert.True(LiveBoard.LowerIsBetter(BoardStat.EmpireSize));
+        Assert.False(LiveBoard.LowerIsBetter(BoardStat.Pops));
+    }
+
+    [Fact]
+    public void Worst_first_economy_reverses_known_and_keeps_unknowns_last()
+    {
+        var rows = LiveBoard.Build(S(
+            C(0, 1, economy: 1, contacts: [1, 3]), C(1, 2, economy: 50), C(2, 3, economy: 999), C(3, 4, economy: 20), C(4, 5, economy: 5)), viewerId: 0);
+        Assert.Equal([0, 3, 1, 2, 4], LiveBoard.Sort(rows, BoardStat.Economy, worstFirst: true).Select(r => r.Id));
+    }
+
+    [Fact]
+    public void Worst_first_keeps_victory_tie_break()
+    {
+        var rows = LiveBoard.Build(S(C(0, 3, economy: 5, contacts: [1, 2]), C(1, 1, economy: 5), C(2, 2, economy: 9)), viewerId: 0);
+        Assert.Equal([1, 0, 2], LiveBoard.Sort(rows, BoardStat.Economy, worstFirst: true).Select(r => r.Id));
+    }
+
+    [Fact]
+    public void Empire_size_best_first_is_smallest_first()
+    {
+        var rows = LiveBoard.Build(S(C(0, 1, size: 30, contacts: [1]), C(1, 2, size: 10)), viewerId: 0);
+        Assert.Equal([1, 0], LiveBoard.Sort(rows, BoardStat.EmpireSize).Select(r => r.Id));
+        Assert.Equal([0, 1], LiveBoard.Sort(rows, BoardStat.EmpireSize, worstFirst: true).Select(r => r.Id));
+    }
+
+    [Fact]
+    public void Worst_first_score_is_reversed_victory_order_unknowns_last()
+    {
+        var rows = LiveBoard.Build(S(C(0, 2, contacts: [1]), C(1, 1), C(2, 3), C(3, 4)), viewerId: 0);
+        Assert.Equal([0, 1, 2, 3], LiveBoard.Sort(rows, BoardStat.Score, worstFirst: true).Select(r => r.Id));
+        Assert.Equal([1, 0, 2, 3], LiveBoard.Sort(rows, BoardStat.Score).Select(r => r.Id));
+    }
+
+    [Fact]
+    public void Ranks_do_not_depend_on_sort_direction()
+    {
+        var rows = LiveBoard.Build(S(C(0, 1, economy: 1, contacts: [1]), C(1, 2, economy: 50)), viewerId: 0);
+        var a = LiveBoard.Ranks(LiveBoard.Sort(rows, BoardStat.Economy));
+        var b = LiveBoard.Ranks(LiveBoard.Sort(rows, BoardStat.Economy, worstFirst: true));
+        Assert.Equal(a[1][BoardStat.Economy], b[1][BoardStat.Economy]);
+        Assert.Equal(1, b[1][BoardStat.Economy]);
+    }
+}
