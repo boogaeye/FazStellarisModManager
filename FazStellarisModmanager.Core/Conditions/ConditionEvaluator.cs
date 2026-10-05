@@ -1,3 +1,4 @@
+using System.Globalization;
 using FazStellarisModmanager.Core.Descriptors;
 using FazStellarisModmanager.Core.Saves;
 
@@ -11,13 +12,24 @@ public sealed record ConditionNode(string Text, Truth Result, IReadOnlyList<Cond
 /// <summary>What the viewer's empire has, from live data. Sets are case-insensitive.</summary>
 public sealed record EmpireFacts(IReadOnlySet<string> Techs, IReadOnlySet<string> Flags, IReadOnlySet<string> GlobalFlags,
     IReadOnlySet<string> Perks, IReadOnlySet<string> Traditions, IReadOnlySet<string> Civics, IReadOnlySet<string> Ethics,
-    string? Origin, string? Authority, string? CountryType, IReadOnlySet<string> Dlcs, bool IsPlayer)
+    string? Origin, string? Authority, string? CountryType, IReadOnlySet<string> Dlcs, bool IsPlayer,
+    int? YearsPassed = null, int? MidGameStart = null, int? EndGameStart = null)
 {
+    /// <summary>Stellaris games start on 2200.01.01.</summary>
+    public const int GameStartYear = 2200;
+
+    /// <summary>Whole years since the game start for a save date like "2387.09.17", or null if it can't be read.</summary>
+    public static int? YearsSinceStart(string? date) =>
+        date is not null && date.Split('.') is { Length: >= 1 } parts && int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var year)
+            ? year - GameStartYear
+            : null;
+
     static HashSet<string> Set(IEnumerable<string>? items) => new(items ?? [], StringComparer.OrdinalIgnoreCase);
 
     public static EmpireFacts From(SaveCountry c, GameSnapshot s, bool isPlayer) => new(
         Set(c.Techs), Set(c.Flags), Set(s.GlobalFlags), Set(c.Holdings?.Perks), Set(c.Holdings?.Traditions), Set(c.Holdings?.Civics),
-        Set(c.Ethics), c.Holdings?.Origin, c.Holdings?.Authority, c.Type, Set(s.Dlcs), isPlayer);
+        Set(c.Ethics), c.Holdings?.Origin, c.Holdings?.Authority, c.Type, Set(s.Dlcs), isPlayer,
+        YearsSinceStart(s.Date), s.Galaxy?.MidGameStart, s.Galaxy?.EndGameStart);
 }
 
 /// <summary>
@@ -93,6 +105,11 @@ public sealed class ConditionEvaluator(Func<string, PdxBlock?> scriptedTrigger)
     Truth Leaf(string key, string op, string value, EmpireFacts f, int depth, out IReadOnlyList<ConditionNode> children)
     {
         children = [];
+        if (IsYearTrigger(key))
+        {
+            var years = YearValue(key, f);
+            return years is int y && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) ? Compare(y, op, n) : Truth.Unknown;
+        }
         if (op != "=") return Truth.Unknown;
         var yes = value.Equals("yes", StringComparison.OrdinalIgnoreCase);
         var no = value.Equals("no", StringComparison.OrdinalIgnoreCase);
@@ -136,6 +153,30 @@ public sealed class ConditionEvaluator(Func<string, PdxBlock?> scriptedTrigger)
         }
         return Truth.Unknown;
     }
+
+    static bool IsYearTrigger(string key) =>
+        key.Equals("years_passed", StringComparison.OrdinalIgnoreCase) || key.Equals("mid_game_years_passed", StringComparison.OrdinalIgnoreCase)
+        || key.Equals("end_game_years_passed", StringComparison.OrdinalIgnoreCase);
+
+    // years_passed counts from the game start; the mid/end game variants from the galaxy setup's start year (negative before it).
+    static int? YearValue(string key, EmpireFacts f) => key.ToLowerInvariant() switch
+    {
+        "years_passed" => f.YearsPassed,
+        "mid_game_years_passed" => f.YearsPassed - f.MidGameStart,
+        "end_game_years_passed" => f.YearsPassed - f.EndGameStart,
+        _ => null,
+    };
+
+    static Truth Compare(double a, string op, double b) => op switch
+    {
+        "=" or "==" => Of(a == b),
+        ">" => Of(a > b),
+        ">=" => Of(a >= b),
+        "<" => Of(a < b),
+        "<=" => Of(a <= b),
+        "!=" => Of(a != b),
+        _ => Truth.Unknown,
+    };
 
     static bool HasParameter(PdxBlock b) =>
         b.Entries.Any(e => e.Key.Contains('$') || e.Value is string s && s.Contains('$') || e.Value is PdxBlock inner && HasParameter(inner))

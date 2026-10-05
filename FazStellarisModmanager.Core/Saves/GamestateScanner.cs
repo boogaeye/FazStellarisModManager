@@ -34,8 +34,13 @@ public static class GamestateScanner
     }
 
     /// <summary>Like <see cref="ScanAll"/>, plus the keys of the top-level flags block (global flags).</summary>
-    public static (List<SavePlayer> Players, List<SaveCountry> Countries, GalacticCommunity? Community, IReadOnlyDictionary<int, IReadOnlyList<string>> Megastructures, IReadOnlyList<string> GlobalFlags) ScanWithGlobals(byte[] data)
+    public static (List<SavePlayer> Players, List<SaveCountry> Countries, GalacticCommunity? Community, IReadOnlyDictionary<int, IReadOnlyList<string>> Megastructures, IReadOnlyList<string> GlobalFlags) ScanWithGlobals(byte[] data) =>
+        ScanWithGlobals(data, out _);
+
+    /// <summary>Like <see cref="ScanWithGlobals(byte[])"/>, plus the galaxy setup (mid and end game start years).</summary>
+    public static (List<SavePlayer> Players, List<SaveCountry> Countries, GalacticCommunity? Community, IReadOnlyDictionary<int, IReadOnlyList<string>> Megastructures, IReadOnlyList<string> GlobalFlags) ScanWithGlobals(byte[] data, out GalaxySettings? galaxy)
     {
+        galaxy = null;
         var globalFlags = new List<string>();
         var players = new List<SavePlayer>();
         var countries = new List<SaveCountry>();
@@ -54,12 +59,19 @@ public static class GamestateScanner
             else if (r.Is(key, "megastructures")) ScanMegastructures(data, b, megas);
             else if (r.Is(key, "galactic_community")) community = Parse(data, b);
             else if (r.Is(key, "flags")) ReadKeys(data, b, globalFlags);
+            else if (r.Is(key, "galaxy")) galaxy = ReadGalaxy(Parse(data, b));
             else if (r.Is(key, "leaders") || r.Is(key, "council_positions") || r.Is(key, "pop_factions") || r.Is(key, "species_db"))
                 sections[r.Text(key)] = b;
         }
         AttachRosters(data, countries, refs, players.Select(p => p.CountryId).ToHashSet(), sections);
         return (players, countries, BuildCommunity(community, resolutionTypes),
             megas.ToDictionary(e => e.Key, e => (IReadOnlyList<string>)e.Value), globalFlags);
+    }
+
+    static GalaxySettings ReadGalaxy(PdxBlock b)
+    {
+        int? Int(string k) => int.TryParse(b.GetString(k), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
+        return new GalaxySettings(Int("mid_game_start"), Int("end_game_start"), Int("victory_year"));
     }
 
     // The keys of a "name = value" block, read with the byte reader (the global flags block can be large).

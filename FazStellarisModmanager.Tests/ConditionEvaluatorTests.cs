@@ -219,4 +219,28 @@ public class ConditionEvaluatorTests
         Assert.Null(bare.Origin);
         Assert.False(bare.IsPlayer);
     }
+
+    [Fact]
+    public void Year_triggers_compare_against_the_save_date_and_galaxy_setup()
+    {
+        // 2387.09.17 with mid game at 100 and end game at 200 years: 187 passed, 87 into mid game, 13 before end game.
+        var f = Facts() with { YearsPassed = EmpireFacts.YearsSinceStart("2387.09.17"), MidGameStart = 100, EndGameStart = 200 };
+        Assert.Equal(187, f.YearsPassed);
+        Assert.Equal(Truth.True, R("years_passed >= 187", f));
+        Assert.Equal(Truth.False, R("years_passed >= 200", f));
+        Assert.Equal(Truth.True, R("mid_game_years_passed > 80", f));
+        Assert.Equal(Truth.False, R("mid_game_years_passed >= 100", f));
+        Assert.Equal(Truth.False, R("end_game_years_passed >= 50", f));
+        Assert.Equal(Truth.True, R("end_game_years_passed < 0", f));
+        Assert.Equal(Truth.False, R("OR = { end_game_years_passed >= 50 mid_game_years_passed >= 100 years_passed >= 200 }", f));
+    }
+
+    [Fact]
+    public void Year_triggers_are_unknown_without_data()
+    {
+        Assert.Equal(Truth.Unknown, R("years_passed > 5"));
+        Assert.Equal(Truth.Unknown, R("mid_game_years_passed > 5", Facts() with { YearsPassed = 10 }));
+        Assert.Equal(Truth.Unknown, R("years_passed > @x", Facts() with { YearsPassed = 10 }));
+        Assert.Null(EmpireFacts.YearsSinceStart(null));
+    }
 }
