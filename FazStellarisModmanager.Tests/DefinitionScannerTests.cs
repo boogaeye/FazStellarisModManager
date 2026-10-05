@@ -18,7 +18,7 @@ public class DefinitionScannerTests
             "}",
             "building_b = { cost = { minerals >= 3 } }",
             "simple = yes");
-        Assert.Equal(["@cost", "building_a", "building_b", "simple"], DefinitionScanner.Names(text, DefinitionKind.TopLevel));
+        Assert.Equal(["building_a", "building_b", "simple"], DefinitionScanner.Names(text, DefinitionKind.TopLevel));
     }
 
     [Fact]
@@ -44,6 +44,33 @@ public class DefinitionScannerTests
     }
 
     [Fact]
+    public void Key_field_names_come_from_inside_wrapper_blocks()
+    {
+        var text = L(
+            "@local = 1",
+            "weapon_component_template = { key = \"WEAPON_A\" size = small  nested = { key = no } }",
+            "utility_component_template = { size = small key = UTIL_B }");
+        Assert.Equal(["WEAPON_A", "UTIL_B"], DefinitionScanner.Names(text, DefinitionKind.KeyField));
+    }
+
+    [Fact]
+    public void Name_field_names_come_from_inside_wrapper_blocks()
+    {
+        var text = L(
+            "defined_text = { name = plain  text = { trigger = { key = x } } }",
+            "defined_text = { name = \"quoted one\" }",
+            "ship_design = { key = nope }");
+        Assert.Equal(["plain", "quoted one"], DefinitionScanner.Names(text, DefinitionKind.NameField));
+    }
+
+    [Fact]
+    public void Variables_are_top_level_at_names_only()
+    {
+        var text = L("@a = 1", "block = { @b = 2 }", "notvar = 3", "@c = 4");
+        Assert.Equal(["@a", "@c"], DefinitionScanner.Names(text, DefinitionKind.Variables));
+    }
+
+    [Fact]
     public void Unbalanced_braces_do_not_throw()
     {
         Assert.Equal(["a"], DefinitionScanner.Names("a = { } } }", DefinitionKind.TopLevel));
@@ -55,6 +82,14 @@ public class DefinitionScannerTests
     [InlineData("Common/Defines/zz_defines.txt", "common/defines", DefinitionKind.Defines)]
     [InlineData("events/gme_events.txt", "events", DefinitionKind.Events)]
     [InlineData("common/buildings/sub/x.txt", "common/buildings", DefinitionKind.TopLevel)]
+    [InlineData("common/section_templates/a.txt", "common/section_templates", DefinitionKind.KeyField)]
+    [InlineData("common/component_templates/a.txt", "common/component_templates", DefinitionKind.KeyField)]
+    [InlineData("common/component_sets/a.txt", "common/component_sets", DefinitionKind.KeyField)]
+    [InlineData("common/special_projects/a.txt", "common/special_projects", DefinitionKind.KeyField)]
+    [InlineData("common/global_ship_designs/a.txt", "common/global_ship_designs", DefinitionKind.NameField)]
+    [InlineData("common/scripted_loc/a.txt", "common/scripted_loc", DefinitionKind.NameField)]
+    [InlineData("common/ship_behaviors/a.txt", "common/ship_behaviors", DefinitionKind.NameField)]
+    [InlineData("common/scripted_variables/a.txt", "common/scripted_variables", DefinitionKind.Variables)]
     public void Classify_scanned_files(string path, string folder, DefinitionKind kind)
     {
         Assert.Equal((folder, kind), DefinitionRules.Classify(path));
@@ -62,6 +97,8 @@ public class DefinitionScannerTests
 
     [Theory]
     [InlineData("common/on_actions/x.txt")]
+    [InlineData("common/start_screen_messages/x.txt")]
+    [InlineData("common/terraform/x.txt")]
     [InlineData("common/inline_scripts/a/b.txt")]
     [InlineData("common/buildings/readme.md")]
     [InlineData("common/x.txt")]

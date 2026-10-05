@@ -24,11 +24,26 @@ public static class DefinitionRules
 
     static readonly HashSet<string> Duplicated = new(StringComparer.OrdinalIgnoreCase)
     {
-        "name_lists", "observation_station_missions", "strategic_resources", "terraform", "traits",
+        "name_lists", "observation_station_missions", "strategic_resources", "traits",
     };
 
-    // on_actions merge; inline_scripts are pasted in by path rather than defined by name.
-    static readonly HashSet<string> Skipped = new(StringComparer.OrdinalIgnoreCase) { "on_actions", "inline_scripts" };
+    // on_actions merge; inline_scripts are pasted in by path rather than defined by name; the blocks in
+    // start_screen_messages and terraform (part = { }, terraform_link = { }) have no names.
+    static readonly HashSet<string> Skipped = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "on_actions", "inline_scripts", "start_screen_messages", "terraform",
+    };
+
+    // Folders whose blocks use a wrapper keyword and carry the real name in a "key" or "name" field.
+    static readonly HashSet<string> KeyFieldFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "section_templates", "component_templates", "component_sets", "special_projects",
+    };
+
+    static readonly HashSet<string> NameFieldFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "global_ship_designs", "scripted_loc", "ship_behaviors",
+    };
 
     /// <summary>The folder ("common/buildings", "events") and kind of a scanned script file, or null when the file is not scanned.</summary>
     public static (string Folder, DefinitionKind Kind)? Classify(string relativePath)
@@ -39,7 +54,12 @@ public static class DefinitionRules
         if (parts.Length >= 3 && parts[0].Equals("common", StringComparison.OrdinalIgnoreCase) && !Skipped.Contains(parts[1]))
         {
             var type = parts[1].ToLowerInvariant();
-            return ("common/" + type, type == "defines" ? DefinitionKind.Defines : DefinitionKind.TopLevel);
+            var kind = type == "defines" ? DefinitionKind.Defines
+                : type == "scripted_variables" ? DefinitionKind.Variables
+                : KeyFieldFolders.Contains(type) ? DefinitionKind.KeyField
+                : NameFieldFolders.Contains(type) ? DefinitionKind.NameField
+                : DefinitionKind.TopLevel;
+            return ("common/" + type, kind);
         }
         return null;
     }

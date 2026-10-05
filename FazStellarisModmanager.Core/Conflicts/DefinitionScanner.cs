@@ -8,6 +8,12 @@ public enum DefinitionKind
     Defines,
     /// <summary>The id of each top-level "…event = { id = x }" block (events).</summary>
     Events,
+    /// <summary>The "key" value inside each top-level block, whatever the block keyword is (section_templates, component_templates, ...).</summary>
+    KeyField,
+    /// <summary>The "name" value inside each top-level block, whatever the block keyword is (global_ship_designs, scripted_loc, ...).</summary>
+    NameField,
+    /// <summary>Top-level "@name = value" (common/scripted_variables). Elsewhere @variables are file-local.</summary>
+    Variables,
 }
 
 /// <summary>Finds the names a Paradox script file defines without building a parse tree. Tolerates broken files.</summary>
@@ -20,31 +26,33 @@ public static class DefinitionScanner
         string? prevWord = null;   // the previous token, when it was a word
         string? key0 = null;       // the key just assigned at depth 0
         string? block0 = null;     // the key of the depth-0 block we are inside
-        var expectId = false;
+        var expectName = false;
+        var field = FieldFor(kind);
 
         foreach (var (token, isWord) in Tokens(text))
         {
             if (isWord)
             {
-                if (expectId) names.Add(token);
-                expectId = false;
+                if (expectName) names.Add(token);
+                expectName = false;
                 prevWord = token;
                 continue;
             }
 
-            expectId = false;
+            expectName = false;
             if (token == "=" && prevWord is not null)
             {
                 if (depth == 0)
                 {
                     key0 = prevWord;
-                    if (kind == DefinitionKind.TopLevel) names.Add(prevWord);
+                    if (kind == DefinitionKind.TopLevel && !prevWord.StartsWith('@')) names.Add(prevWord);
+                    else if (kind == DefinitionKind.Variables && prevWord.StartsWith('@')) names.Add(prevWord);
                 }
                 else if (depth == 1 && block0 is not null)
                 {
                     if (kind == DefinitionKind.Defines) names.Add(block0 + "." + prevWord);
-                    else if (kind == DefinitionKind.Events && prevWord.Equals("id", StringComparison.OrdinalIgnoreCase)
-                             && block0.EndsWith("event", StringComparison.OrdinalIgnoreCase)) expectId = true;
+                    else if (field is not null && prevWord.Equals(field, StringComparison.OrdinalIgnoreCase)
+                             && (kind != DefinitionKind.Events || block0.EndsWith("event", StringComparison.OrdinalIgnoreCase))) expectName = true;
                 }
             }
             else if (token == "{")
@@ -61,6 +69,15 @@ public static class DefinitionScanner
         }
         return names;
     }
+
+    // The field inside a top-level block that holds the definition name, for the kinds that name definitions that way.
+    static string? FieldFor(DefinitionKind kind) => kind switch
+    {
+        DefinitionKind.Events => "id",
+        DefinitionKind.KeyField => "key",
+        DefinitionKind.NameField => "name",
+        _ => null,
+    };
 
     // Words (bare or quoted, quotes removed) and the symbols { } = and comparison operators. "#" starts a comment.
     static IEnumerable<(string Token, bool IsWord)> Tokens(string text)
