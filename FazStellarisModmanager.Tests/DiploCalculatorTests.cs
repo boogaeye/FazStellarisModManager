@@ -87,17 +87,56 @@ public class DiploCalculatorTests
         Assert.Equal(0, b.InGame);
     }
 
+    static (string, bool)? Cats(string r) => r switch
+    {
+        "resolution_md_a" or "resolution_md_b" or "resolution_md_repeal" => ("md", false),
+        "resolution_ind_x" => ("ind", false),
+        "resolution_multi_a" or "resolution_multi_b" => ("multi", true),
+        _ => null,
+    };
+
+    static GalacticCommunity Passed(params string[] p) => new([0], [], p);
+
+    static DiploBreakdown Run(FakeCatalog catalog, GalacticCommunity gc, Func<string, bool>? targeted = null)
+    {
+        var me = Me(CountryHoldings.Empty);
+        return DiploCalculator.Compute(me, Snap(me, gc), Lookup(catalog), DiploDefines.Vanilla, (s, k) => k, Cats, targeted);
+    }
+
+    static FakeCatalog ResCatalog() => new FakeCatalog()
+        .Add(DiploSource.Resolution, "resolution_md_a", new DiploMods(0, 0.2, 0, 0, 0))
+        .Add(DiploSource.Resolution, "resolution_md_b", new DiploMods(0, 1.0, 0, 0, 0))
+        .Add(DiploSource.Resolution, "resolution_ind_x", new DiploMods(0, 0, 0.4, 0, 0))
+        .Add(DiploSource.Resolution, "resolution_multi_a", new DiploMods(0, 0.1, 0, 0, 0))
+        .Add(DiploSource.Resolution, "resolution_multi_b", new DiploMods(0, 0.3, 0, 0, 0))
+        .Add(DiploSource.Resolution, "resolution_targeted", new DiploMods(0, 5.0, 0, 0, 0));
+
     [Fact]
     public void Only_the_latest_passed_resolution_per_category_applies()
     {
-        var catalog = new FakeCatalog()
-            .Add(DiploSource.Resolution, "resolution_md_a", new DiploMods(0, 0.2, 0, 0, 0))
-            .Add(DiploSource.Resolution, "resolution_md_b", new DiploMods(0, 1.0, 0, 0, 0))
-            .Add(DiploSource.Resolution, "resolution_ind_x", new DiploMods(0, 0, 0.4, 0, 0));
-        var me = Me(CountryHoldings.Empty);
-        var gc = new GalacticCommunity([0], [], ["resolution_md_a", "resolution_ind_x", "resolution_md_b"]);
-        var b = DiploCalculator.Compute(me, Snap(me, gc), Lookup(catalog), DiploDefines.Vanilla, (s, k) => k);
+        var b = Run(ResCatalog(), Passed("resolution_md_a", "resolution_ind_x", "resolution_md_b"));
         Assert.Equal([new DiploBonus("resolution_md_b", 1.0)], b.Fleet.Bonuses);
         Assert.Equal([new DiploBonus("resolution_ind_x", 0.4)], b.Economy.Bonuses);
+    }
+
+    [Fact]
+    public void Targeted_resolutions_are_skipped_and_do_not_supersede()
+    {
+        var b = Run(ResCatalog(), Passed("resolution_md_b", "resolution_targeted"), r => r == "resolution_targeted");
+        Assert.Equal([new DiploBonus("resolution_md_b", 1.0)], b.Fleet.Bonuses);
+    }
+
+    [Fact]
+    public void Multiple_active_category_keeps_all_passed()
+    {
+        var b = Run(ResCatalog(), Passed("resolution_multi_a", "resolution_multi_b"));
+        Assert.Equal(2, b.Fleet.Bonuses.Count);
+    }
+
+    [Fact]
+    public void A_repeal_passed_last_removes_the_earlier_bonus()
+    {
+        var b = Run(ResCatalog(), Passed("resolution_md_b", "resolution_md_repeal"));
+        Assert.Empty(b.Fleet.Bonuses);
     }
 }

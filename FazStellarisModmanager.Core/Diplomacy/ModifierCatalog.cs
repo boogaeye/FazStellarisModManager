@@ -42,7 +42,17 @@ public sealed class ModifierCatalog
 
     readonly Dictionary<DiploSource, Dictionary<string, DiploMods>> _maps = [];
 
+    readonly Dictionary<string, (string Category, bool MultipleActive)> _resolutionCategories = new(StringComparer.OrdinalIgnoreCase);
+    readonly HashSet<string> _targeted = new(StringComparer.OrdinalIgnoreCase);
+
     public static ModifierCatalog Empty { get; } = new();
+
+    /// <summary>The category of a resolution type, and whether several resolutions of it can be active at once.</summary>
+    public (string Category, bool MultipleActive)? ResolutionCategory(string type) =>
+        _resolutionCategories.TryGetValue(type, out var c) ? c : null;
+
+    /// <summary>True for a resolution with target = yes: it applies to a target country, not to every member.</summary>
+    public bool IsTargetedResolution(string type) => _targeted.Contains(type);
 
     /// <summary>The modifiers of a definition, or null when it has none (or doesn't exist).</summary>
     public DiploMods? Get(DiploSource source, string key) =>
@@ -58,6 +68,18 @@ public sealed class ModifierCatalog
                 foreach (var e in vars.Entries.Where(e => e.Key.StartsWith('@') && e.Value is string))
                     globals[e.Key] = (string)e.Value;
 
+        foreach (var (source, rel) in Ordered(sources, "common/resolution_categories"))
+        {
+            if (!TryParse(sources, source, rel, out var cats, out _)) continue;
+            foreach (var e in cats.Entries)
+            {
+                if (e.Value is not PdxBlock cat) continue;
+                var multiple = cat.GetString("multiple_active_resolutions") == "yes";
+                foreach (var type in cat.GetBlock("resolution_types")?.StringItems ?? [])
+                    catalog._resolutionCategories[type] = (e.Key, multiple);
+            }
+        }
+
         foreach (var spec in Specs)
         {
             // Static modifiers are loaded first; they are only referenced from other categories (one level, no recursion).
@@ -69,6 +91,11 @@ public sealed class ModifierCatalog
                 foreach (var e in file.Entries)
                 {
                     if (e.Value is not PdxBlock block || e.Key.StartsWith('@')) continue;
+                    if (spec.Source == DiploSource.Resolution)
+                    {
+                        if (block.GetString("target") == "yes") catalog._targeted.Add(e.Key);
+                        else catalog._targeted.Remove(e.Key);
+                    }
                     if (spec.Source == DiploSource.Policy)
                     {
                         foreach (var option in block.Entries.Where(o => o.Key == "option").Select(o => o.Value).OfType<PdxBlock>())

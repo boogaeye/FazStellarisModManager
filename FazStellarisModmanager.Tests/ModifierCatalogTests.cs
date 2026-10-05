@@ -98,4 +98,25 @@ public class ModifierCatalogTests
         using var game = ContentSource.FromPath("game", Path.Combine(t.Path, "game"), isBaseGame: true);
         Assert.Equal(0.2, ModifierCatalog.Load([game]).Get(DiploSource.StaticModifier, "council_member")!.Council, 6);
     }
+
+    [Fact]
+    public void Reads_resolution_categories_and_targeted_resolutions()
+    {
+        using var t = new TempDir();
+        t.Write("game/common/resolution_categories/00.txt", """
+            resolution_category_commerce = { resolution_types = { "res_c1" "res_c_repeal" } }
+            resolution_category_special = { multiple_active_resolutions = yes resolution_types = { "res_s1" } }
+            """);
+        t.Write("game/common/resolutions/00.txt", """
+            res_c1 = { modifier = { diplo_weight_mult = 0.1 } }
+            res_t = { target = yes modifier = { diplo_weight_mult = 0.1 } }
+            """);
+        using var game = ContentSource.FromPath("game", Path.Combine(t.Path, "game"), isBaseGame: true);
+        var c = ModifierCatalog.Load([game]);
+        Assert.Equal(("resolution_category_commerce", false), c.ResolutionCategory("res_c_repeal"));
+        Assert.Equal(("resolution_category_special", true), c.ResolutionCategory("res_s1"));
+        Assert.Null(c.ResolutionCategory("res_other"));
+        Assert.True(c.IsTargetedResolution("res_t"));
+        Assert.False(c.IsTargetedResolution("res_c1"));
+    }
 }

@@ -26,26 +26,25 @@ public sealed record DiploBreakdown(DiploPart Fleet, DiploPart Pops, DiploPart E
 
 public static class DiploCalculator
 {
-    // A later resolution of the same chain (category = second segment of resolution_<category>_<name>) replaces the earlier ones.
-    // Keys without that shape count individually. Order of the result follows the surviving resolutions' passing order.
-    static IEnumerable<string> LatestPerCategory(IReadOnlyList<string> passed)
+    // Targeted resolutions are skipped. In a single-active category only the last passed resolution (possibly a repeal) is active.
+    static IEnumerable<string> ActiveResolutions(IReadOnlyList<string> passed,
+        Func<string, (string Category, bool MultipleActive)?>? categoryOf, Func<string, bool>? isTargeted)
     {
-        string? Category(string key)
-        {
-            var parts = key.Split('_');
-            return parts.Length >= 3 && parts[0] == "resolution" ? parts[1] : null;
-        }
+        var kept = passed.Where(r => isTargeted?.Invoke(r) != true).ToList();
+        if (categoryOf is null) return kept;
         var last = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (var i = 0; i < passed.Count; i++)
-            if (Category(passed[i]) is { } cat) last[cat] = i;
-        for (var i = 0; i < passed.Count; i++)
-            if (Category(passed[i]) is not { } cat || last[cat] == i) yield return passed[i];
+        for (var i = 0; i < kept.Count; i++)
+            if (categoryOf(kept[i]) is { MultipleActive: false } c) last[c.Category] = i;
+        return kept.Where((r, i) => categoryOf(r) is not { MultipleActive: false } c || last[c.Category] == i);
     }
 
     /// <param name="lookup">The catalog's Get (injectable for tests).</param>
+    /// <param name="resolutionCategory">Category of a resolution type; without it every passed resolution counts.</param>
+    /// <param name="isTargeted">True for target = yes resolutions, which are skipped.</param>
     /// <param name="name">Display name for a source key (localisation, or the key).</param>
     public static DiploBreakdown Compute(SaveCountry c, GameSnapshot snapshot, Func<DiploSource, string, DiploMods?> lookup,
-        DiploDefines defines, Func<DiploSource, string, string> name)
+        DiploDefines defines, Func<DiploSource, string, string> name,
+        Func<string, (string Category, bool MultipleActive)?>? resolutionCategory = null, Func<string, bool>? isTargeted = null)
     {
         var lines = new List<(string Name, DiploMods Mods)>();
         void Add(DiploSource s, string? key, double multiplier = 1)
@@ -73,7 +72,7 @@ public static class DiploCalculator
 
         if (snapshot.Community is { } gc && gc.Members.Contains(c.Id))
         {
-            foreach (var r in LatestPerCategory(gc.PassedResolutions)) Add(DiploSource.Resolution, r);
+            foreach (var r in ActiveResolutions(gc.PassedResolutions, resolutionCategory, isTargeted)) Add(DiploSource.Resolution, r);
             if (gc.Council.Contains(c.Id)) Add(DiploSource.StaticModifier, "council_member");
         }
 
