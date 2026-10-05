@@ -18,8 +18,7 @@
 {
     var t = Database.Techs[n.Key];
     var key = n.Key;
-    <g class="@NodeClass(t)" @onclick="args => OnNodeClick.InvokeAsync((key, args))"
-       @oncontextmenu="() => OnNodeContext.InvokeAsync(key)">
+    <g class="@NodeClass(t)" @onclick="args => OnNodeClick.InvokeAsync((key, args))">
         <title>@Tooltip(t)</title>
         @if (Detailed)
         {
@@ -50,7 +49,6 @@
     [Parameter] public IReadOnlySet<string> Researched { get; set; } = new HashSet<string>();
     [Parameter] public bool Detailed { get; set; }
     [Parameter] public EventCallback<(string Key, MouseEventArgs Args)> OnNodeClick { get; set; }
-    [Parameter] public EventCallback<string> OnNodeContext { get; set; }
 
     const double BandPad = 10;
 

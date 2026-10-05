@@ -10,7 +10,7 @@
         <g transform="translate(@F(_tx) @F(_ty)) scale(@_scale.ToString("0.#####", CultureInfo.InvariantCulture))">
             <OverviewLayer Overview="Overview" Database="Database" IconUri="IconUri" IconVersion="IconVersion" SelectedKey="SelectedKey"
                            Route="Route" Targets="Targets" Researched="Researched" Detailed="_scale >= DetailScale"
-                           OnNodeClick="NodeClick" OnNodeContext="key => OnToggleResearched.InvokeAsync(key)" />
+                           OnNodeClick="NodeClick" />
         </g>
     </svg>
     <div class="overview-controls" @onmousedown:stopPropagation>
@@ -30,7 +30,6 @@
     [Parameter] public IReadOnlySet<string> Targets { get; set; } = new HashSet<string>();
     [Parameter] public IReadOnlySet<string> Researched { get; set; } = new HashSet<string>();
     [Parameter] public EventCallback<string> OnSelect { get; set; }
-    [Parameter] public EventCallback<string> OnToggleResearched { get; set; }
     [Parameter] public EventCallback<string> OnToggleTarget { get; set; }
 
     const double MinScale = 0.08, MaxScale = 2, WheelBase = 1.0015, WheelMaxStep = 1.5, ButtonStep = 1.4, DetailScale = 0.35, DragThreshold = 4, FitMargin = 0.95;

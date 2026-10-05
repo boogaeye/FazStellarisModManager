@@ -44,7 +44,6 @@
 
     <div class="route-actions">
         <button @onclick="() => OnToggleTarget.InvokeAsync(Tech.Key)">@(Targets.Contains(Tech.Key) ? "★ Remove from route" : "★ Add to route")</button>
-        <button @onclick="() => OnToggleResearched.InvokeAsync(Tech.Key)">@(Researched.Contains(Tech.Key) ? "✓ Unmark researched" : "✓ Mark researched")</button>
     </div>
 
     @if (Targets.Count > 0)
@@ -247,7 +246,6 @@
     [Parameter] public IReadOnlySet<string> Researched { get; set; } = new HashSet<string>();
     [Parameter] public ResearchRoute Route { get; set; } = ResearchRoute.Empty;
     [Parameter] public EventCallback<string> OnToggleTarget { get; set; }
-    [Parameter] public EventCallback<string> OnToggleResearched { get; set; }
 
     // A longer route starts collapsed so the rest of the sidebar stays in view.
     const int MaxOpenRoute = 30;
