@@ -88,7 +88,8 @@ public static class ModLibrary
                     d.SupportedVersion,
                     ResolveContent(userDir, d),
                     ModKeys.WorkshopId(key) is not null ? ModSource.Workshop : ModSource.Local,
-                    d.Tags));
+                    d.Tags,
+                    d.Picture));
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
             {

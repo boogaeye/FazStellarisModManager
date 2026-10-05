@@ -36,7 +36,6 @@ input, select { background: var(--bg); color: var(--text); border: 1px solid var
 .status { color: var(--muted); }
 .status.error { color: var(--danger); }
 
-.mods-page { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; height: calc(100% - 2.5rem); }
 .panel { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; min-height: 0; }
 .panel header { display: flex; gap: .5rem; align-items: center; padding: .6rem; border-bottom: 1px solid var(--border); }
 .panel header .search, .panel header .list-name { flex: 1; }
@@ -44,11 +43,9 @@ input, select { background: var(--bg); color: var(--text); border: 1px solid var
 .mod-list { list-style: none; margin: 0; padding: .3rem; overflow: auto; flex: 1; }
 .mod-list li { display: flex; gap: .5rem; align-items: center; padding: .3rem .4rem; border-radius: 5px; }
 .mod-list li:hover { background: var(--panel-2); }
-.mod-list li.in-list .name { color: var(--muted); }
 .mod-list li.missing .name { color: var(--danger); }
 .mod-list .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mod-list .order { width: 2.2rem; text-align: right; color: var(--muted); }
-.mod-list.ordered li { cursor: grab; }
 .badge { font-size: .7rem; padding: .05rem .4rem; border-radius: 4px; background: var(--panel-2); color: var(--muted); }
 .badge.workshop { color: var(--accent); }
 .badge.local { color: var(--warn); }
@@ -208,3 +205,33 @@ button.gsrc { width: 100%; text-align: left; background: none; border: 0; color:
 .ws-list { list-style: none; padding: 0; margin: .3rem 0; display: flex; flex-direction: column; gap: .35rem; max-height: 45vh; overflow: auto; }
 .ws-list li { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .ws-list progress { flex: 1; min-width: 120px; }
+
+/* Mod list revamp */
+.mods-page { display: flex; flex-direction: column; gap: .5rem; height: calc(100% - 2.5rem); }
+.mods-toolbar { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+.mods-toolbar .spacer { flex: 1; }
+.mods-toolbar .list-filter { flex: 1; min-width: 12rem; }
+.modlist { list-style: none; margin: 0; padding: .3rem; overflow: auto; flex: 1; min-height: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+.mrow { display: flex; gap: .55rem; align-items: center; padding: .3rem .5rem; margin-bottom: 3px; border: 1px solid transparent; border-radius: 6px; background: var(--panel-2); cursor: grab; user-select: none; contain: layout paint; }
+.mrow:hover { border-color: var(--border); }
+.mrow.dragging { opacity: .5; border: 1px dashed var(--accent); }
+.mrow.drop-above { box-shadow: inset 0 3px 0 var(--accent); }
+.mrow.drop-below { box-shadow: inset 0 -3px 0 var(--accent); }
+.mrow.missing .mname { color: var(--danger); }
+.mrow .grip { color: var(--muted); letter-spacing: -2px; }
+body.reordering, body.reordering * { cursor: grabbing !important; user-select: none !important; }
+.mrow input.pos { width: 3rem; text-align: center; padding: .2rem .3rem; cursor: text; user-select: text; }
+.mrow .mname { flex: 1; min-width: 0; }
+.mrow .mname div:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mrow .mname .sub { font-size: .72rem; color: var(--muted); }
+.micon { border-radius: 5px; object-fit: cover; flex: none; }
+.micon.ph { display: inline-flex; align-items: center; justify-content: center; background: var(--border); color: var(--muted); font-weight: 700; }
+a.button.small { padding: .1rem .45rem; font-size: .85rem; }
+.modal.addmods-modal { width: min(720px, 94vw); max-height: 86vh; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.addmods-filter { display: flex; gap: .4rem; }
+.addmods-filter .search { flex: 1; }
+.addlist { overflow: auto; flex: 1; min-height: 8rem; border: 1px solid var(--border); border-radius: 6px; padding: .25rem; }
+.addlist .pick { display: flex; gap: .55rem; align-items: center; padding: .25rem .4rem; border-radius: 5px; cursor: pointer; }
+.addlist .pick:hover { background: var(--panel-2); }
+.addlist .pname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

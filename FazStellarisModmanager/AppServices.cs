@@ -4,10 +4,12 @@ using System.IO;
 using System.Net.Http;
 using System.Threading;
 using FazStellarisModmanager.Core;
+using FazStellarisModmanager.Core.Library;
 using FazStellarisModmanager.Core.Session;
 using FazStellarisModmanager.Core.Technology;
 using FazStellarisModmanager.Core.Updates;
 using FazStellarisModmanager.Core.Workshop;
+using FazStellarisModmanager.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FazStellarisModmanager;
@@ -23,6 +25,7 @@ public static class AppServices
         var dataDir = ArgValue(args, "--data-dir");
         var paths = dataDir is null ? AppPaths.Default() : new AppPaths(Path.GetFullPath(dataDir));
         services.AddSingleton(paths);
+        services.AddSingleton(new ModIconCache(paths.ModIcons, ImageShrinker.ToSmallPng));
         // Steam client calls run in this exe started as a helper process: Steam treats whichever process connected as the
         // running game until it exits, so connecting from the app itself would block launching Stellaris until it closes.
         services.AddSingleton<IWorkshopService>(_ => new HelperProcessWorkshopService(

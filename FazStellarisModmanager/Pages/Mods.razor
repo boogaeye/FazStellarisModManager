@@ -1,99 +1,98 @@
 @page "/"
+@implements IAsyncDisposable
+@inject IJSRuntime JS
 @inject ModManagerService Manager
+@inject ModIconCache Icons
 
 <div class="mods-page">
-    <section class="panel">
-        <header>
-            <h2>Installed (@Manager.Library.Count)</h2>
-            <input class="search" placeholder="Search…" @bind="filter" @bind:event="oninput" />
-            <button @onclick="Refresh" disabled="@busy">Rescan</button>
-        </header>
-        <ul class="mod-list">
-            @foreach (var m in FilteredLibrary)
+    <div class="mods-toolbar">
+        <input class="list-name" @bind="listName" placeholder="List name" />
+        <select @bind="selectedList" @bind:after="LoadSelected" disabled="@busy">
+            <option value="">Load list…</option>
+            @foreach (var l in savedLists)
             {
-                var inList = current.Any(e => SameKey(e.Key, m.Key));
-                <li class="@(inList ? "in-list" : "")">
-                    <span class="badge @m.Source.ToString().ToLowerInvariant()">@(m.Source == ModSource.Workshop ? "Workshop" : "Local")</span>
-                    @if (m.Source == ModSource.Local && ModMatcher.WorkshopIdOf(m.Key, m.RemoteId) is { } workshopId)
-                    {
-                        <span class="badge local" title="This local mod is a copy of a Steam Workshop item">local copy of Workshop @workshopId</span>
-                    }
-                    <span class="name" title="@m.DescriptorRel">@m.Name</span>
-                    @if (!inList)
-                    {
-                        <button class="small" @onclick="() => Add(m)">Add →</button>
-                    }
-                </li>
+                <option value="@l.Name">@l.Name</option>
             }
-        </ul>
-    </section>
+        </select>
+        <button @onclick="Save" disabled="@busy">Save list</button>
+        <button @onclick="ImportCurrent" disabled="@busy">Import current</button>
+        <button class="danger" @onclick="DeleteList" disabled="@(busy || !savedLists.Any(l => string.Equals(l.Name, listName.Trim(), StringComparison.OrdinalIgnoreCase)))">Delete list</button>
+        <button @onclick="Refresh" disabled="@busy" title="Scan the mod folder again">Rescan mods</button>
+        <span class="spacer"></span>
+        <button class="primary" @onclick="Apply" disabled="@(busy || !loaded)">Apply</button>
+        <button class="primary" @onclick="ApplyAndLaunch" disabled="@(busy || !loaded)">Apply &amp; Launch</button>
+    </div>
+    <div class="mods-toolbar">
+        <button class="primary" @onclick="() => adding = true" disabled="@(busy || !loaded)">+ Add mods</button>
+        <input class="list-filter" placeholder="Filter this list…" @bind="filter" @bind:event="oninput" />
+        <span class="muted">@current.Count @(current.Count == 1 ? "mod" : "mods")</span>
+    </div>
 
-    <section class="panel">
-        <header>
-            <h2>List</h2>
-            <input class="list-name" @bind="listName" placeholder="List name" />
-            <select @bind="selectedList" @bind:after="LoadSelected" disabled="@busy">
-                <option value="">Load list…</option>
-                @foreach (var l in savedLists)
+    @if (status is not null)
+    {
+        <p class="status @(error ? "error" : "")">@status</p>
+    }
+    @if (Manager.LibraryErrors.Count > 0)
+    {
+        <details class="library-errors">
+            <summary>@Manager.LibraryErrors.Count descriptors could not be read</summary>
+            <ul>
+                @foreach (var err in Manager.LibraryErrors)
                 {
-                    <option value="@l.Name">@l.Name</option>
+                    <li>@err</li>
                 }
-            </select>
-        </header>
-        <div class="toolbar">
-            <button @onclick="ImportCurrent" disabled="@busy">Import current</button>
-            <button @onclick="Save" disabled="@busy">Save list</button>
-            <button class="danger" @onclick="DeleteList" disabled="@(busy || !savedLists.Any(l => string.Equals(l.Name, listName.Trim(), StringComparison.OrdinalIgnoreCase)))">Delete list</button>
-            <button class="primary" @onclick="Apply" disabled="@(busy || !loaded)">Apply</button>
-            <button class="primary" @onclick="ApplyAndLaunch" disabled="@(busy || !loaded)">Apply &amp; Launch</button>
-        </div>
-        <ol class="mod-list ordered">
-            @for (int i = 0; i < current.Count; i++)
-            {
-                var index = i;
-                var e = current[i];
-                var installed = Manager.IsInstalled(e);
-                <li draggable="true" class="@(installed ? "" : "missing")"
-                    @ondragstart="() => dragIndex = index" @ondragend="() => dragIndex = null"
-                    @ondragover:preventDefault @ondrop:preventDefault @ondrop="() => Drop(index)">
-                    <span class="order">@(index + 1)</span>
-                    <span class="name" title="@e.DescriptorRel">@e.Name</span>
-                    @if (!installed)
-                    {
-                        <span class="badge missing">not installed</span>
-                    }
-                    <button class="small" @onclick="() => Move(index, -1)" disabled="@(index == 0)">↑</button>
-                    <button class="small" @onclick="() => Move(index, 1)" disabled="@(index == current.Count - 1)">↓</button>
-                    <button class="small danger" @onclick="() => Remove(e)">✕</button>
-                </li>
-            }
-        </ol>
-    </section>
+            </ul>
+        </details>
+    }
+
+    <ol class="modlist" @ref="listEl">
+        @for (int i = 0; i < current.Count; i++)
+        {
+            var index = i;
+            var e = current[i];
+            if (filter.Length > 0 && !e.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
+            var mod = byKey.GetValueOrDefault(e.Key);
+            var installed = Manager.IsInstalled(e);
+            var isWorkshop = mod?.Source == ModSource.Workshop || (mod is null && ModKeys.WorkshopId(e.Key) is not null);
+            var workshopId = ModMatcher.WorkshopIdOf(e.Key, mod?.RemoteId ?? e.RemoteId);
+            <li class="mrow @(installed ? "" : "missing")" data-index="@index">
+                <span class="grip" title="Drag to reorder">⋮⋮</span>
+                <input @key="posVersion" class="pos" type="text" inputmode="numeric" value="@(index + 1)"
+                       title="Type a position and press Enter" @onchange="ev => SetPosition(e, ev.Value)" />
+                <ModIcon Uri="@(mod is null ? null : Icons.TryPeek(mod))" Name="@e.Name" />
+                <div class="mname">
+                    <div title="@e.Name">@e.Name</div>
+                    <div class="sub">@e.DescriptorRel</div>
+                </div>
+                <span class="badge @(isWorkshop ? "workshop" : "local")">@(isWorkshop ? "Workshop" : "Local")</span>
+                @if (!isWorkshop && workshopId is not null)
+                {
+                    <span class="badge local" title="This local mod is a copy of a Steam Workshop item">local copy of Workshop @workshopId</span>
+                }
+                @if (!installed)
+                {
+                    <span class="badge missing">not installed</span>
+                }
+                @if (workshopId is not null)
+                {
+                    <a class="button small" href="steam://url/CommunityFilePage/@workshopId" target="_blank" title="Open on the Steam Workshop">Workshop ↗</a>
+                }
+                <button class="small danger" title="Remove from list" @onclick="() => Remove(e)">✕</button>
+            </li>
+        }
+    </ol>
 </div>
 
-@if (status is not null)
+@if (adding)
 {
-    <p class="status @(error ? "error" : "")">@status</p>
-}
-@if (Manager.LibraryErrors.Count > 0)
-{
-    <details class="library-errors">
-        <summary>@Manager.LibraryErrors.Count descriptors could not be read</summary>
-        <ul>
-            @foreach (var err in Manager.LibraryErrors)
-            {
-                <li>@err</li>
-            }
-        </ul>
-    </details>
+    <AddModsDialog Library="Manager.Library" InList="InListKeys()" Icons="Icons" ListName="@listName"
+                   OnAdd="AddMods" OnClose="() => adding = false" />
 }
 
 @code {
     List<ModListEntry> current = [];
     List<string> disabledDlcs = [];
     string listName = "Current";
-    string filter = "";
-    int? dragIndex;
     IReadOnlyList<ModList> savedLists = [];
     string? status;
     bool error;
@@ -102,10 +101,15 @@
     bool confirmEmpty;
     string selectedList = "";
 
-    IEnumerable<InstalledMod> FilteredLibrary =>
-        Manager.Library.Where(m => filter.Length == 0 || m.Name.Contains(filter, StringComparison.OrdinalIgnoreCase));
-
-    static bool SameKey(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+    string filter = "";
+    ElementReference listEl;
+    IJSObjectReference? dragModule;
+    IJSObjectReference? dragHandle;
+    DotNetObjectReference<Mods>? self;
+    int posVersion;
+    bool adding;
+    Dictionary<string, InstalledMod> byKey = new(StringComparer.OrdinalIgnoreCase);
+    CancellationTokenSource? iconRun;
 
     protected override async Task OnInitializedAsync()
     {
@@ -118,6 +122,7 @@
             savedLists = Manager.Lists.LoadAll();
             SetList(Manager.ImportCurrent("Current"));
             loaded = true;
+            LibraryChanged();
             return $"Loaded {current.Count} enabled mods from dlc_load.json." + ErrorSuffix();
         });
     }
@@ -130,46 +135,126 @@
         await RunAsync(async () =>
         {
             await Manager.RefreshLibraryAsync();
+            Icons.Refresh();
+            LibraryChanged();
             return $"Found {Manager.Library.Count} installed mods." + ErrorSuffix();
         });
     }
 
-    string ErrorSuffix() =>
-        Manager.LibraryErrors.Count > 0 ? $" ({Manager.LibraryErrors.Count} descriptors could not be read)" : "";
-
-    void Add(InstalledMod m)
+    // Rebuilds the key lookup and loads icons in the background: mods in the list first, 3 at a time.
+    void LibraryChanged()
     {
+        byKey = new(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in Manager.Library) byKey.TryAdd(m.Key, m);
+
+        iconRun?.Cancel();
+        iconRun?.Dispose();
+        var run = iconRun = new CancellationTokenSource();
+        var inList = InListKeys();
+        var mods = Manager.Library.OrderBy(m => inList.Contains(m.Key) ? 0 : 1).ToList();
+        _ = LoadIconsAsync(mods, run.Token);
+    }
+
+    async Task LoadIconsAsync(List<InstalledMod> mods, CancellationToken ct)
+    {
+        long lastRender = Environment.TickCount64;
+        try
+        {
+            await Parallel.ForEachAsync(mods, new ParallelOptions { MaxDegreeOfParallelism = 3, CancellationToken = ct }, async (m, _) =>
+            {
+                await Icons.GetAsync(m);
+                // At most ~3 page updates a second while icons load, so scrolling stays smooth.
+                var now = Environment.TickCount64;
+                var last = Interlocked.Read(ref lastRender);
+                if (now - last >= 350 && Interlocked.CompareExchange(ref lastRender, now, last) == last && !ct.IsCancellationRequested)
+                    await InvokeAsync(StateHasChanged);
+            });
+            if (!ct.IsCancellationRequested) await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException) { }
+    }
+
+    HashSet<string> InListKeys() => new(current.Select(e => e.Key), StringComparer.OrdinalIgnoreCase);
+
+    int IndexOf(ModListEntry e) => current.FindIndex(x => ReferenceEquals(x, e));
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            self = DotNetObjectReference.Create(this);
+            dragModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/modlist.js");
+            dragHandle = await dragModule.InvokeAsync<IJSObjectReference>("attach", listEl, self);
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException or ObjectDisposedException)
+        {
+            (status, error) = ("Drag to reorder is unavailable: " + ex.Message, true);
+        }
+    }
+
+    // Called from js/modlist.js when a dragged row is dropped: the row at from takes the place of the row at to.
+    [JSInvokable]
+    public Task MoveRow(int from, int to) => InvokeAsync(() =>
+    {
+        if (!ModListEditor.Move(current, from, to)) return;
         confirmEmpty = false;
-        current.Add(new ModListEntry(m.Key, m.Name, m.DescriptorRel, m.RemoteId));
+        posVersion++;
+        StateHasChanged();
+    });
+
+    void SetPosition(ModListEntry e, object? value)
+    {
+        posVersion++;   // recreate the number boxes so a rejected value doesn't stay typed in
+        var index = IndexOf(e);
+        if (index < 0) return;
+        if (!int.TryParse(value?.ToString(), out var position))
+        {
+            (status, error) = ("Type a position number.", true);
+            return;
+        }
+        var to = ModListEditor.MoveTo(current, index, position);
+        if (to < 0) return;
+        confirmEmpty = false;
+        (status, error) = ($"Moved {current[to].Name} to position {to + 1}.", false);
     }
 
     void Remove(ModListEntry e)
     {
+        var index = IndexOf(e);
+        if (index < 0) return;
         confirmEmpty = false;
-        current.Remove(e);
-    }
-
-    void Move(int index, int delta)
-    {
-        var to = index + delta;
-        if (index < 0 || index >= current.Count || to < 0 || to >= current.Count) return;
-        confirmEmpty = false;
-        var e = current[index];
         current.RemoveAt(index);
-        current.Insert(index + delta, e);
+        posVersion++;
     }
 
-    void Drop(int target)
+    void AddMods(IReadOnlyList<InstalledMod> mods)
     {
-        var from = dragIndex;
-        dragIndex = null;
-        if (from is not int f || f == target) return;
-        if (f < 0 || f >= current.Count || target < 0 || target >= current.Count) return;
-        confirmEmpty = false;
-        var e = current[f];
-        current.RemoveAt(f);
-        current.Insert(target, e);
+        adding = false;
+        var added = ModListEditor.AddRange(current, mods);
+        if (added > 0) confirmEmpty = false;
+        (status, error) = ($"Added {added} {(added == 1 ? "mod" : "mods")}.", false);
     }
+
+    public async ValueTask DisposeAsync()
+    {
+        iconRun?.Cancel();
+        iconRun?.Dispose();
+        try
+        {
+            if (dragHandle is not null)
+            {
+                await dragHandle.InvokeVoidAsync("dispose");
+                await dragHandle.DisposeAsync();
+            }
+            if (dragModule is not null) await dragModule.DisposeAsync();
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+        self?.Dispose();
+    }
+
+    string ErrorSuffix() =>
+        Manager.LibraryErrors.Count > 0 ? $" ({Manager.LibraryErrors.Count} descriptors could not be read)" : "";
 
     ModList Build() => new(listName.Trim(), current.ToList(), disabledDlcs.ToList());
 

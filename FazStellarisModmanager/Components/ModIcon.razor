@@ -1,0 +1,17 @@
+@if (Uri is not null)
+{
+    <img class="micon" src="@Uri" alt="" style="width:@(Size)px;height:@(Size)px" />
+}
+else
+{
+    <span class="micon ph" style="width:@(Size)px;height:@(Size)px;font-size:@(Size / 2)px">@Letter</span>
+}
+
+@code {
+    /// <summary>Icon data URI; null shows the first letter of <see cref="Name"/>.</summary>
+    [Parameter] public string? Uri { get; set; }
+    [Parameter] public string Name { get; set; } = "";
+    [Parameter] public int Size { get; set; } = 40;
+
+    string Letter => Name.Trim() is { Length: > 0 } n ? char.ToUpperInvariant(n[0]).ToString() : "?";
+}

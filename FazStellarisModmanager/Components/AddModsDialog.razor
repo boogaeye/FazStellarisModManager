@@ -1,0 +1,89 @@
+<div class="modal-backdrop" @onmousedown="() => downOnBackdrop = true" @onclick="BackdropClick">
+    <div class="modal addmods-modal" tabindex="-1" @onclick:stopPropagation @onmousedown:stopPropagation @onmousedown="() => downOnBackdrop = false" @onkeydown="Key">
+        <div class="modal-head">
+            <h2>Add mods to "@ListName"</h2>
+            <button class="small" title="Close" @onclick="Close">✕</button>
+        </div>
+        <div class="addmods-filter">
+            <input class="search" placeholder="Search installed mods…" @ref="searchBox" @bind="search" @bind:event="oninput" />
+            <select @bind="source">
+                <option value="all">All</option>
+                <option value="workshop">Workshop</option>
+                <option value="local">Local</option>
+            </select>
+        </div>
+        <div class="addlist">
+            @{ var matches = Matches().ToList(); }
+            @foreach (var m in matches.Take(MaxShown))
+            {
+                <label class="pick">
+                    <input type="checkbox" checked="@picked.Contains(m)" @onchange="e => Toggle(m, e)" />
+                    <ModIcon Uri="@Icons.TryPeek(m)" Name="@m.Name" Size="32" />
+                    <span class="pname" title="@m.DescriptorRel">@m.Name</span>
+                    <span class="badge @(m.Source == ModSource.Workshop ? "workshop" : "local")">@(m.Source == ModSource.Workshop ? "Workshop" : "Local")</span>
+                </label>
+            }
+            @if (matches.Count > MaxShown)
+            {
+                <p class="muted">Showing @MaxShown of @matches.Count — search to narrow it down.</p>
+            }
+            @if (matches.Count == 0)
+            {
+                <p class="muted">@(Candidates().Any() ? "No installed mods match." : "Every installed mod is already in this list.")</p>
+            }
+        </div>
+        <div class="modal-actions">
+            <span class="muted">Added at the end; drag them into place afterwards.</span>
+            <button class="primary" disabled="@(picked.Count == 0)" @onclick="AddPicked">Add @picked.Count @(picked.Count == 1 ? "mod" : "mods")</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    bool downOnBackdrop;
+
+    async Task BackdropClick()
+    {
+        if (downOnBackdrop) await Close();
+        downOnBackdrop = false;
+    }
+
+    const int MaxShown = 300;
+
+    [Parameter, EditorRequired] public IReadOnlyList<InstalledMod> Library { get; set; } = [];
+    /// <summary>Keys already in the list (case-insensitive set); these are not offered.</summary>
+    [Parameter, EditorRequired] public IReadOnlySet<string> InList { get; set; } = new HashSet<string>();
+    [Parameter, EditorRequired] public ModIconCache Icons { get; set; } = default!;
+    [Parameter] public string ListName { get; set; } = "";
+    [Parameter] public EventCallback<IReadOnlyList<InstalledMod>> OnAdd { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    ElementReference searchBox;
+    string search = "";
+    string source = "all";
+    readonly HashSet<InstalledMod> picked = [];
+
+    IEnumerable<InstalledMod> Candidates() =>
+        Library.Where(m => !InList.Contains(m.Key)).OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase);
+
+    IEnumerable<InstalledMod> Matches() =>
+        Candidates().Where(m => (source == "all" || (source == "workshop") == (m.Source == ModSource.Workshop))
+                                && (search.Length == 0 || m.Name.Contains(search, StringComparison.OrdinalIgnoreCase)));
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await searchBox.FocusAsync();
+    }
+
+    void Toggle(InstalledMod m, ChangeEventArgs e)
+    {
+        if (e.Value is true) picked.Add(m); else picked.Remove(m);
+    }
+
+    Task AddPicked() =>
+        OnAdd.InvokeAsync(picked.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList());
+
+    Task Close() => OnClose.InvokeAsync();
+
+    Task Key(KeyboardEventArgs e) => e.Key == "Escape" ? Close() : Task.CompletedTask;
+}
