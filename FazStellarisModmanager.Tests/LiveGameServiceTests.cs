@@ -81,4 +81,26 @@ public class LiveGameServiceTests
         File.WriteAllText(path, "{ broken");
         Assert.Null(new LiveViewerStore(path).Get("Save A"));
     }
+
+    [Fact]
+    public async Task Enrich_result_is_kept_and_enrich_failure_keeps_plain_snapshot()
+    {
+        using var t = new TempDir();
+        t.Write("g/1.sav", "x");
+        var marker = new Dictionary<int, FazStellarisModmanager.Core.Diplomacy.DiploBreakdown>
+        {
+            [1] = new(new(0, 0, []), new(0, 0, []), new(0, 0, []), new(0, 0, []), [], false),
+        };
+        using var ok = new LiveGameService(() => t.Path, Snap, TimeSpan.Zero, s => s with { Diplo = marker });
+        await ok.RefreshAsync();
+        Assert.Single(ok.Current!.Diplo!);
+        Assert.Null(ok.Error);
+
+        using var bad = new LiveGameService(() => t.Path, Snap, TimeSpan.Zero, _ => throw new InvalidDataException("no catalog"));
+        await bad.RefreshAsync();
+        Assert.NotNull(bad.Current);
+        Assert.Null(bad.Current!.Diplo);
+        Assert.Contains("Diplomatic weight could not be calculated", bad.Error);
+        Assert.Contains("no catalog", bad.Error);
+    }
 }
