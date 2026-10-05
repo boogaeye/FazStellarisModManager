@@ -49,6 +49,12 @@ This builds on sub-project 9 (mod identity): `MatchPlan.NeedsWorkshopInstall`, `
 ### Steam adapter (`FazStellarisModmanager.Steam`, new project)
 - **Setup:** `SteamWorkshopService : IWorkshopService` uses Facepunch.Steamworks 2.3.3. The project copies the package's `content/steam_api64.dll` to the output, so it reaches the app's output and the release zip.
 - **Connection:** `SteamClient.Init(281990, asyncCallbacks: false)` inside a call, and `SteamClient.Shutdown()` in `finally`. Calls are serialised.
+- **Helper process:** Steam treats the process that called `SteamClient.Init` as the running game until that process *exits* (`Shutdown` is not enough), which kept Stellaris "running" until the mod manager closed. So the app never runs `SteamWorkshopService.InstallAsync` itself:
+  - The app registers `HelperProcessWorkshopService` (Core). `InstallAsync` starts the app's own exe with `--workshop-helper`; `Program.Main` (the WPF startup object) then runs `WorkshopHelperHost` with `SteamWorkshopService` and no window, and exits when done. `GetInfoAsync` stays in-process (Web API).
+  - Protocol (`WorkshopHelperProtocol`): the app writes one request line `{"ids":[...]}` to the helper's stdin and keeps stdin open. The helper writes one JSON line per message to stdout: `{"type":"progress","progress":{...}}`, then `{"type":"results","items":[...]}` or `{"type":"unavailable","message":"..."}`. Lines are ASCII (everything else is JSON-escaped), so console code pages don't matter. Other lines (Steam's native output) are ignored, and a message is found after any text before its `{`. An empty request answers `[]` without connecting.
+  - Exit codes: 0 ok, 1 failed, 2 unavailable, 3 bad request, 4 cancelled. The app trusts the messages: results win even with a failing exit code; otherwise the unavailable message, otherwise "stopped without an answer (exit code N)", all as `WorkshopUnavailableException`. A helper that can't start is unavailable too.
+  - Cancel: the app closes the helper's stdin (the end of stdin cancels the helper's install, which also happens if the app dies), waits up to 5 s for its answer, then kills the helper's process tree. Without results it throws `OperationCanceledException`.
+  - `IsActive` is true while the helper runs; calls are serialised. The helper is the same exe, so the self-contained release needs nothing extra (`steam_api64.dll` is already next to it).
 - **Manual pumping:** Facepunch's background pump is off. We call `SteamClient.RunCallbacks()` ourselves every ~16 ms while waiting for a Steam call (`Pumped`) and in the download poll. So none of our code, and never `Shutdown`, runs inside a callback frame, and the calls work from any thread (the session runs them via `Task.Run`). `Dispatch.OnException` logs to Debug.
 - **Per item, in sequence:**
   1. Get the item. If its `Result` isn't OK, the item fails with "not found or not visible to this account".
@@ -98,6 +104,7 @@ This builds on sub-project 9 (mod identity): `MatchPlan.NeedsWorkshopInstall`, `
   - `PlanAsync` doesn't write `dlc_load.json`.
 - **`ModManagerService.Launch`** is blocked while the Workshop service is active.
 - **`DownloadWatch`** (the adapter's download decision): an up-to-date item is done after the grace period; an outdated item that starts downloading is done when it finishes; bytes that stop growing stall; queued but never started; a finish just before the stall is done.
+- **Helper protocol:** message and request round trips, malformed and foreign lines ignored, ASCII single lines; the helper host (progress then results, unavailable, bad request, stdin end cancels); the process plumbing against `cmd.exe` fake helpers (request sent, progress order, results despite a failing exit code, exit codes without an answer, missing exe, graceful cancel, kill after the grace period, `IsActive`).
 - **Steam adapter:** checked by the spike and manually.
 
 ## Out of scope

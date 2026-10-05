@@ -8,7 +8,9 @@ namespace FazStellarisModmanager.Steam;
 /// <summary>
 /// Steam Workshop access. <see cref="GetInfoAsync"/> uses Steam's public Web API and never touches the Steam client.
 /// <see cref="InstallAsync"/> connects to the running Steam client as Stellaris through Facepunch.Steamworks (Steam shows
-/// "Playing Stellaris" meanwhile) and disconnects before returning.
+/// "Playing Stellaris" meanwhile) and disconnects before returning. Steam keeps treating the process as the running game
+/// until it exits, so the app only runs this inside its short-lived Workshop helper process
+/// (<see cref="WorkshopHelperProtocol"/>, <see cref="HelperProcessWorkshopService"/>), never in the app process itself.
 /// <para>
 /// Threading: the client is initialised without Facepunch's background pump, and Steam callbacks are pumped manually
 /// (<see cref="SteamClient.RunCallbacks"/>) inside each call, so the calls are safe from any thread (including

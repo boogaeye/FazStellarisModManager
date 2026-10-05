@@ -8,6 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>FazStellarisModmanager</RootNamespace>
     <Version>0.1.1</Version>
+    <!-- Program.Main also runs the Workshop helper (see WorkshopHelperProtocol.Argument) without starting WPF. -->
+    <StartupObject>FazStellarisModmanager.Program</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
