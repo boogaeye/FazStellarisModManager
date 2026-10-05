@@ -26,14 +26,17 @@ public sealed class GrantIndex
 /// <summary>Event and common/ files parsed by <see cref="GrantScanner.Read"/>, in load order, with the script library they were filtered by.</summary>
 public sealed class GrantFiles
 {
-    internal GrantFiles(ScriptLibrary library, List<ParsedFile> events, List<ParsedFile> common)
+    internal GrantFiles(ScriptLibrary library, IReadOnlySet<string> relevant, List<ParsedFile> events, List<ParsedFile> common)
     {
         Library = library;
+        Relevant = relevant;
         Events = events;
         Common = common;
     }
 
     internal ScriptLibrary Library { get; }
+    /// <summary>Scripted effects that can grant (see <see cref="GrantFinder.Relevant"/>).</summary>
+    internal IReadOnlySet<string> Relevant { get; }
     internal List<ParsedFile> Events { get; }
     internal List<ParsedFile> Common { get; }
 }
@@ -65,9 +68,10 @@ public static class GrantScanner
     public static GrantFiles Read(IReadOnlyList<ContentSource> sources, ScriptLibrary library, ICollection<string> warnings, CancellationToken ct = default)
     {
         var events = ScriptFiles.ParseAll(sources, "events", f => true, null, warnings, ct);
-        var prefilter = ScriptFiles.Prefilter(library, w => GrantFinder.EffectNames.Contains(w, StringComparer.OrdinalIgnoreCase), GrantFinder.EffectNames);
+        var relevant = GrantFinder.Relevant(library);
+        var prefilter = ScriptFiles.Prefilter(relevant, GrantFinder.EffectNames);
         var common = ScriptFiles.ParseAll(sources, "common", rel => rel.Split('/') is { Length: >= 3 } p && !ExcludedCommon.Contains(p[1]), prefilter, warnings, ct);
-        return new GrantFiles(library, events, common);
+        return new GrantFiles(library, relevant, events, common);
     }
 
     /// <summary>Finds the grants in files read by <see cref="Read"/>.</summary>
@@ -76,7 +80,7 @@ public static class GrantScanner
     {
         var library = files.Library;
         string Describe(PdxBlock? b) => TriggerSummary.Describe(b, loc.Get, n => loc.ScriptedTriggers.TryGetValue(n, out var t) ? t : null);
-        var finder = new GrantFinder(library, Describe);
+        var finder = new GrantFinder(library, Describe, files.Relevant);
 
         var byTech = new Dictionary<string, List<GrantSource>>(StringComparer.OrdinalIgnoreCase);
         void AddSource(PendingSource source)

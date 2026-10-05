@@ -49,6 +49,16 @@ public class EventGraphScannerTests
         country_event = { id = ev.9 is_triggered_only = yes inline_script = { script = events/opt TARGET = ev.10 } }
         country_event = { id = ev.11 is_triggered_only = yes option = { name = ev.11.a } }
         country_event = { id = ev.22 mean_time_to_happen = { months = 12 } }
+        country_event = {
+            id = ev.23
+            is_triggered_only = yes
+            immediate = {
+                fire_param = { EVENT = ev.30 }
+                fire_param = { EVENT = ev.31 }
+                owner = { if = { limit = { has_country_flag = outer } fire_nested = yes } }
+            }
+            option = { name = again fire_nested = yes }
+        }
         """;
 
     sealed record Setup(TempDir Tmp, List<ContentSource> Sources, Localisation Loc, ScriptLibrary Library) : IDisposable
@@ -65,7 +75,9 @@ public class EventGraphScannerTests
         const char N = (char)10;
         var tmp = new TempDir();
         tmp.Write("g/events/ev_events.txt", Events);
-        tmp.Write("g/common/scripted_effects/00_effects.txt", "fire_it = { country_event = { id = ev.12 } }");
+        tmp.Write("g/common/scripted_effects/00_effects.txt", "fire_it = { country_event = { id = ev.12 } }"
+            + " fire_param = { country_event = { id = $EVENT$ } }"
+            + " fire_nested = { if = { limit = { has_country_flag = inner } fire_param = { EVENT = ev.32 } } }");
         tmp.Write("g/common/inline_scripts/events/opt.txt", "option = { name = inl country_event = { id = $TARGET$ } }");
         tmp.Write("g/common/on_actions/00_on_actions.txt", "on_yearly_pulse = { events = { ev.13 } random_events = { 100 = 0 50 = ev.14 } }");
         tmp.Write("m/common/on_actions/mod_on_actions.txt", "on_yearly_pulse = { events = { ev.15 } random_events = { 50 = ev.16 } }");
@@ -267,9 +279,27 @@ public class EventGraphScannerTests
         Assert.Equal(["ev.1"], graph.Search("hello").Select(e => e.Id));
         // Exact id, then id prefix, then id contains.
         Assert.Equal(["ev.1", "ev.11", "modev.1"], graph.Search("ev.1").Select(e => e.Id));
-        Assert.Equal(["ev.1", "ev.2", "ev.3", "ev.4", "ev.8", "ev.9", "ev.11", "ev.22"], graph.Search("", ns: "ev").Select(e => e.Id));
+        Assert.Equal(["ev.1", "ev.2", "ev.3", "ev.4", "ev.8", "ev.9", "ev.11", "ev.22", "ev.23"], graph.Search("", ns: "ev").Select(e => e.Id));
         Assert.Equal(["modev.1"], graph.Search(null, source: "Mod").Select(e => e.Id));
         Assert.Equal(["ev", "modev"], graph.Namespaces);
         Assert.Equal(["Base game", "Mod"], graph.SourceNames);
+    }
+
+    [Fact]
+    public void Scripted_effects_are_followed_per_parameters_and_their_conditions_sit_under_the_callers()
+    {
+        using var s = Create();
+        var graph = Build(s);
+
+        Assert.Equal(["ev.23"], graph.CallersOf("ev.30").Select(c => c.CallerId));
+        Assert.Equal(["ev.23"], graph.CallersOf("ev.31").Select(c => c.CallerId));
+
+        // Found once inside fire_nested and reused: in the immediate under owner = { if … }, and plainly in the option.
+        var nested = graph.CallersOf("ev.32");
+        Assert.Equal([(CallPart.Immediate, "fire_nested"), (CallPart.Option, "fire_nested")], nested.Select(c => (c.Part, c.Via!)));
+        Assert.Equal(["owner: Country flag: outer", "owner: Country flag: inner"], nested[0].Conditions.Select(c => c.Text));
+        Assert.Equal(string.Join((char)10, "owner = {", "    has_country_flag = outer", "}", "owner = {", "    has_country_flag = inner", "}"),
+            nested[0].ConditionScript);
+        Assert.Equal("Country flag: inner", nested[1].Condition);
     }
 }

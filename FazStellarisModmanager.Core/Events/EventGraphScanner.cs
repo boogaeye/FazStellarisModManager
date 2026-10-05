@@ -25,7 +25,8 @@ public static class EventGraphScanner
     {
         var warnings = new List<string>();
         string Describe(PdxBlock? b) => TriggerSummary.Describe(b, loc.Get, n => loc.ScriptedTriggers.TryGetValue(n, out var t) ? t : null);
-        var finder = new EventCallFinder(library, Describe);
+        var relevant = EventCallFinder.Relevant(library);
+        var finder = new EventCallFinder(library, Describe, relevant);
 
         progress?.Report("Reading event files…");
         var eventFiles = ScriptFiles.ParseAll(sources, "events", _ => true, null, warnings, ct);
@@ -33,7 +34,7 @@ public static class EventGraphScanner
         var onActionFiles = ScriptFiles.ParseAll(sources, "common", rel => Folder(rel) is { } f && f.Equals(OnActionsFolder, StringComparison.OrdinalIgnoreCase),
             null, warnings, ct);
         progress?.Report("Reading common/ objects that fire events…");
-        var prefilter = ScriptFiles.Prefilter(library, EventScripts.IsEventKey, ["_event", "event =", "event="]);
+        var prefilter = ScriptFiles.Prefilter(relevant, ["_event", "event =", "event="]);
         var commonFiles = ScriptFiles.ParseAll(sources, "common", rel => Folder(rel) is { } f && !ExcludedCommon.Contains(f), prefilter, warnings, ct);
 
         progress?.Report("Resolving events…");
@@ -73,6 +74,8 @@ public static class EventGraphScanner
         foreach (var o in objects.Values)
             if (o is not null) calls.AddRange(o);
 
+        foreach (var id in finder.Truncated.Keys.Order(StringComparer.OrdinalIgnoreCase))
+            warnings.Add($"{id}: stopped following scripted effects after {EventCallFinder.Budget:N0} script entries; some calls may be missing.");
         return new EventGraph(events, calls, loc.ScriptedTriggers, warnings.Distinct().ToList());
     }
 

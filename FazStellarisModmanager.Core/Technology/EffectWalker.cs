@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using FazStellarisModmanager.Core.Descriptors;
 
@@ -24,10 +25,33 @@ internal sealed record EffectPlace(ImmutableArray<EffectGuard> Guards, string? V
 /// Walks an effect block the way the game runs it, for finders that look for particular effects (tech grants, event calls). Follows
 /// scripted effects (with parameters; cycle-safe) and inline scripts, records if/else_if/else, limits, switch cases, random_list
 /// branches and random blocks as guards, and skips trigger blocks and tooltips (display only). The visitor sees every other entry
-/// first and returns true when it handled it (the walker then does not go inside).
+/// first and returns true when it handled it (the walker then does not go inside). With <paramref name="relevantEffects"/>, other
+/// scripted effects are not followed (they cannot contain what the visitor looks for; see <see cref="ScriptFiles.Relevant"/>).
+/// With <paramref name="expandOnce"/>, each scripted effect (with the same parameters) is followed only the first time it is met in
+/// one walk: libraries that call effects from many branches (counters, arrays) otherwise multiply the work exponentially.
+/// With <paramref name="cacheable"/> (true exactly for the entries the visitor handles), what a scripted effect contains is found
+/// once per walker (for each set of parameters, with up to maxDepth - 1 further levels) and reused wherever it is called.
+/// With <paramref name="budget"/>, a walk stops following scripted effects and inline scripts once it has looked at that many
+/// entries (some mods generate effect libraries whose expansion would take seconds per event); <see cref="Walk"/> then returns false.
 /// </summary>
-internal sealed class EffectWalker(ScriptLibrary library, int maxDepth, bool walkCreateCountryEffect)
+internal sealed class EffectWalker(ScriptLibrary library, int maxDepth, bool walkCreateCountryEffect, IReadOnlySet<string>? relevantEffects = null,
+    bool expandOnce = false, Func<PdxEntry, bool>? cacheable = null, int budget = int.MaxValue)
 {
+    // The scripted effects being followed (for cycles), with expandOnce those already followed, and the work done so far.
+    sealed class WalkState(HashSet<string>? expanded, bool useCache)
+    {
+        public List<string> Stack { get; } = [];
+        public HashSet<string>? Expanded { get; } = expanded;
+        public bool UseCache { get; } = useCache;
+        public long Visited { get; set; }
+        public bool Truncated { get; set; }
+    }
+
+    sealed record Expansion(List<(PdxEntry Entry, EffectPlace Place)> Found, bool Truncated, long Visited);
+
+    // Scripted effect + parameters to the handled entries inside it, placed relative to the call.
+    readonly ConcurrentDictionary<string, Expansion> _expansions = new(StringComparer.OrdinalIgnoreCase);
+
     public delegate bool Visitor(PdxEntry entry, EffectPlace place);
 
     static readonly HashSet<string> TriggerBlocks = new(StringComparer.OrdinalIgnoreCase)
@@ -43,15 +67,35 @@ internal sealed class EffectWalker(ScriptLibrary library, int maxDepth, bool wal
 
     static readonly IReadOnlyDictionary<string, string> NoParameters = new Dictionary<string, string>();
 
+    // Parsed inline scripts by path and parameters, for this walker's lifetime (the blocks are only read).
+    readonly ConcurrentDictionary<string, PdxBlock?> _inline = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Blocks that hold triggers (or display-only tooltips), never effects that run.</summary>
     public static bool IsTriggerBlock(string key) => TriggerBlocks.Contains(key);
 
-    public void Walk(PdxBlock effects, Visitor visit) => Walk(effects, EffectPlace.Root, 0, [], visit);
+    /// <summary>Walks the effects; false when the budget ran out and some scripted effects or inline scripts were not followed.</summary>
+    public bool Walk(PdxBlock effects, Visitor visit)
+    {
+        var state = NewState(cacheable is not null);
+        Walk(effects, EffectPlace.Root, 0, state, visit);
+        return !state.Truncated;
+    }
 
-    void Walk(PdxBlock block, EffectPlace place, int depth, List<string> calls, Visitor visit)
+    // Whether the walk may still follow scripted effects and inline scripts.
+    bool MayFollow(WalkState state)
+    {
+        if (state.Visited <= budget) return true;
+        state.Truncated = true;
+        return false;
+    }
+
+    WalkState NewState(bool useCache) => new(expandOnce ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : null, useCache);
+
+    void Walk(PdxBlock block, EffectPlace place, int depth, WalkState calls, Visitor visit)
     {
         // The limits of the if / else_if chain so far, for the conditions of later else_if and else branches.
         var chain = new List<PdxBlock>();
+        calls.Visited += block.Entries.Count;
         foreach (var e in block.Entries)
         {
             var key = e.Key;
@@ -61,7 +105,7 @@ internal sealed class EffectWalker(ScriptLibrary library, int maxDepth, bool wal
             if (TriggerBlocks.Contains(key) || visit(e, place)) continue;
             if (Is(key, "inline_script"))
             {
-                if (depth < maxDepth && InlineBody(e.Value) is { } body) Walk(body, place, depth + 1, calls, visit);
+                if (depth < maxDepth && MayFollow(calls) && InlineBody(e.Value) is { } body) Walk(body, place, depth + 1, calls, visit);
                 continue;
             }
             if (e.Value is PdxBlock b)
@@ -119,14 +163,57 @@ internal sealed class EffectWalker(ScriptLibrary library, int maxDepth, bool wal
 
         void Call(string name, PdxBlock effect, IReadOnlyDictionary<string, string> parameters)
         {
-            if (depth >= maxDepth || calls.Contains(name, StringComparer.OrdinalIgnoreCase)) return;
-            calls.Add(name);
-            Walk(ScriptLibrary.Substitute(effect, parameters), place with { Via = place.Via ?? name }, depth + 1, calls, visit);
-            calls.RemoveAt(calls.Count - 1);
+            if (depth >= maxDepth || calls.Stack.Contains(name, StringComparer.OrdinalIgnoreCase)) return;
+            if (relevantEffects is not null && !relevantEffects.Contains(name)) return;
+            if (!MayFollow(calls)) return;
+            var key = name + string.Concat(parameters.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase).Select(p => $"|{p.Key}={p.Value}"));
+            if (calls.Expanded is { } expanded && !expanded.Add(key)) return;
+            if (calls.UseCache)
+            {
+                // Finding what the effect contains counts towards this walk's budget; reusing it is cheap.
+                var computed = false;
+                var expansion = _expansions.GetOrAdd(key, _ =>
+                {
+                    computed = true;
+                    return Expand(name, Body());
+                });
+                if (computed) calls.Visited += expansion.Visited;
+                if (expansion.Truncated) calls.Truncated = true;
+                foreach (var (entry, relative) in expansion.Found)
+                    visit(entry, Reroot(place, relative, name));
+                return;
+            }
+            calls.Stack.Add(name);
+            Walk(Body(), place with { Via = place.Via ?? name }, depth + 1, calls, visit);
+            calls.Stack.RemoveAt(calls.Stack.Count - 1);
+
+            PdxBlock Body() => library.HasParameters(name) ? ScriptLibrary.Substitute(effect, parameters) : effect;
         }
     }
 
-    void Switch(string key, PdxBlock b, EffectPlace place, int depth, List<string> calls, Visitor visit)
+    // The handled entries of a scripted effect's body, walked without the cache (so a cycle cannot recurse into it).
+    Expansion Expand(string name, PdxBlock body)
+    {
+        var found = new List<(PdxEntry Entry, EffectPlace Place)>();
+        var state = NewState(useCache: false);
+        state.Stack.Add(name);
+        Walk(body, EffectPlace.Root, 1, state, (e, p) =>
+        {
+            if (!cacheable!(e)) return false;
+            found.Add((e, p));
+            return true;
+        });
+        return new Expansion(found, state.Truncated, state.Visited);
+    }
+
+    // A place found inside a scripted effect, moved under the place of the call: outer guards first, scopes prefixed.
+    static EffectPlace Reroot(EffectPlace outer, EffectPlace inner, string name)
+    {
+        var guards = outer.Scopes.IsEmpty ? inner.Guards : inner.Guards.Select(g => g with { Scopes = outer.Scopes.AddRange(g.Scopes) }).ToImmutableArray();
+        return new EffectPlace(outer.Guards.AddRange(guards), outer.Via ?? name, outer.Scopes.AddRange(inner.Scopes));
+    }
+
+    void Switch(string key, PdxBlock b, EffectPlace place, int depth, WalkState calls, Visitor visit)
     {
         var trigger = b.GetString("trigger") ?? "?";
         var inverted = Is(key, "inverted_switch");
@@ -179,10 +266,14 @@ internal sealed class EffectWalker(ScriptLibrary library, int maxDepth, bool wal
 
     PdxBlock? InlineBody(object value) => value switch
     {
-        string path => library.Inline(path, NoParameters),
-        PdxBlock b when b.GetString("script") is { } path => library.Inline(path, Parameters(WithoutScript(b))),
+        string path => Inline(path, NoParameters),
+        PdxBlock b when b.GetString("script") is { } path => Inline(path, Parameters(WithoutScript(b))),
         _ => null,
     };
+
+    PdxBlock? Inline(string path, IReadOnlyDictionary<string, string> parameters) =>
+        _inline.GetOrAdd(path + string.Concat(parameters.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase).Select(p => $"|{p.Key}={p.Value}")),
+            _ => library.Inline(path, parameters));
 
     static PdxBlock WithoutScript(PdxBlock b)
     {

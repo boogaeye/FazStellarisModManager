@@ -11,13 +11,27 @@ public sealed record FoundGrant(string Tech, GrantKind Kind, double? Progress, s
 /// outermost effect called) and inline scripts, words if/else_if limits with <paramref name="describe"/> and switch cases, and skips
 /// trigger blocks, tooltips (display only) and the effect block of create_country (it runs for the new country).
 /// </summary>
-public sealed class GrantFinder(ScriptLibrary library, Func<PdxBlock?, string> describe)
+public sealed class GrantFinder
 {
     const int MaxDepth = 6;
 
     public static readonly string[] EffectNames = ["give_technology", "add_tech_progress", "add_research_option"];
 
-    readonly EffectWalker _walker = new(library, MaxDepth, walkCreateCountryEffect: false);
+    readonly EffectWalker _walker;
+    readonly Func<PdxBlock?, string> _describe;
+
+    public GrantFinder(ScriptLibrary library, Func<PdxBlock?, string> describe) : this(library, describe, null) { }
+
+    /// <param name="relevantEffects">The scripted effects that can grant (<see cref="Relevant"/>); others are not followed.</param>
+    internal GrantFinder(ScriptLibrary library, Func<PdxBlock?, string> describe, IReadOnlySet<string>? relevantEffects)
+    {
+        _walker = new EffectWalker(library, MaxDepth, walkCreateCountryEffect: false, relevantEffects);
+        _describe = describe;
+    }
+
+    /// <summary>The scripted effects that (transitively) mention a grant effect or inline_script.</summary>
+    internal static IReadOnlySet<string> Relevant(ScriptLibrary library) =>
+        ScriptFiles.Relevant(library, w => EffectNames.Contains(w, StringComparer.OrdinalIgnoreCase));
 
     public List<FoundGrant> Find(PdxBlock effects)
     {
@@ -49,8 +63,8 @@ public sealed class GrantFinder(ScriptLibrary library, Func<PdxBlock?, string> d
         {
             var text = g.Kind switch
             {
-                GuardKind.If => describe(g.Limit),
-                GuardKind.ElseIf => Otherwise(describe(g.Limit)),
+                GuardKind.If => _describe(g.Limit),
+                GuardKind.ElseIf => Otherwise(_describe(g.Limit)),
                 GuardKind.Else => "otherwise",
                 GuardKind.RandomList => "by chance",
                 GuardKind.Switch => g.SwitchText,

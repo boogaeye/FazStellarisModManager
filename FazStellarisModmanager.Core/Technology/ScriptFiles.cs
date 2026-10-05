@@ -18,22 +18,38 @@ internal static class ScriptFiles
     /// the scripted effects that (transitively) mention a word for which <paramref name="interesting"/> is true. A superset filter:
     /// a match inside a longer word counts too.
     /// </summary>
-    public static SearchValues<string> Prefilter(ScriptLibrary library, Func<string, bool> interesting, IEnumerable<string> needles)
+    public static SearchValues<string> Prefilter(ScriptLibrary library, Func<string, bool> interesting, IEnumerable<string> needles) =>
+        Prefilter(Relevant(library, interesting), needles);
+
+    /// <summary>The pre-filter for a set made by <see cref="Relevant"/>.</summary>
+    public static SearchValues<string> Prefilter(IReadOnlySet<string> relevant, IEnumerable<string> needles) =>
+        SearchValues.Create([.. needles, "inline_script", .. relevant], StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The scripted effects that mention a word for which <paramref name="interesting"/> is true, inline_script, or (transitively)
+    /// another such scripted effect. The others cannot contain an interesting effect, so finders need not walk them.
+    /// </summary>
+    public static IReadOnlySet<string> Relevant(ScriptLibrary library, Func<string, bool> interesting)
     {
         var words = library.Effects.ToDictionary(kv => kv.Key,
             kv => new HashSet<string>(Word.Matches(PdxScriptPrinter.Print(kv.Value)).Select(m => m.Value), StringComparer.OrdinalIgnoreCase),
             StringComparer.OrdinalIgnoreCase);
         var matching = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (name, w) in words)
-            if (w.Any(interesting) || w.Contains("inline_script")) matching.Add(name);
+            if (w.Any(interesting) || w.Contains("inline_script") || HasParameterKey(library.Effects[name])) matching.Add(name);
         for (var changed = true; changed;)
         {
             changed = false;
             foreach (var (name, w) in words)
                 if (!matching.Contains(name) && w.Any(matching.Contains)) { matching.Add(name); changed = true; }
         }
-        return SearchValues.Create([.. needles, "inline_script", .. matching], StringComparison.OrdinalIgnoreCase);
+        return matching;
     }
+
+    // A key such as "$EFFECT$ = yes" can become anything once parameters are substituted.
+    static bool HasParameterKey(PdxBlock block) =>
+        block.Entries.Any(e => e.Key.Contains('$') || e.Value is PdxBlock b && HasParameterKey(b))
+        || block.Items.Any(i => i is PdxBlock b && HasParameterKey(b));
 
     /// <summary>
     /// Winning files of a top folder (per-path override), parsed in parallel, returned in load order. With a pre-filter, base

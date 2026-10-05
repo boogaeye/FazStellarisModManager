@@ -9,28 +9,41 @@ namespace FazStellarisModmanager.Core.Events;
 /// <c>event</c> key, and the short <c>ship_event = id</c> form) in effect blocks, through scripted effects and inline scripts, with
 /// their enclosing conditions, weighted picks and chances.
 /// </summary>
-internal sealed class EventCallFinder(ScriptLibrary library, Func<PdxBlock?, string> describe)
+internal sealed class EventCallFinder(ScriptLibrary library, Func<PdxBlock?, string> describe, IReadOnlySet<string>? relevantEffects = null)
 {
     /// <summary>How many scripted effects / inline scripts deep calls are followed.</summary>
     const int MaxDepth = 5;
 
-    readonly EffectWalker _walker = new(library, MaxDepth, walkCreateCountryEffect: true);
+    /// <summary>How many script entries one effect block may look at before scripted effects are no longer followed.</summary>
+    internal const int Budget = 100_000;
+
+    readonly EffectWalker _walker = new(library, MaxDepth, walkCreateCountryEffect: true, relevantEffects, expandOnce: true, cacheable: IsCall, budget: Budget);
+
+    /// <summary>The callers whose search stopped early (see <see cref="Budget"/>), for warnings.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, bool> Truncated { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The scripted effects that (transitively) mention an event key or inline_script.</summary>
+    public static IReadOnlySet<string> Relevant(ScriptLibrary library) => ScriptFiles.Relevant(library, EventScripts.IsEventKey);
 
     /// <summary>The calls in <paramref name="effects"/>; each is <paramref name="caller"/> with the call's own fields set.</summary>
     public List<EventCall> Find(PdxBlock effects, EventCall caller)
     {
         var calls = new List<EventCall>();
-        _walker.Walk(effects, (e, place) =>
+        var complete = _walker.Walk(effects, (e, place) =>
         {
-            if (!EventScripts.IsEventKey(e.Key)) return false;
+            if (!IsCall(e)) return false;
             var block = e.Value as PdxBlock;
-            var id = block is not null ? block.GetString("id") : e.Value is string s && IsEventId(s) ? s : null;
-            if (id is null) return false;
-            calls.Add(Make(caller, e.Key, id, block, place));
+            calls.Add(Make(caller, e.Key, block is not null ? block.GetString("id")! : (string)e.Value, block, place));
             return true;
         });
-        return calls;
+        if (!complete) Truncated.TryAdd(caller.CallerId, true);
+        // The same call reached twice (e.g. two scripted effects that fire it under the same conditions) is listed once.
+        return calls.DistinctBy(c => (c.TargetId.ToLowerInvariant(), c.Effect, c.DaysMin, c.DaysMax, c.Condition, c.Via, c.Scopes)).ToList();
     }
+
+    /// <summary>An event-firing effect: <c>*_event = { id = … }</c> or <c>*_event = namespace.123</c>.</summary>
+    static bool IsCall(PdxEntry e) =>
+        EventScripts.IsEventKey(e.Key) && (e.Value is PdxBlock b ? b.GetString("id") is not null : IsEventId((string)e.Value));
 
     /// <summary>"namespace.123".</summary>
     internal static bool IsEventId(string s)
