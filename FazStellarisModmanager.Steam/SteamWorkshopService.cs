@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FazStellarisModmanager.Core.Workshop;
 using Steamworks;
 using Steamworks.Ugc;
@@ -7,10 +8,12 @@ namespace FazStellarisModmanager.Steam;
 /// <summary>
 /// Steam Workshop access. <see cref="GetInfoAsync"/> uses Steam's public Web API and never touches the Steam client.
 /// <see cref="InstallAsync"/> connects to the running Steam client as Stellaris through Facepunch.Steamworks (Steam shows
-/// "Playing Stellaris" meanwhile) and disconnects before returning; installs are serialised.
+/// "Playing Stellaris" meanwhile) and disconnects before returning.
 /// <para>
-/// Threading: await <see cref="InstallAsync"/> from one synchronisation context and don't wrap it in Task.Run.
-/// Facepunch's callback pump captures the current context when the client is initialised, and call results resume there.
+/// Threading: the client is initialised without Facepunch's background pump, and Steam callbacks are pumped manually
+/// (<see cref="SteamClient.RunCallbacks"/>) inside each call, so the calls are safe from any thread (including
+/// Task.Run) but must not overlap; <c>_gate</c> ensures that. None of our code runs inside a Steam callback, and
+/// <see cref="SteamClient.Shutdown"/> is only called from the sequential flow, never while a callback frame is running.
 /// </para>
 /// </summary>
 public sealed class SteamWorkshopService(TimeSpan? stallTimeout = null, HttpClient? http = null) : IWorkshopService
@@ -18,7 +21,8 @@ public sealed class SteamWorkshopService(TimeSpan? stallTimeout = null, HttpClie
     public const uint StellarisAppId = 281990;
 
     static readonly TimeSpan SteamCallTimeout = TimeSpan.FromSeconds(30);
-    static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(250);
+    static readonly TimeSpan Pump = TimeSpan.FromMilliseconds(16);
+    static readonly TimeSpan ReportEvery = TimeSpan.FromMilliseconds(250);
 
     readonly SemaphoreSlim _gate = new(1, 1);
     readonly TimeSpan _stall = stallTimeout ?? TimeSpan.FromMinutes(2);
@@ -54,34 +58,38 @@ public sealed class SteamWorkshopService(TimeSpan? stallTimeout = null, HttpClie
         {
             progress.Report(new WorkshopProgress(id, WorkshopItemState.Subscribing, 0));
             // Facepunch returns an item even for a missing id; its Result says whether Steam found it.
-            if (await Item.GetAsync(id).WaitAsync(SteamCallTimeout, ct) is not { } item || item.Result != Steamworks.Result.OK)
+            if (await Pumped(() => Item.GetAsync(id), SteamCallTimeout, ct) is not { } item || item.Result != Steamworks.Result.OK)
                 return Fail(id, progress, "Not found on the Workshop, or not visible to this Steam account.");
-            if (!item.IsSubscribed && !await item.Subscribe().WaitAsync(SteamCallTimeout, ct))
+            if (!item.IsSubscribed && !await Pumped(item.Subscribe, SteamCallTimeout, ct))
                 return Fail(id, progress, "Steam refused the subscription.");
-            if (Finished(item)) return Done(id, item, progress);
+            // Always ask: for an installed item this is what makes Steam check for an update. DownloadWatch then waits
+            // for Steam to react (or a grace period) before trusting an "installed and up to date" state.
             if (!item.Download(true)) return Fail(id, progress, "Steam would not start the download.");
 
             // Item.DownloadAsync only reports progress once a download completes, so poll Steam's byte counters instead
             // (State, the byte counters and Directory are live reads from the local Steam client).
-            using var stall = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            stall.CancelAfter(_stall);
-            var last = -1L;
+            var watch = new DownloadWatch(_stall);
+            var clock = Stopwatch.StartNew();
+            var reported = -ReportEvery; // report on the first pass
             while (true)
             {
-                if (Finished(item)) return Done(id, item, progress); // checked first: a finish is never reported as a stall
-                ct.ThrowIfCancellationRequested();
-                if (stall.IsCancellationRequested) return Fail(id, progress, "The download stalled.");
+                SteamClient.RunCallbacks();
                 var downloaded = item.DownloadBytesDownloaded;
                 var total = item.DownloadBytesTotal;
-                if (downloaded > last)
+                var elapsed = clock.Elapsed;
+                switch (watch.Step(new DownloadSnapshot(item.IsInstalled, item.IsDownloading, item.IsDownloadPending, item.NeedsUpdate, downloaded, elapsed)))
                 {
-                    last = downloaded;
-                    stall.CancelAfter(_stall); // progress: restart the stall timer
+                    case DownloadVerdict.Done: return Done(id, item, progress);
+                    case DownloadVerdict.Stalled: return Fail(id, progress, DownloadWatch.StalledMessage);
+                    case DownloadVerdict.QueuedNotStarted: return Fail(id, progress, DownloadWatch.QueuedNotStartedMessage);
                 }
-                var fraction = total > 0 ? Math.Clamp(downloaded / (double)total, 0, 1) : 0;
-                progress.Report(new WorkshopProgress(id, WorkshopItemState.Downloading, fraction));
-                try { await Task.Delay(Poll, stall.Token); }
-                catch (OperationCanceledException) { /* cancel or stall: decided at the top of the loop */ }
+                if (elapsed - reported >= ReportEvery)
+                {
+                    reported = elapsed;
+                    var fraction = total > 0 ? Math.Clamp(downloaded / (double)total, 0, 1) : 0;
+                    progress.Report(new WorkshopProgress(id, WorkshopItemState.Downloading, fraction));
+                }
+                await Task.Delay(Pump, ct);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -98,7 +106,22 @@ public sealed class SteamWorkshopService(TimeSpan? stallTimeout = null, HttpClie
         }
     }
 
-    static bool Finished(Item item) => !item.IsDownloading && item.IsInstalled && !item.NeedsUpdate;
+    /// <summary>
+    /// Starts a Facepunch call and pumps Steam callbacks on this thread until it completes. The call's internal
+    /// continuations run inside <see cref="SteamClient.RunCallbacks"/>; ours only run after the task has completed.
+    /// </summary>
+    static async Task<T> Pumped<T>(Func<Task<T>> start, TimeSpan timeout, CancellationToken ct)
+    {
+        var task = start();
+        var deadline = Stopwatch.StartNew();
+        while (true)
+        {
+            SteamClient.RunCallbacks();
+            if (task.IsCompleted) return await task;
+            if (deadline.Elapsed >= timeout) throw new TimeoutException();
+            await Task.Delay(Pump, ct);
+        }
+    }
 
     static WorkshopItemResult Done(ulong id, Item item, IProgress<WorkshopProgress> progress)
     {
@@ -123,7 +146,8 @@ public sealed class SteamWorkshopService(TimeSpan? stallTimeout = null, HttpClie
         await _gate.WaitAsync(ct);
         try
         {
-            try { SteamClient.Init(StellarisAppId, asyncCallbacks: true); }
+            Dispatch.OnException ??= ex => Debug.WriteLine($"Steam callback failed: {ex}");
+            try { SteamClient.Init(StellarisAppId, asyncCallbacks: false); }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 // A partly finished Init would make every later Init fail.
