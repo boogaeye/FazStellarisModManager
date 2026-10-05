@@ -35,6 +35,9 @@ public sealed class SessionClient : IAsyncDisposable
     public IReadOnlyList<PlayerInfo> Roster { get; private set; } = [];
     public bool IsConnected { get; private set; } = true;
 
+    /// <summary>The latest live save view from the host (null until the host has one).</summary>
+    public LiveUpdate? Live { get; private set; }
+
     /// <summary>Why the connection ended; set before <see cref="Disconnected"/> fires, null while connected.</summary>
     public string? DisconnectReason { get; private set; }
 
@@ -96,6 +99,8 @@ public sealed class SessionClient : IAsyncDisposable
 
     public Task SendBusyAsync(string activity, CancellationToken ct = default) => SendAsync(new ClientBusy(activity), ct);
 
+    public Task SendViewAsAsync(int countryId, CancellationToken ct = default) => SendAsync(new LiveViewAs(countryId), ct);
+
     async Task SendAsync(SessionMessage message, CancellationToken ct)
     {
         var frame = await Task.Run(() => Framing.Encode(message)).ConfigureAwait(false);
@@ -136,6 +141,9 @@ public sealed class SessionClient : IAsyncDisposable
                         break;
                     case HostTargetUpdate t:
                         Target = t;
+                        break;
+                    case LiveUpdate l:
+                        Live = l;
                         break;
                     case Bye bye:
                         reason = bye.Reason ?? "The host ended the session.";
