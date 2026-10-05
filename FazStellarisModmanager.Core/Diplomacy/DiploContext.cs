@@ -21,10 +21,11 @@ public sealed class DiploContext(ModifierCatalog catalog, DiploDefines defines, 
         var map = new Dictionary<int, DiploBreakdown>();
         foreach (var p in s.Players)
             if (s.Countries.FirstOrDefault(c => c.Id == p.CountryId) is { } c)
-                map[c.Id] = DiploCalculator.Compute(c, s, catalog.Get, defines, Name, catalog.ResolutionCategory, catalog.IsTargetedResolution);
+                map[c.Id] = DiploCalculator.Compute(c, s, catalog.Get, defines, Name, catalog.ResolutionCategory, catalog.IsTargetedResolution, catalog.Swaps);
         return s with { Diplo = map };
     }
 
-    string Name(DiploSource source, string key) =>
+    /// <summary>Display name of a source: its localisation (nested $references$ resolved, colour and icon codes removed), or the key.</summary>
+    public string Name(DiploSource source, string key) =>
         names?.Get(key) ?? names?.Get("modifier_" + key) ?? key.Replace('_', ' ');
 }

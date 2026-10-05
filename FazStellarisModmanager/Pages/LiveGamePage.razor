@@ -110,7 +110,6 @@
                             </div>
                         }
                         <p class="muted">@DiploBreakdown.NotCalculated Some conditional mod resolutions are not counted either.</p>
-                        <p class="muted">Fleet power as stored in the save.</p>
                     </details>
                 }
                 <div class="lstat"><span>Military power</span><LiveStat Value="new StatValue(me.MilitaryPower)" /></div>
@@ -197,7 +196,7 @@
         ("Technology", "tech power", d.Tech),
     ];
 
-    static string Pct(DiploBonus b) => (b.Percent * 100).ToString("+0.#;-0.#", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    static string Pct(DiploBonus b) => DiploBonus.FormatPercent(b.Percent);
 
     static string BonusClass(DiploBonus b) => b.Percent < 0 ? "neg-bonus" : "pos-bonus";
 
