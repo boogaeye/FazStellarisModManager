@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using FazStellarisModmanager.Core.Descriptors;
 
@@ -15,6 +16,7 @@ public sealed class ScriptLibrary
 
     readonly Dictionary<string, PdxBlock> _effects = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, string> _inline = new(StringComparer.OrdinalIgnoreCase);
+    readonly ConcurrentDictionary<string, bool> _hasParameters = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyDictionary<string, PdxBlock> Effects => _effects;
 
@@ -44,7 +46,16 @@ public sealed class ScriptLibrary
     {
         foreach (var e in ParadoxScriptParser.Parse(text).Entries)
             if (e.Value is PdxBlock b) _effects[e.Key] = b;
+        _hasParameters.Clear();
     }
+
+    /// <summary>True when the scripted effect mentions a $PARAM$ anywhere (so calls must substitute); false for unknown names.</summary>
+    internal bool HasParameters(string name) =>
+        _hasParameters.GetOrAdd(name, n => _effects.TryGetValue(n, out var b) && Mentions(b));
+
+    static bool Mentions(PdxBlock b) =>
+        b.Entries.Any(e => e.Key.Contains('$') || (e.Value is PdxBlock inner ? Mentions(inner) : ((string)e.Value).Contains('$')))
+        || b.Items.Any(i => i is PdxBlock inner ? Mentions(inner) : ((string)i).Contains('$'));
 
     /// <summary>Adds an inline script; <paramref name="path"/> is relative to common/inline_scripts, without .txt.</summary>
     public void AddInlineScript(string path, string text) => _inline[Normalize(path)] = text;

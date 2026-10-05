@@ -1,3 +1,4 @@
+using System.Globalization;
 using FazStellarisModmanager.Core.Descriptors;
 using FazStellarisModmanager.Core.Saves;
 
@@ -6,18 +7,30 @@ namespace FazStellarisModmanager.Core.Conditions;
 public enum Truth { True, False, Unknown }
 
 /// <summary>One condition line with its result; Children for blocks (AND/OR/NOT/…, scripted triggers, unknown scopes).</summary>
-public sealed record ConditionNode(string Text, Truth Result, IReadOnlyList<ConditionNode> Children);
+/// <summary>Note: extra context for the line, e.g. how many years until a year condition becomes true.</summary>
+public sealed record ConditionNode(string Text, Truth Result, IReadOnlyList<ConditionNode> Children, string? Note = null);
 
 /// <summary>What the viewer's empire has, from live data. Sets are case-insensitive.</summary>
 public sealed record EmpireFacts(IReadOnlySet<string> Techs, IReadOnlySet<string> Flags, IReadOnlySet<string> GlobalFlags,
     IReadOnlySet<string> Perks, IReadOnlySet<string> Traditions, IReadOnlySet<string> Civics, IReadOnlySet<string> Ethics,
-    string? Origin, string? Authority, string? CountryType, IReadOnlySet<string> Dlcs, bool IsPlayer)
+    string? Origin, string? Authority, string? CountryType, IReadOnlySet<string> Dlcs, bool IsPlayer,
+    int? YearsPassed = null, int? MidGameStart = null, int? EndGameStart = null)
 {
+    /// <summary>Stellaris games start on 2200.01.01.</summary>
+    public const int GameStartYear = 2200;
+
+    /// <summary>Whole years since the game start for a save date like "2387.09.17", or null if it can't be read.</summary>
+    public static int? YearsSinceStart(string? date) =>
+        date is not null && date.Split('.') is { Length: >= 1 } parts && int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var year)
+            ? year - GameStartYear
+            : null;
+
     static HashSet<string> Set(IEnumerable<string>? items) => new(items ?? [], StringComparer.OrdinalIgnoreCase);
 
     public static EmpireFacts From(SaveCountry c, GameSnapshot s, bool isPlayer) => new(
         Set(c.Techs), Set(c.Flags), Set(s.GlobalFlags), Set(c.Holdings?.Perks), Set(c.Holdings?.Traditions), Set(c.Holdings?.Civics),
-        Set(c.Ethics), c.Holdings?.Origin, c.Holdings?.Authority, c.Type, Set(s.Dlcs), isPlayer);
+        Set(c.Ethics), c.Holdings?.Origin, c.Holdings?.Authority, c.Type, Set(s.Dlcs), isPlayer,
+        YearsSinceStart(s.Date), s.Galaxy?.MidGameStart, s.Galaxy?.EndGameStart);
 }
 
 /// <summary>
@@ -45,7 +58,8 @@ public sealed class ConditionEvaluator(Func<string, PdxBlock?> scriptedTrigger)
         if (e.Value is PdxBlock b) return Block(e.Key, b, facts, depth);
         var value = (string)e.Value;
         var text = $"{e.Key} {e.Op} {value}";
-        return new ConditionNode(text, Leaf(e.Key, e.Op, value, facts, depth, out var children), children);
+        var result = Leaf(e.Key, e.Op, value, facts, depth, out var children, out var note);
+        return new ConditionNode(text, result, children, note);
     }
 
     ConditionNode Block(string key, PdxBlock b, EmpireFacts facts, int depth)
@@ -90,9 +104,18 @@ public sealed class ConditionEvaluator(Func<string, PdxBlock?> scriptedTrigger)
             ? new ConditionNode(e.Key, Truth.Unknown, UnknownEntries(inner))
             : new ConditionNode($"{e.Key} {e.Op} {e.Value}", Truth.Unknown, [])).ToList();
 
-    Truth Leaf(string key, string op, string value, EmpireFacts f, int depth, out IReadOnlyList<ConditionNode> children)
+    Truth Leaf(string key, string op, string value, EmpireFacts f, int depth, out IReadOnlyList<ConditionNode> children, out string? note)
     {
         children = [];
+        note = null;
+        if (IsYearTrigger(key))
+        {
+            if (YearValue(key, f) is not int y || f.YearsPassed is not int passed
+                || !double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var n)) return Truth.Unknown;
+            var result = Compare(y, op, n);
+            note = YearNote(y, op, n, result, passed);
+            return result;
+        }
         if (op != "=") return Truth.Unknown;
         var yes = value.Equals("yes", StringComparison.OrdinalIgnoreCase);
         var no = value.Equals("no", StringComparison.OrdinalIgnoreCase);
@@ -136,6 +159,52 @@ public sealed class ConditionEvaluator(Func<string, PdxBlock?> scriptedTrigger)
         }
         return Truth.Unknown;
     }
+
+    static bool IsYearTrigger(string key) =>
+        key.Equals("years_passed", StringComparison.OrdinalIgnoreCase) || key.Equals("mid_game_years_passed", StringComparison.OrdinalIgnoreCase)
+        || key.Equals("end_game_years_passed", StringComparison.OrdinalIgnoreCase);
+
+    // years_passed counts from the game start; the mid/end game variants from the galaxy setup's start year (negative before it).
+    static int? YearValue(string key, EmpireFacts f) => key.ToLowerInvariant() switch
+    {
+        "years_passed" => f.YearsPassed,
+        "mid_game_years_passed" => f.YearsPassed - f.MidGameStart,
+        "end_game_years_passed" => f.YearsPassed - f.EndGameStart,
+        _ => null,
+    };
+
+    /// <summary>
+    /// "now 87 · true in 13 years (2400)" for a condition that time will make true, "now 187 · no longer possible" for one it never
+    /// will again (time only moves forward), and just "now N" when it already holds.
+    /// </summary>
+    public static string YearNote(int value, string op, double target, Truth result, int yearsPassed)
+    {
+        var now = "now " + value.ToString(CultureInfo.InvariantCulture);
+        if (result == Truth.True) return now;
+        int? wait = op switch
+        {
+            ">=" or "=" or "==" => (int)Math.Ceiling(target) - value,
+            ">" => (int)Math.Floor(target) + 1 - value,
+            _ => null,
+        };
+        if (wait is int w && w > 0)
+        {
+            var year = EmpireFacts.GameStartYear + yearsPassed + w;
+            return $"{now} · true in {w} year{(w == 1 ? "" : "s")} ({year.ToString(CultureInfo.InvariantCulture)})";
+        }
+        return $"{now} · no longer possible";
+    }
+
+    static Truth Compare(double a, string op, double b) => op switch
+    {
+        "=" or "==" => Of(a == b),
+        ">" => Of(a > b),
+        ">=" => Of(a >= b),
+        "<" => Of(a < b),
+        "<=" => Of(a <= b),
+        "!=" => Of(a != b),
+        _ => Truth.Unknown,
+    };
 
     static bool HasParameter(PdxBlock b) =>
         b.Entries.Any(e => e.Key.Contains('$') || e.Value is string s && s.Contains('$') || e.Value is PdxBlock inner && HasParameter(inner))

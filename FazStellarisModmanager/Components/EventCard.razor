@@ -1,0 +1,98 @@
+@using System.Text.RegularExpressions
+@using FazStellarisModmanager.Core.Conditions
+@inject EventGraphService Service
+
+<div class="evt-card">
+    @if (Event.Picture is not null)
+    {
+        if (_picture is not null)
+        {
+            <img class="evt-pic" src="@_picture" alt="" />
+        }
+        else
+        {
+            <div class="evt-pic placeholder">@(_loading ? "Loading picture…" : Event.Picture)</div>
+        }
+    }
+    <h3 class="evt-title">@(Event.Title ?? "(no title)")</h3>
+    <div class="evt-tags">
+        <span class="tag evt-type">@Event.Type</span>
+        @if (Event.Hidden) { <span class="tag">hidden</span> }
+        <span class="tag">@(Event.TriggeredOnly ? "triggered only" : "fires on its own")</span>
+        <span class="tag @(Event.Source.IsBaseGame ? "" : "modtext")">@Event.Source.SourceName · @Event.Source.File</span>
+        <span class="tag">@Event.Id</span>
+    </div>
+    <div class="evt-desc">
+        @if (Event.Description is null)
+        {
+            <span class="muted">No description.</span>
+        }
+        else
+        {
+            foreach (var part in Commands.Split(Event.Description))
+            {
+                if (part.Length > 1 && part[0] == '[' && part[^1] == ']')
+                {
+                    <span class="evcmd">@part</span>
+                }
+                else
+                {
+                    <span>@part</span>
+                }
+            }
+        }
+        @if (Event.DescriptionVaries) { <div class="muted small">(the text depends on conditions; showing the first)</div> }
+    </div>
+
+    <div class="muted small evt-hint">Options: click one to see what it fires</div>
+    @if (Event.Options.Count == 0)
+    {
+        <div class="muted small">This event has no options.</div>
+    }
+    @foreach (var option in Event.Options)
+    {
+        var index = option.Index;
+        <div class="evt-opt @(index == Selected ? "on" : "")" @onclick="() => OptionIndexChanged.InvokeAsync(index)">
+            <span class="n">@(index + 1)</span>
+            <span class="grow">@option.Name</span>
+            @if (option.Calls.Count > 0) { <span class="tag">fires @option.Calls.Count</span> }
+        </div>
+    }
+
+    <div class="evt-fires">
+        <h4>@(Event.Options.Count > 0 ? $"Option {Selected + 1} fires" : "Fires")</h4>
+        <EventFires @key="@($"{Event.Id}|{Selected}")" Graph="Graph" Event="Event" OptionIndex="Selected" Facts="Facts" OnSelect="OnSelect"
+                    Path="@(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Event.Id })" />
+        @if (!Event.AllCalls.Any()) { <div class="muted small">This event fires no other events.</div> }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EventGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public EventInfo Event { get; set; } = default!;
+    [Parameter] public int OptionIndex { get; set; }
+    [Parameter] public EventCallback<int> OptionIndexChanged { get; set; }
+    [Parameter] public EmpireFacts? Facts { get; set; }
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+
+    static readonly Regex Commands = new(@"(\[[^\[\]]+\])", RegexOptions.Compiled);
+
+    string? _picture;
+    bool _loading;
+    EventInfo? _shown;
+
+    int Selected => Event.Options.Count == 0 ? 0 : Math.Clamp(OptionIndex, 0, Event.Options.Count - 1);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ReferenceEquals(_shown, Event)) return;
+        var ev = _shown = Event;
+        (_picture, _loading) = (null, ev.Picture is not null);
+        if (ev.Picture is null) return;
+        string? loaded;
+        try { loaded = await Service.EventPictureAsync(ev); }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or OperationCanceledException or ObjectDisposedException) { loaded = null; }
+        if (!ReferenceEquals(_shown, ev)) return;
+        (_picture, _loading) = (loaded, false);
+    }
+}

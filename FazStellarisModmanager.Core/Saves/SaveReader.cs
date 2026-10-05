@@ -22,7 +22,7 @@ public static class SaveReader
 
         var data = new byte[stateEntry.Length];
         using (var stream = stateEntry.Open()) stream.ReadExactly(data);
-        var (players, countries, community, megastructures, globalFlags) = GamestateScanner.ScanWithGlobals(data);
+        var (players, countries, community, megastructures, globalFlags) = GamestateScanner.ScanWithGlobals(data, out var galaxy);
 
         return new GameSnapshot(
             meta.GetString("name") ?? Path.GetFileNameWithoutExtension(path),
@@ -35,6 +35,7 @@ public static class SaveReader
             community,
             megastructures,
             GlobalFlags: globalFlags,
-            Dlcs: meta.GetBlock("required_dlcs")?.StringItems.ToList() ?? []);
+            Dlcs: meta.GetBlock("required_dlcs")?.StringItems.ToList() ?? [],
+            Galaxy: galaxy);
     }
 }

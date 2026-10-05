@@ -119,9 +119,12 @@ public sealed class TechTreeService
     /// PNG data URI of an event's picture, decoded once per tree on the thread pool; null when the sprite or texture is missing.
     /// A null or failed result is not kept, so a later call retries.
     /// </summary>
-    public async Task<string?> EventPictureAsync(GameEvent ev)
+    public Task<string?> EventPictureAsync(GameEvent ev) => EventPictureAsync(ev.Picture);
+
+    /// <summary>PNG data URI of an event picture by sprite name (see <see cref="EventPictureAsync(GameEvent)"/>).</summary>
+    public async Task<string?> EventPictureAsync(string? picture)
     {
-        if (_current is not { } tree || ev.Picture is not { } sprite) return null;
+        if (_current is not { } tree || picture is not { } sprite) return null;
         var entry = tree.Pictures.GetOrAdd(sprite, name => new Lazy<Task<string?>>(() => Task.Run(() =>
         {
             if (tree.Database.Sprites.Find(name) is not { } info) return null;

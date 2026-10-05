@@ -80,4 +80,14 @@ public class SaveFactsTests
         Assert.Equal(["g"], none.GlobalFlags);
         Assert.Equal(["Utopia"], none.Dlcs);
     }
+
+    [Fact]
+    public void Reads_galaxy_setup()
+    {
+        var state = "galaxy=" + (char)10 + "{" + (char)10 + "	template=\"huge\"" + (char)10 + "	mid_game_start=100" + (char)10 + "	end_game_start=200" + (char)10 + "	victory_year=300" + (char)10 + "}" + (char)10;
+        GamestateScanner.ScanWithGlobals(System.Text.Encoding.UTF8.GetBytes(state), out var galaxy);
+        Assert.Equal(new GalaxySettings(100, 200, 300), galaxy);
+        GamestateScanner.ScanWithGlobals(System.Text.Encoding.UTF8.GetBytes("date=\"2300.01.01\""), out var none);
+        Assert.Null(none);
+    }
 }

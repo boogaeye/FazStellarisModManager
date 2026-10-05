@@ -1,0 +1,55 @@
+@using FazStellarisModmanager.Core.Conditions
+@* What an event fires: its own immediate and after calls and its options' calls. *@
+@if (AllOptions)
+{
+    @Section("When the event fires", Event.ImmediateCalls)
+    @foreach (var option in Event.Options.Where(o => o.Calls.Count > 0))
+    {
+        @Section($"Option {option.Index + 1}: {option.Name}", option.Calls)
+    }
+    @Section("After an option", Event.AfterCalls)
+}
+else
+{
+    @if (Option is { } selected)
+    {
+        @if (selected.Calls.Count == 0)
+        {
+            <div class="muted small">Option @(selected.Index + 1) fires no events.</div>
+        }
+        else
+        {
+            <EventCallList Graph="Graph" Calls="selected.Calls" Facts="Facts" OnSelect="OnSelect" Path="Path" />
+        }
+    }
+    @Section("When the event fires", Event.ImmediateCalls)
+    @Section("After an option", Event.AfterCalls)
+}
+
+@code {
+    [Parameter, EditorRequired] public EventGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public EventInfo Event { get; set; } = default!;
+    /// <summary>Show every option's calls (nested view) instead of just the selected one.</summary>
+    [Parameter] public bool AllOptions { get; set; }
+    [Parameter] public int OptionIndex { get; set; }
+    [Parameter] public EmpireFacts? Facts { get; set; }
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+    [Parameter] public IReadOnlySet<string> Path { get; set; } = new HashSet<string>();
+
+    EventOptionInfo? Option => OptionIndex >= 0 && OptionIndex < Event.Options.Count ? Event.Options[OptionIndex] : null;
+
+    RenderFragment Section(string title, IReadOnlyList<EventCall> calls) => calls.Count == 0 ? (builder => { }) : (builder =>
+    {
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "class", "evt-section");
+        builder.AddContent(2, title);
+        builder.CloseElement();
+        builder.OpenComponent<EventCallList>(3);
+        builder.AddAttribute(4, "Graph", Graph);
+        builder.AddAttribute(5, "Calls", calls);
+        builder.AddAttribute(6, "Facts", Facts);
+        builder.AddAttribute(7, "OnSelect", OnSelect);
+        builder.AddAttribute(8, "Path", Path);
+        builder.CloseComponent();
+    });
+}

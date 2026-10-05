@@ -55,9 +55,11 @@ public sealed class TechDatabase
 
     TechDatabase(Dictionary<string, Tech> techs, Dictionary<string, IReadOnlyList<string>> dependents, List<string> warnings, List<string> sourceNames,
         IReadOnlyDictionary<string, IReadOnlyList<Unlock>> unlocks, SpriteIndex sprites, GrantIndex grants,
-        IReadOnlyDictionary<string, PdxBlock> scriptedTriggers)
+        IReadOnlyDictionary<string, PdxBlock> scriptedTriggers, Localisation localisation, ScriptLibrary scripts)
     {
         Techs = techs;
+        Localisation = localisation;
+        Scripts = scripts;
         ScriptedTriggers = scriptedTriggers;
         _dependents = dependents;
         Warnings = warnings.Distinct().ToList();
@@ -98,6 +100,12 @@ public sealed class TechDatabase
 
     /// <summary>common/scripted_triggers of the sources (name to body), for evaluating conditions.</summary>
     public IReadOnlyDictionary<string, PdxBlock> ScriptedTriggers { get; }
+
+    /// <summary>The localisation the database was built with (scripted loc, job swaps and scripted triggers set), for the event graph.</summary>
+    public Localisation Localisation { get; }
+
+    /// <summary>Scripted effects and inline scripts of the sources, for the event graph.</summary>
+    public ScriptLibrary Scripts { get; }
 
     public int Count(TechArea? area) => area is null ? Techs.Count : Techs.Values.Count(t => t.Area == area);
 
@@ -198,6 +206,7 @@ public sealed class TechDatabase
         IReadOnlyDictionary<string, IReadOnlyList<Unlock>> unlocks;
         SpriteIndex sprites;
         IReadOnlyDictionary<string, PdxBlock> scriptedTriggers = new Dictionary<string, PdxBlock>();
+        Localisation loc;
         try
         {
             progress?.Report("Collecting technology files…");
@@ -237,7 +246,7 @@ public sealed class TechDatabase
             }
 
             progress?.Report("Reading localisation…");
-            var loc = Localisation.Load(sources, warnings);
+            loc = Localisation.Load(sources, warnings);
             loc.Scripted = ScriptedLoc.Build(sources, warnings, ct);
             progress?.Report("Reading job swaps…");
             loc.Jobs = JobSwaps.From(CommonDefinitions.Load(sources, "common/pop_jobs", warnings, ct));
@@ -288,6 +297,7 @@ public sealed class TechDatabase
 
         progress?.Report("Finding events and other sources that grant technologies…");
         var grants = grantScan.GetAwaiter().GetResult();
+        var library = grantRead.GetAwaiter().GetResult().Library;
         warnings.AddRange(unlockWarnings);
         warnings.AddRange(spriteWarnings);
         warnings.AddRange(grantWarnings);
@@ -305,7 +315,7 @@ public sealed class TechDatabase
             .Where(n => techs.Values.Any(t => t.Source.SourceName == n)).ToList();
         return new TechDatabase(techs,
             dependents.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value.Order(StringComparer.Ordinal).ToList(), StringComparer.OrdinalIgnoreCase),
-            warnings, sourceNames, unlocks, sprites, grants, scriptedTriggers);
+            warnings, sourceNames, unlocks, sprites, grants, scriptedTriggers, loc, library);
     }
 
     static Dictionary<string, FileWinner> Winners(IReadOnlyList<ContentSource> sources, string folder, bool topLevelOnly)

@@ -6,6 +6,7 @@ using System.Threading;
 using FazStellarisModmanager.Core;
 using FazStellarisModmanager.Core.Conflicts;
 using FazStellarisModmanager.Core.Library;
+using FazStellarisModmanager.Core.Events;
 using FazStellarisModmanager.Core.Lists;
 using FazStellarisModmanager.Core.Saves;
 using FazStellarisModmanager.Core.Session;
@@ -63,6 +64,7 @@ public static class AppServices
             sp.GetRequiredService<LiveViewerStore>(),
             () => [sp.GetRequiredService<ModManagerService>().Settings.PlayerName, Environment.UserName]));
         services.AddSingleton(sp => new TechTreeService(sp.GetRequiredService<ModManagerService>()));
+        services.AddSingleton(sp => new EventGraphService(sp.GetRequiredService<TechTreeService>()));
         services.AddSingleton(sp => new UpdateService(
             sp.GetRequiredService<ModManagerService>(),
             // No overall timeout: the download has its own stall timeout and the checker its own 15 s limit.

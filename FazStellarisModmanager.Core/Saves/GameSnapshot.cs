@@ -98,4 +98,8 @@ public sealed record GameSnapshot(
     IReadOnlyDictionary<int, IReadOnlyList<string>>? Megastructures = null,
     IReadOnlyDictionary<int, FazStellarisModmanager.Core.Diplomacy.DiploBreakdown>? Diplo = null,
     IReadOnlyList<string>? GlobalFlags = null,
-    IReadOnlyList<string>? Dlcs = null);
+    IReadOnlyList<string>? Dlcs = null,
+    GalaxySettings? Galaxy = null);
+
+/// <summary>Galaxy setup values from the save's top-level galaxy block: when the mid and end game start, in years after the game start.</summary>
+public sealed record GalaxySettings(int? MidGameStart, int? EndGameStart, int? VictoryYear);
