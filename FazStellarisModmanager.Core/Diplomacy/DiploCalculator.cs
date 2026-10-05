@@ -26,6 +26,22 @@ public sealed record DiploBreakdown(DiploPart Fleet, DiploPart Pops, DiploPart E
 
 public static class DiploCalculator
 {
+    // A later resolution of the same chain (category = second segment of resolution_<category>_<name>) replaces the earlier ones.
+    // Keys without that shape count individually. Order of the result follows the surviving resolutions' passing order.
+    static IEnumerable<string> LatestPerCategory(IReadOnlyList<string> passed)
+    {
+        string? Category(string key)
+        {
+            var parts = key.Split('_');
+            return parts.Length >= 3 && parts[0] == "resolution" ? parts[1] : null;
+        }
+        var last = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < passed.Count; i++)
+            if (Category(passed[i]) is { } cat) last[cat] = i;
+        for (var i = 0; i < passed.Count; i++)
+            if (Category(passed[i]) is not { } cat || last[cat] == i) yield return passed[i];
+    }
+
     /// <param name="lookup">The catalog's Get (injectable for tests).</param>
     /// <param name="name">Display name for a source key (localisation, or the key).</param>
     public static DiploBreakdown Compute(SaveCountry c, GameSnapshot snapshot, Func<DiploSource, string, DiploMods?> lookup,
@@ -57,7 +73,7 @@ public static class DiploCalculator
 
         if (snapshot.Community is { } gc && gc.Members.Contains(c.Id))
         {
-            foreach (var r in gc.PassedResolutions) Add(DiploSource.Resolution, r);
+            foreach (var r in LatestPerCategory(gc.PassedResolutions)) Add(DiploSource.Resolution, r);
             if (gc.Council.Contains(c.Id)) Add(DiploSource.StaticModifier, "council_member");
         }
 

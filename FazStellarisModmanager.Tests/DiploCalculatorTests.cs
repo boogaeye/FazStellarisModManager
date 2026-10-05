@@ -86,4 +86,18 @@ public class DiploCalculatorTests
         Assert.True(b.Real < 0);
         Assert.Equal(0, b.InGame);
     }
+
+    [Fact]
+    public void Only_the_latest_passed_resolution_per_category_applies()
+    {
+        var catalog = new FakeCatalog()
+            .Add(DiploSource.Resolution, "resolution_md_a", new DiploMods(0, 0.2, 0, 0, 0))
+            .Add(DiploSource.Resolution, "resolution_md_b", new DiploMods(0, 1.0, 0, 0, 0))
+            .Add(DiploSource.Resolution, "resolution_ind_x", new DiploMods(0, 0, 0.4, 0, 0));
+        var me = Me(CountryHoldings.Empty);
+        var gc = new GalacticCommunity([0], [], ["resolution_md_a", "resolution_ind_x", "resolution_md_b"]);
+        var b = DiploCalculator.Compute(me, Snap(me, gc), Lookup(catalog), DiploDefines.Vanilla, (s, k) => k);
+        Assert.Equal([new DiploBonus("resolution_md_b", 1.0)], b.Fleet.Bonuses);
+        Assert.Equal([new DiploBonus("resolution_ind_x", 0.4)], b.Economy.Bonuses);
+    }
 }
