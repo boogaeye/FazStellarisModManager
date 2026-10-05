@@ -37,12 +37,12 @@ public static class DefinitionRules
     // Folders whose blocks use a wrapper keyword and carry the real name in a "key" or "name" field.
     static readonly HashSet<string> KeyFieldFolders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "section_templates", "component_templates", "component_sets", "special_projects",
+        "section_templates", "component_templates", "component_sets", "special_projects", "message_types",
     };
 
     static readonly HashSet<string> NameFieldFolders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "global_ship_designs", "scripted_loc", "ship_behaviors",
+        "global_ship_designs", "scripted_loc", "ship_behaviors", "ambient_objects",
     };
 
     /// <summary>The folder ("common/buildings", "events") and kind of a scanned script file, or null when the file is not scanned.</summary>

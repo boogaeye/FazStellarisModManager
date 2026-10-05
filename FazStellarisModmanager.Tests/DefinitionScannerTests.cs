@@ -82,6 +82,8 @@ public class DefinitionScannerTests
     [InlineData("Common/Defines/zz_defines.txt", "common/defines", DefinitionKind.Defines)]
     [InlineData("events/gme_events.txt", "events", DefinitionKind.Events)]
     [InlineData("common/buildings/sub/x.txt", "common/buildings", DefinitionKind.TopLevel)]
+    [InlineData("common/message_types/a.txt", "common/message_types", DefinitionKind.KeyField)]
+    [InlineData("common/ambient_objects/a.txt", "common/ambient_objects", DefinitionKind.NameField)]
     [InlineData("common/section_templates/a.txt", "common/section_templates", DefinitionKind.KeyField)]
     [InlineData("common/component_templates/a.txt", "common/component_templates", DefinitionKind.KeyField)]
     [InlineData("common/component_sets/a.txt", "common/component_sets", DefinitionKind.KeyField)]
