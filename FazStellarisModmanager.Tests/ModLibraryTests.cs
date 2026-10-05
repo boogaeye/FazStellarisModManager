@@ -52,7 +52,7 @@ public class ModLibraryTests
         using var fake = new FakeInstall();
         ModLibrary.EnsureWorkshopDescriptors(fake.UserDir, fake.WorkshopDir);
         // Irony-style local copy that keeps the remote id: must stay local
-        fake.Write("user/mod/8cde_copy.mod", "name=\"Copy\"\npath=\"mod/copy\"\nremote_file_id=\"111\"\n");
+        fake.Write("user/mod/8cde_copy.mod", "name=\"Copy\"\npath=\"mod/copy\"\nremote_file_id=\"111\"\npicture=\"thumbnail.png\"\n");
 
         var mods = ModLibrary.Scan(fake.UserDir);
 
@@ -65,6 +65,8 @@ public class ModLibraryTests
         Assert.Equal(ModSource.Local, local.Source);
         Assert.Equal(Path.Combine(fake.UserDir, "mod", "local"), local.ContentPath);
         Assert.Equal("111", mods.Single(m => m.Key == "local:8cde_copy.mod").RemoteId);
+        Assert.Equal("thumbnail.png", mods.Single(m => m.Key == "local:8cde_copy.mod").Picture);
+        Assert.Null(ws.Picture);
     }
 
     [Fact]
