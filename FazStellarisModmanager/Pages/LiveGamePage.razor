@@ -1,28 +1,41 @@
 @page "/live"
 @implements IAsyncDisposable
-@inject LiveGameService Live
-@inject LiveViewerStore Viewers
+@inject LiveFeed Feed
 @inject ModManagerService Manager
 @inject IJSRuntime JS
 
 <div class="live-page">
-    <div class="live-bar @(Live.Current is null ? "" : "ok")">
+    <div class="live-bar @(Feed.Source == LiveSource.HostDisconnected ? "warn" : Feed.Current is null ? "" : "ok")">
         <span class="dot"></span>
-        @if (Live.Current is { } s)
+        @if (Feed.Current is { } s)
         {
-            <b>@s.SaveName</b>
-            <span class="muted">· game date @s.Date · saved @Ago(s.SavedUtc) · @Path.GetFileName(s.SavePath)</span>
+            @if (Feed.Source == LiveSource.Host)
+            {
+                <b>Live from @(Feed.HostName ?? "the host")</b>
+                <span class="muted">· game date @s.Date · received @Ago(Feed.ReceivedUtc!.Value)</span>
+            }
+            else if (Feed.Source == LiveSource.HostDisconnected)
+            {
+                <b>Host disconnected</b>
+                <span class="muted">· showing @s.Date from @Ago(Feed.ReceivedUtc!.Value)</span>
+                <button class="small" @onclick="() => Feed.UseLocal()">Use my own saves</button>
+            }
+            else
+            {
+                <b>@s.SaveName</b>
+                <span class="muted">· game date @s.Date · saved @Ago(s.SavedUtc) · @Path.GetFileName(s.SavePath)</span>
+            }
         }
         else
         {
-            <b>@(Live.Status ?? "Looking for saves…")</b>
+            <b>@(Feed.Status ?? "Looking for saves…")</b>
         }
-        @if (Live.Reading)
+        @if (Feed.Reading)
         {
             <span class="muted">· reading a newer save…</span>
         }
         <span class="spacer"></span>
-        @if (Live.Current is { Players.Count: > 1 } multi)
+        @if (Feed.Source != LiveSource.HostDisconnected && Feed.Current is { Players.Count: > 1 } multi)
         {
             <label class="inline">Viewing as
                 <select value="@(viewer?.ToString() ?? "")" @onchange="PickViewer">
@@ -35,16 +48,16 @@
             </label>
         }
     </div>
-    @if (Live.Error is not null)
+    @if (Feed.Error is not null)
     {
-        <p class="status error">@Live.Error</p>
+        <p class="status error">@Feed.Error</p>
     }
 
-    @if (Live.Current is { } snap && viewer is null && snap.Players.Count > 1)
+    @if (Feed.Current is { } snap && viewer is null && snap.Players.Count > 1)
     {
         <p class="status">Choose who you are in this game ("Viewing as") to see the scoreboard from your empire's point of view.</p>
     }
-    else if (Live.Current is { } snap2 && me is not null)
+    else if (Feed.Current is { } snap2 && me is not null)
     {
         <div class="live-grid">
             <aside class="live-side">
@@ -125,8 +138,8 @@
 
     protected override void OnInitialized()
     {
-        Live.Changed += OnLiveChanged;
-        Live.Start();
+        Feed.Changed += OnLiveChanged;
+        Feed.Start();
         Rebuild();
         clock = new Timer(_ => _ = InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
         _ = LoadDefinesAsync();
@@ -136,29 +149,24 @@
 
     void Rebuild()
     {
-        if (Live.Current is not { } s) return;
-        var key = s.SavePath + "|" + s.SavedUtc.Ticks;
-        if (builtFor != key)
+        viewer = Feed.ViewerId;
+        if (Feed.Current is not { } s)
         {
-            builtFor = key;
-            viewer = LiveViewer.Resolve(s, [Manager.Settings.PlayerName, Environment.UserName], Viewers.Get(s.SaveName));
+            me = null;
+            rows = [];
+            builtFor = null;
+            return;
         }
+        // Host data has only a file name, so the date is part of the key.
+        builtFor = s.SavePath + "|" + s.Date + "|" + s.SavedUtc.Ticks;
         me = viewer is int v ? s.Countries.FirstOrDefault(c => c.Id == v) : null;
         rows = viewer is int id ? LiveBoard.Build(s, id) : [];
     }
 
-    void PickViewer(ChangeEventArgs e)
+    async Task PickViewer(ChangeEventArgs e)
     {
-        if (Live.Current is not { } s) return;
-        if (int.TryParse(e.Value?.ToString(), out var id))
-        {
-            viewer = id;
-            try { Viewers.Set(s.SaveName, id); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        }
-        else viewer = null;
-        me = viewer is int v ? s.Countries.FirstOrDefault(c => c.Id == v) : null;
-        rows = viewer is int vid ? LiveBoard.Build(s, vid) : [];
+        await Feed.SetViewerAsync(int.TryParse(e.Value?.ToString(), out var id) ? id : null);
+        Rebuild();
     }
 
     // Defines from the game and the applied mod list; vanilla values if anything goes wrong.
@@ -242,7 +250,7 @@
 
     public async ValueTask DisposeAsync()
     {
-        Live.Changed -= OnLiveChanged;
+        Feed.Changed -= OnLiveChanged;
         clock?.Dispose();
         if (module is not null)
         {

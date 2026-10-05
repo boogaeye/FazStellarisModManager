@@ -93,6 +93,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         _host = host;
         if (live is not null)
         {
+            live.Start();
             live.Changed += PushLive;
             host.UpdateLive(live.Current);
         }

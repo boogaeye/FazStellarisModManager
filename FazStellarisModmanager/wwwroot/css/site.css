@@ -271,6 +271,7 @@ table.ctable .why { color: var(--muted); }
 .live-bar { display: flex; gap: .5rem; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .45rem .7rem; }
 .live-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .live-bar.ok .dot { background: #6fcf97; }
+.live-bar.warn .dot { background: #f2c94c; }
 .live-bar .spacer, .live-side .spacer { flex: 1; }
 .live-grid { display: grid; grid-template-columns: 290px 1fr; gap: .7rem; flex: 1; min-height: 0; }
 .live-side { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: .8rem; overflow: auto; }
