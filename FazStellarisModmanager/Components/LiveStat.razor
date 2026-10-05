@@ -1,0 +1,14 @@
+@if (Value is not { } v)
+{
+    <span class="unknown">???</span>
+}
+else
+{
+    <span class="@(v.Overflowed ? "ovf" : "")" title="@(v.Overflowed ? $"Overflowed in game (shows {v.Raw:N0}); real value ≈ {v.Real:N0}" : null)">
+        @v.Real.ToString("N0")@(v.Overflowed ? " ⚠" : "")
+    </span>
+}
+
+@code {
+    [Parameter] public StatValue? Value { get; set; }
+}

@@ -1,0 +1,253 @@
+@page "/live"
+@implements IAsyncDisposable
+@inject LiveGameService Live
+@inject LiveViewerStore Viewers
+@inject ModManagerService Manager
+@inject IJSRuntime JS
+
+<div class="live-page">
+    <div class="live-bar @(Live.Current is null ? "" : "ok")">
+        <span class="dot"></span>
+        @if (Live.Current is { } s)
+        {
+            <b>@s.SaveName</b>
+            <span class="muted">· game date @s.Date · saved @Ago(s.SavedUtc) · @Path.GetFileName(s.SavePath)</span>
+        }
+        else
+        {
+            <b>@(Live.Status ?? "Looking for saves…")</b>
+        }
+        @if (Live.Reading)
+        {
+            <span class="muted">· reading a newer save…</span>
+        }
+        <span class="spacer"></span>
+        @if (Live.Current is { Players.Count: > 1 } multi)
+        {
+            <label class="inline">Viewing as
+                <select value="@(viewer?.ToString() ?? "")" @onchange="PickViewer">
+                    <option value="">Choose…</option>
+                    @foreach (var p in multi.Players)
+                    {
+                        <option value="@p.CountryId">@p.Name</option>
+                    }
+                </select>
+            </label>
+        }
+    </div>
+    @if (Live.Error is not null)
+    {
+        <p class="status error">@Live.Error</p>
+    }
+
+    @if (Live.Current is { } snap && viewer is null && snap.Players.Count > 1)
+    {
+        <p class="status">Choose who you are in this game ("Viewing as") to see the scoreboard from your empire's point of view.</p>
+    }
+    else if (Live.Current is { } snap2 && me is not null)
+    {
+        <div class="live-grid">
+            <aside class="live-side">
+                <div class="head">
+                    <span class="lflag big" style="background:@FlagColor(me.Flag)">@Initial(CountryNames.Display(me))</span>
+                    <div>
+                        <h3>@CountryNames.Display(me)</h3>
+                        <div class="muted">You@(PlayerOf(snap2, me.Id) is { } pn ? " · " + pn : "")</div>
+                    </div>
+                    <span class="spacer"></span>
+                    <span class="lrank">#@me.VictoryRank</span>
+                </div>
+                <div class="lstat"><span>Victory score</span><LiveStat Value="new StatValue(me.VictoryScore)" /></div>
+                <div class="lstat">
+                    <span>Diplomatic weight</span>
+                    @if (me.CachedDiploWeight is double cached)
+                    {
+                        <span title="Stored by the Galactic Market Overhaul mod">@cached.ToString("N0")</span>
+                    }
+                    else
+                    {
+                        <span title="Estimate before bonuses; see the breakdown">@Estimate.Min.ToString("N0")–@Estimate.Max.ToString("N0")</span>
+                    }
+                </div>
+                <details class="ldiplo">
+                    <summary>Diplomatic weight breakdown</summary>
+                    <div class="lstat"><span>Fleet power × @defines.Naval</span><span>@Estimate.Naval.ToString("N0")</span></div>
+                    <div class="lstat"><span>Economy power × @defines.Economy</span><span>@Estimate.Economy.ToString("N0")</span></div>
+                    <div class="lstat"><span>Tech power × @defines.Technology</span><span>@Estimate.Tech.ToString("N0")</span></div>
+                    <div class="lstat"><span>Pops (by happiness)</span><span>@Estimate.PopsMin.ToString("N0")–@Estimate.PopsMax.ToString("N0")</span></div>
+                    <div class="lstat"><span>Base before bonuses</span><span>@Estimate.Min.ToString("N0")–@Estimate.Max.ToString("N0")</span></div>
+                    <p class="muted">The game then multiplies this by bonuses (Galactic Community resolutions and other modifiers).@(me.CachedDiploWeight is not null ? " The total above comes from the Galactic Market Overhaul mod." : "")</p>
+                </details>
+                <div class="lstat"><span>Military power</span><LiveStat Value="new StatValue(me.MilitaryPower)" /></div>
+                <div class="lstat"><span>Economy power</span><LiveStat Value="new StatValue(me.EconomyPower)" /></div>
+                <div class="lstat"><span>Tech power</span><LiveStat Value="new StatValue(me.TechPower)" /></div>
+                <div class="lstat"><span>Fleet size</span><LiveStat Value="new StatValue(me.FleetSize)" /></div>
+                <div class="lstat"><span>Empire size</span><LiveStat Value="new StatValue(me.EmpireSize)" /></div>
+                <div class="lstat"><span>Pops</span><LiveStat Value="new StatValue(me.Pops)" /></div>
+                <p class="muted">Known empires: @rows.Count(r => r.Known && !r.IsViewer) of @(rows.Count - 1)</p>
+            </aside>
+            <div class="live-board" @ref="boardEl">
+                <div class="lhdr"><span>#</span><span></span><span>Empire</span><span>Score</span><span>Military</span><span>Economy</span><span>Tech</span><span>Fleet</span></div>
+                @foreach (var r in rows)
+                {
+                    <div @key="r.Id" class="lrow @(r.IsViewer ? "me" : "") @(r.Known ? "" : "unknown")" data-id="@r.Id" data-rank="@r.Rank">
+                        <span class="pos">@r.Rank</span>
+                        <span class="lflag" style="background:@(r.Known ? FlagColor(r.Flag) : "var(--border)")">@(r.Known ? Initial(r.Name) : "?")</span>
+                        <span class="who">@r.Name
+                            @if (r.IsViewer) { <span class="pl">YOU</span> }
+                            else if (r.PlayerName is { } player) { <span class="pl">@player</span> }
+                        </span>
+                        <span class="num"><LiveStat Value="r.Score" /></span>
+                        <span class="num"><LiveStat Value="r.Military" /></span>
+                        <span class="num"><LiveStat Value="r.Economy" /></span>
+                        <span class="num"><LiveStat Value="r.Tech" /></span>
+                        <span class="num"><LiveStat Value="r.Fleet" /></span>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    ElementReference boardEl;
+    IJSObjectReference? module;
+    int? viewer;
+    SaveCountry? me;
+    IReadOnlyList<BoardRow> rows = [];
+    DiploDefines defines = DiploDefines.Vanilla;
+    bool definesLoaded;
+    string? animatedFor;
+    string? builtFor;
+    Timer? clock;
+
+    DiploEstimate Estimate => me is null ? new DiploEstimate(0, 0, 0, 0, 0, 0) : DiploWeight.Estimate(me, defines);
+
+    protected override void OnInitialized()
+    {
+        Live.Changed += OnLiveChanged;
+        Live.Start();
+        Rebuild();
+        clock = new Timer(_ => _ = InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        _ = LoadDefinesAsync();
+    }
+
+    void OnLiveChanged() => _ = InvokeAsync(() => { Rebuild(); StateHasChanged(); });
+
+    void Rebuild()
+    {
+        if (Live.Current is not { } s) return;
+        var key = s.SavePath + "|" + s.SavedUtc.Ticks;
+        if (builtFor != key)
+        {
+            builtFor = key;
+            viewer = LiveViewer.Resolve(s, [Manager.Settings.PlayerName, Environment.UserName], Viewers.Get(s.SaveName));
+        }
+        me = viewer is int v ? s.Countries.FirstOrDefault(c => c.Id == v) : null;
+        rows = viewer is int id ? LiveBoard.Build(s, id) : [];
+    }
+
+    void PickViewer(ChangeEventArgs e)
+    {
+        if (Live.Current is not { } s) return;
+        if (int.TryParse(e.Value?.ToString(), out var id))
+        {
+            viewer = id;
+            try { Viewers.Set(s.SaveName, id); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        else viewer = null;
+        me = viewer is int v ? s.Countries.FirstOrDefault(c => c.Id == v) : null;
+        rows = viewer is int vid ? LiveBoard.Build(s, vid) : [];
+    }
+
+    // Defines from the game and the applied mod list; vanilla values if anything goes wrong.
+    async Task LoadDefinesAsync()
+    {
+        if (definesLoaded) return;
+        definesLoaded = true;
+        try
+        {
+            if (Manager.Library.Count == 0) await Manager.RefreshLibraryAsync();
+            var loaded = await Task.Run(() =>
+            {
+                var sources = new List<FazStellarisModmanager.Core.Technology.ContentSource>();
+                try
+                {
+                    var resolved = Manager.Resolve();
+                    if (resolved.GameDir is { } g) sources.Add(FazStellarisModmanager.Core.Technology.ContentSource.FromPath("game", g, isBaseGame: true));
+                    var byRel = Manager.Library.GroupBy(m => m.DescriptorRel, StringComparer.OrdinalIgnoreCase).ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+                    foreach (var e in Manager.ImportCurrent("live").Mods)
+                    {
+                        if (!byRel.TryGetValue(e.DescriptorRel, out var mod)) continue;
+                        try { sources.Add(FazStellarisModmanager.Core.Technology.ContentSource.FromPath(mod.Name, mod.ContentPath)); }
+                        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException) { }
+                    }
+                    return DiploDefines.Load(sources);
+                }
+                finally
+                {
+                    foreach (var s in sources) s.Dispose();
+                }
+            });
+            defines = loaded;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException
+                                   or System.Text.Json.JsonException or InvalidDataException)
+        {
+            defines = DiploDefines.Vanilla;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (rows.Count == 0 || builtFor is null || animatedFor == builtFor + "|" + viewer) return;
+        animatedFor = builtFor + "|" + viewer;
+        try
+        {
+            module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/livegame.js");
+            await module.InvokeVoidAsync("animate", boardEl);
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+    }
+
+    static string? PlayerOf(GameSnapshot s, int id) => s.Players.FirstOrDefault(p => p.CountryId == id)?.Name;
+
+    static string Initial(string name) => name.Length > 0 && name != "???" ? char.ToUpperInvariant(name[0]).ToString() : "?";
+
+    static string Ago(DateTime utc)
+    {
+        var span = DateTime.UtcNow - utc;
+        if (span.TotalMinutes < 1) return "just now";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} min ago";
+        if (span.TotalHours < 48) return $"{(int)span.TotalHours} h ago";
+        return $"{(int)span.TotalDays} days ago";
+    }
+
+    static readonly Dictionary<string, string> Colors = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["red"] = "#b3261e", ["dark_red"] = "#7a1a14", ["burgundy"] = "#6d1b33", ["orange"] = "#d9761e", ["yellow"] = "#d6b31f",
+        ["light_green"] = "#6fbf4a", ["green"] = "#2e7d32", ["dark_green"] = "#1e4d22", ["turquoise"] = "#1fa7a0", ["teal"] = "#18736e",
+        ["light_blue"] = "#4aa3df", ["blue"] = "#2b5f9e", ["dark_blue"] = "#1a3566", ["indigo"] = "#3f3a8f", ["purple"] = "#6a3d9a",
+        ["pink"] = "#d0679d", ["light_grey"] = "#a6adb5", ["grey"] = "#6b737c", ["dark_grey"] = "#3c4249", ["black"] = "#1b1d21",
+        ["white"] = "#e8ebee", ["brown"] = "#7a5230", ["dark_brown"] = "#4d321c", ["beige"] = "#c8b28a",
+    };
+
+    static string FlagColor(CountryFlag? flag)
+    {
+        var name = flag?.Colors.FirstOrDefault(c => !string.Equals(c, "null", StringComparison.OrdinalIgnoreCase));
+        return name is not null && Colors.TryGetValue(name, out var hex) ? hex : "#3a4a5c";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Live.Changed -= OnLiveChanged;
+        clock?.Dispose();
+        if (module is not null)
+        {
+            try { await module.DisposeAsync(); }
+            catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+        }
+    }
+}
