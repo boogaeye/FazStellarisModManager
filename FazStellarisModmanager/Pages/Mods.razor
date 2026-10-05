@@ -3,6 +3,8 @@
 @inject IJSRuntime JS
 @inject ModManagerService Manager
 @inject ModIconCache Icons
+@inject ModFileCache FileCache
+@inject EditedModList State
 
 <div class="mods-page">
     <div class="mods-toolbar">
@@ -73,12 +75,42 @@
                 {
                     <span class="badge missing">not installed</span>
                 }
+                @if (ConflictsOf(e) is { IsHeavy: true } heavy)
+                {
+                    <button class="warnbadge" title="@heavy.Percent% of this mod's files are overwritten by mods later in the list"
+                            @onclick="() => ToggleConflicts(e)">⚠ @heavy.Percent% overwritten</button>
+                }
                 @if (workshopId is not null)
                 {
                     <a class="button small" href="steam://url/CommunityFilePage/@workshopId" target="_blank" title="Open on the Steam Workshop">Workshop ↗</a>
                 }
                 <button class="small danger" title="Remove from list" @onclick="() => Remove(e)">✕</button>
             </li>
+            @if (openConflicts.Contains(e) && ConflictsOf(e) is { IsHeavy: true } c)
+            {
+                <li class="conflict-panel">
+                    <h4>@c.Overwritten of @c.Total files are overwritten by mods later in the list</h4>
+                    @foreach (var g in c.Groups)
+                    {
+                        var winner = g.WinnerIndex < analyzed.Count ? analyzed[g.WinnerIndex] : null;
+                        var winnerPos = winner is null ? -1 : IndexOf(winner);
+                        var all = expandedGroups.Contains((e, g.WinnerIndex));
+                        <div class="cgroup">by #@(winnerPos >= 0 ? (winnerPos + 1).ToString() : "?") @(winner?.Name ?? "a removed mod") (@g.Files.Count @(g.Files.Count == 1 ? "file" : "files"))</div>
+                        <ul>
+                            @foreach (var f in all ? g.Files : g.Files.Take(10))
+                            {
+                                <li>@f</li>
+                            }
+                        </ul>
+                        @if (!all && g.Files.Count > 10)
+                        {
+                            var key = (e, g.WinnerIndex);
+                            <button class="link" @onclick="() => expandedGroups.Add(key)">… @(g.Files.Count - 10) more</button>
+                        }
+                    }
+                    <p class="muted">Usually means this mod has little effect here. Move it below those mods, or remove it.</p>
+                </li>
+            }
         }
     </ol>
 </div>
@@ -90,14 +122,14 @@
 }
 
 @code {
-    List<ModListEntry> current = [];
-    List<string> disabledDlcs = [];
-    string listName = "Current";
+    List<ModListEntry> current => State.Mods;
+    List<string> disabledDlcs => State.DisabledDlcs;
+    string listName { get => State.Name; set => State.Name = value; }
+    bool loaded => State.Loaded;
     IReadOnlyList<ModList> savedLists = [];
     string? status;
     bool error;
     bool busy;
-    bool loaded;
     bool confirmEmpty;
     string selectedList = "";
 
@@ -111,6 +143,55 @@
     Dictionary<string, InstalledMod> byKey = new(StringComparer.OrdinalIgnoreCase);
     CancellationTokenSource? iconRun;
 
+    // File-conflict results for the list as it was when last analyzed (by entry reference); shown until a newer run finishes.
+    Dictionary<ModListEntry, ModConflicts> conflicts = new(ReferenceEqualityComparer.Instance);
+    List<ModListEntry> analyzed = [];
+    readonly HashSet<ModListEntry> openConflicts = new(ReferenceEqualityComparer.Instance);
+    readonly HashSet<(ModListEntry, int)> expandedGroups = [];
+    CancellationTokenSource? conflictRun;
+
+    // Re-checks file conflicts half a second after the last list change, off the UI thread.
+    void ScheduleConflicts()
+    {
+        State.Touch();
+        conflictRun?.Cancel();
+        conflictRun?.Dispose();
+        var run = conflictRun = new CancellationTokenSource();
+        var snapshot = current.ToList();
+        var mods = snapshot.Select(e => byKey.GetValueOrDefault(e.Key)).ToList();
+        _ = CheckConflictsAsync(snapshot, mods, run.Token);
+    }
+
+    async Task CheckConflictsAsync(List<ModListEntry> snapshot, List<InstalledMod?> mods, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(500, ct);
+            var results = await Task.Run(() =>
+            {
+                var files = mods.Select(m => m is null ? (IReadOnlyCollection<string>)[] : FileCache.Get(m.ContentPath)).ToList();
+                ct.ThrowIfCancellationRequested();
+                return ConflictAnalyzer.Analyze(files);
+            }, ct);
+            await InvokeAsync(() =>
+            {
+                if (ct.IsCancellationRequested) return;
+                analyzed = snapshot;
+                conflicts = new(ReferenceEqualityComparer.Instance);
+                for (var i = 0; i < snapshot.Count; i++) conflicts.TryAdd(snapshot[i], results[i]);
+                StateHasChanged();
+            });
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException) { }
+    }
+
+    ModConflicts? ConflictsOf(ModListEntry e) => conflicts.GetValueOrDefault(e);
+
+    void ToggleConflicts(ModListEntry e)
+    {
+        if (!openConflicts.Remove(e)) openConflicts.Add(e);
+    }
+
     protected override async Task OnInitializedAsync()
     {
         status = "Scanning mods…";
@@ -120,10 +201,12 @@
         {
             await Manager.RefreshLibraryAsync();
             savedLists = Manager.Lists.LoadAll();
-            SetList(Manager.ImportCurrent("Current"));
-            loaded = true;
+            var imported = !State.Loaded;
+            if (imported) SetList(Manager.ImportCurrent("Current"));
             LibraryChanged();
-            return $"Loaded {current.Count} enabled mods from dlc_load.json." + ErrorSuffix();
+            return imported
+                ? $"Loaded {current.Count} enabled mods from dlc_load.json." + ErrorSuffix()
+                : $"{current.Count} mods in '{listName}'." + ErrorSuffix();
         });
     }
 
@@ -136,6 +219,7 @@
         {
             await Manager.RefreshLibraryAsync();
             Icons.Refresh();
+            FileCache.Clear();
             LibraryChanged();
             return $"Found {Manager.Library.Count} installed mods." + ErrorSuffix();
         });
@@ -153,6 +237,7 @@
         var inList = InListKeys();
         var mods = Manager.Library.OrderBy(m => inList.Contains(m.Key) ? 0 : 1).ToList();
         _ = LoadIconsAsync(mods, run.Token);
+        ScheduleConflicts();
     }
 
     async Task LoadIconsAsync(List<InstalledMod> mods, CancellationToken ct)
@@ -200,6 +285,7 @@
         if (!ModListEditor.Move(current, from, to)) return;
         confirmEmpty = false;
         posVersion++;
+        ScheduleConflicts();
         StateHasChanged();
     });
 
@@ -216,6 +302,7 @@
         var to = ModListEditor.MoveTo(current, index, position);
         if (to < 0) return;
         confirmEmpty = false;
+        ScheduleConflicts();
         (status, error) = ($"Moved {current[to].Name} to position {to + 1}.", false);
     }
 
@@ -226,13 +313,18 @@
         confirmEmpty = false;
         current.RemoveAt(index);
         posVersion++;
+        ScheduleConflicts();
     }
 
     void AddMods(IReadOnlyList<InstalledMod> mods)
     {
         adding = false;
         var added = ModListEditor.AddRange(current, mods);
-        if (added > 0) confirmEmpty = false;
+        if (added > 0)
+        {
+            confirmEmpty = false;
+            ScheduleConflicts();
+        }
         (status, error) = ($"Added {added} {(added == 1 ? "mod" : "mods")}.", false);
     }
 
@@ -240,6 +332,8 @@
     {
         iconRun?.Cancel();
         iconRun?.Dispose();
+        conflictRun?.Cancel();
+        conflictRun?.Dispose();
         try
         {
             if (dragHandle is not null)
@@ -261,16 +355,14 @@
     void SetList(ModList list)
     {
         confirmEmpty = false;
-        listName = list.Name;
-        current = list.Mods.ToList();
-        disabledDlcs = list.DisabledDlcs.ToList();
+        State.Set(list);
+        ScheduleConflicts();
     }
 
     void ImportCurrent() => Run(() =>
     {
         selectedList = "";
         SetList(Manager.ImportCurrent("Current"));
-        loaded = true;
         return $"Imported {current.Count} mods from dlc_load.json.";
     });
 
@@ -295,7 +387,6 @@
         selectedList = "";
         if (name.Length == 0) return null;
         SetList(Manager.Lists.Load(name) ?? throw new InvalidOperationException($"List '{name}' not found."));
-        loaded = true;
         return $"Loaded list '{name}'.";
     });
 
