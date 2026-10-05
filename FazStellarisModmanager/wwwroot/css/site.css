@@ -393,3 +393,4 @@ button.evt-tog:hover:not(:disabled) { color: var(--accent); }
 .evt-pct { color: #6fcf97; margin-left: .3rem; }
 .evt-mod { margin-left: .5rem; }
 .evt-gap { margin-top: .5rem; }
+.cv-note { margin-left: .5rem; font-size: .72rem; color: #f2c94c; }

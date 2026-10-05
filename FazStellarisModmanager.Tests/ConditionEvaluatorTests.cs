@@ -243,4 +243,19 @@ public class ConditionEvaluatorTests
         Assert.Equal(Truth.Unknown, R("years_passed > @x", Facts() with { YearsPassed = 10 }));
         Assert.Null(EmpireFacts.YearsSinceStart(null));
     }
+
+    [Fact]
+    public void Year_conditions_say_how_long_until_they_are_true()
+    {
+        var f = Facts() with { YearsPassed = 187, MidGameStart = 100, EndGameStart = 200 };
+        string? Note(string script) => Eval(script, f).Children[0].Note;
+        Assert.Equal("now -13 · true in 63 years (2450)", Note("end_game_years_passed >= 50"));
+        Assert.Equal("now 87 · true in 13 years (2400)", Note("mid_game_years_passed >= 100"));
+        Assert.Equal("now 187 · true in 14 years (2401)", Note("years_passed > 200"));
+        Assert.Equal("now 187 · true in 1 year (2388)", Note("years_passed = 188"));
+        Assert.Equal("now 187", Note("years_passed >= 100"));
+        Assert.Equal("now 187 · no longer possible", Note("years_passed < 100"));
+        Assert.Equal("now 187 · no longer possible", Note("years_passed = 150"));
+        Assert.Null(Eval("years_passed > 5").Children[0].Note);
+    }
 }

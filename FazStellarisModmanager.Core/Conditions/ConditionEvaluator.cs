@@ -7,7 +7,8 @@ namespace FazStellarisModmanager.Core.Conditions;
 public enum Truth { True, False, Unknown }
 
 /// <summary>One condition line with its result; Children for blocks (AND/OR/NOT/…, scripted triggers, unknown scopes).</summary>
-public sealed record ConditionNode(string Text, Truth Result, IReadOnlyList<ConditionNode> Children);
+/// <summary>Note: extra context for the line, e.g. how many years until a year condition becomes true.</summary>
+public sealed record ConditionNode(string Text, Truth Result, IReadOnlyList<ConditionNode> Children, string? Note = null);
 
 /// <summary>What the viewer's empire has, from live data. Sets are case-insensitive.</summary>
 public sealed record EmpireFacts(IReadOnlySet<string> Techs, IReadOnlySet<string> Flags, IReadOnlySet<string> GlobalFlags,
@@ -57,7 +58,8 @@ public sealed class ConditionEvaluator(Func<string, PdxBlock?> scriptedTrigger)
         if (e.Value is PdxBlock b) return Block(e.Key, b, facts, depth);
         var value = (string)e.Value;
         var text = $"{e.Key} {e.Op} {value}";
-        return new ConditionNode(text, Leaf(e.Key, e.Op, value, facts, depth, out var children), children);
+        var result = Leaf(e.Key, e.Op, value, facts, depth, out var children, out var note);
+        return new ConditionNode(text, result, children, note);
     }
 
     ConditionNode Block(string key, PdxBlock b, EmpireFacts facts, int depth)
@@ -102,13 +104,17 @@ public sealed class ConditionEvaluator(Func<string, PdxBlock?> scriptedTrigger)
             ? new ConditionNode(e.Key, Truth.Unknown, UnknownEntries(inner))
             : new ConditionNode($"{e.Key} {e.Op} {e.Value}", Truth.Unknown, [])).ToList();
 
-    Truth Leaf(string key, string op, string value, EmpireFacts f, int depth, out IReadOnlyList<ConditionNode> children)
+    Truth Leaf(string key, string op, string value, EmpireFacts f, int depth, out IReadOnlyList<ConditionNode> children, out string? note)
     {
         children = [];
+        note = null;
         if (IsYearTrigger(key))
         {
-            var years = YearValue(key, f);
-            return years is int y && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) ? Compare(y, op, n) : Truth.Unknown;
+            if (YearValue(key, f) is not int y || f.YearsPassed is not int passed
+                || !double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var n)) return Truth.Unknown;
+            var result = Compare(y, op, n);
+            note = YearNote(y, op, n, result, passed);
+            return result;
         }
         if (op != "=") return Truth.Unknown;
         var yes = value.Equals("yes", StringComparison.OrdinalIgnoreCase);
@@ -166,6 +172,28 @@ public sealed class ConditionEvaluator(Func<string, PdxBlock?> scriptedTrigger)
         "end_game_years_passed" => f.YearsPassed - f.EndGameStart,
         _ => null,
     };
+
+    /// <summary>
+    /// "now 87 · true in 13 years (2400)" for a condition that time will make true, "now 187 · no longer possible" for one it never
+    /// will again (time only moves forward), and just "now N" when it already holds.
+    /// </summary>
+    public static string YearNote(int value, string op, double target, Truth result, int yearsPassed)
+    {
+        var now = "now " + value.ToString(CultureInfo.InvariantCulture);
+        if (result == Truth.True) return now;
+        int? wait = op switch
+        {
+            ">=" or "=" or "==" => (int)Math.Ceiling(target) - value,
+            ">" => (int)Math.Floor(target) + 1 - value,
+            _ => null,
+        };
+        if (wait is int w && w > 0)
+        {
+            var year = EmpireFacts.GameStartYear + yearsPassed + w;
+            return $"{now} · true in {w} year{(w == 1 ? "" : "s")} ({year.ToString(CultureInfo.InvariantCulture)})";
+        }
+        return $"{now} · no longer possible";
+    }
 
     static Truth Compare(double a, string op, double b) => op switch
     {

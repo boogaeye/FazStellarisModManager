@@ -7,7 +7,7 @@
         var (depth, node) = lines[i];
         var delay = Math.Min(i * StepMs, MaxDelayMs);
         <div class="cv-line" style="@($"--d:{delay}ms;padding-left:{depth * 1.1:0.##}rem")">
-            <span class="@MarkClass(node.Result)" title="@MarkTitle(node.Result)">@MarkChar(node.Result)</span><span class="cv-text">@node.Text</span>
+            <span class="@MarkClass(node.Result)" title="@MarkTitle(node.Result)">@MarkChar(node.Result)</span><span class="cv-text">@node.Text</span>@if (node.Note is not null) { <span class="cv-note">@node.Note</span> }
         </div>
     }
 </div>
