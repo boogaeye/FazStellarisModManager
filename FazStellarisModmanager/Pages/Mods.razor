@@ -1,5 +1,6 @@
 @page "/"
-@implements IDisposable
+@implements IAsyncDisposable
+@inject IJSRuntime JS
 @inject ModManagerService Manager
 @inject ModIconCache Icons
 
@@ -44,7 +45,7 @@
         </details>
     }
 
-    <ol class="modlist">
+    <ol class="modlist" @ref="listEl">
         @for (int i = 0; i < current.Count; i++)
         {
             var index = i;
@@ -54,14 +55,10 @@
             var installed = Manager.IsInstalled(e);
             var isWorkshop = mod?.Source == ModSource.Workshop || (mod is null && ModKeys.WorkshopId(e.Key) is not null);
             var workshopId = ModMatcher.WorkshopIdOf(e.Key, mod?.RemoteId ?? e.RemoteId);
-            <li class="mrow @RowClass(e, index) @(installed ? "" : "missing")" draggable="true"
-                @ondragstart="() => { dragged = e; overIndex = null; }"
-                @ondragenter="() => overIndex = index"
-                @ondragend="() => { dragged = null; overIndex = null; }"
-                @ondragover:preventDefault @ondrop:preventDefault @ondrop="() => Drop(e)">
+            <li class="mrow @(installed ? "" : "missing")" data-index="@index">
                 <span class="grip" title="Drag to reorder">⋮⋮</span>
-                <input @key="posVersion" class="pos" type="number" min="1" max="@current.Count" value="@(index + 1)"
-                       title="Type a position and press Enter" @ondragstart:stopPropagation="true" @onchange="ev => SetPosition(e, ev.Value)" />
+                <input @key="posVersion" class="pos" type="text" inputmode="numeric" value="@(index + 1)"
+                       title="Type a position and press Enter" @onchange="ev => SetPosition(e, ev.Value)" />
                 <ModIcon Uri="@(mod is null ? null : Icons.TryPeek(mod))" Name="@e.Name" />
                 <div class="mname">
                     <div title="@e.Name">@e.Name</div>
@@ -105,8 +102,10 @@
     string selectedList = "";
 
     string filter = "";
-    ModListEntry? dragged;
-    int? overIndex;
+    ElementReference listEl;
+    IJSObjectReference? dragModule;
+    IJSObjectReference? dragHandle;
+    DotNetObjectReference<Mods>? self;
     int posVersion;
     bool adding;
     Dictionary<string, InstalledMod> byKey = new(StringComparer.OrdinalIgnoreCase);
@@ -158,13 +157,17 @@
 
     async Task LoadIconsAsync(List<InstalledMod> mods, CancellationToken ct)
     {
-        var done = 0;
+        long lastRender = Environment.TickCount64;
         try
         {
             await Parallel.ForEachAsync(mods, new ParallelOptions { MaxDegreeOfParallelism = 3, CancellationToken = ct }, async (m, _) =>
             {
                 await Icons.GetAsync(m);
-                if (Interlocked.Increment(ref done) % 12 == 0 && !ct.IsCancellationRequested) await InvokeAsync(StateHasChanged);
+                // At most ~3 page updates a second while icons load, so scrolling stays smooth.
+                var now = Environment.TickCount64;
+                var last = Interlocked.Read(ref lastRender);
+                if (now - last >= 350 && Interlocked.CompareExchange(ref lastRender, now, last) == last && !ct.IsCancellationRequested)
+                    await InvokeAsync(StateHasChanged);
             });
             if (!ct.IsCancellationRequested) await InvokeAsync(StateHasChanged);
         }
@@ -175,31 +178,30 @@
 
     int IndexOf(ModListEntry e) => current.FindIndex(x => ReferenceEquals(x, e));
 
-    string RowClass(ModListEntry e, int index)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (dragged is null) return "";
-        if (ReferenceEquals(dragged, e)) return "dragging";
-        if (overIndex != index) return "";
-        var from = IndexOf(dragged);
-        if (from < 0) return "";
-        return from < index ? "drop-below" : "drop-above";
-    }
-
-    void Drop(ModListEntry target)
-    {
-        var d = dragged;
-        dragged = null;
-        overIndex = null;
-        if (d is null) return;
-        var from = IndexOf(d);
-        var to = IndexOf(target);
-        if (from < 0 || to < 0) return;
-        if (ModListEditor.Move(current, from, to))
+        if (!firstRender) return;
+        try
         {
-            confirmEmpty = false;
-            posVersion++;
+            self = DotNetObjectReference.Create(this);
+            dragModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/modlist.js");
+            dragHandle = await dragModule.InvokeAsync<IJSObjectReference>("attach", listEl, self);
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException or ObjectDisposedException)
+        {
+            (status, error) = ("Drag to reorder is unavailable: " + ex.Message, true);
         }
     }
+
+    // Called from js/modlist.js when a dragged row is dropped: the row at from takes the place of the row at to.
+    [JSInvokable]
+    public Task MoveRow(int from, int to) => InvokeAsync(() =>
+    {
+        if (!ModListEditor.Move(current, from, to)) return;
+        confirmEmpty = false;
+        posVersion++;
+        StateHasChanged();
+    });
 
     void SetPosition(ModListEntry e, object? value)
     {
@@ -234,10 +236,21 @@
         (status, error) = ($"Added {added} {(added == 1 ? "mod" : "mods")}.", false);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         iconRun?.Cancel();
         iconRun?.Dispose();
+        try
+        {
+            if (dragHandle is not null)
+            {
+                await dragHandle.InvokeVoidAsync("dispose");
+                await dragHandle.DisposeAsync();
+            }
+            if (dragModule is not null) await dragModule.DisposeAsync();
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+        self?.Dispose();
     }
 
     string ErrorSuffix() =>
