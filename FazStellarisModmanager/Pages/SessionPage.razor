@@ -139,9 +139,9 @@ else
     <p class="status @(error ? "error" : "")">@status</p>
 }
 
-@if (workshopNeeds is { } needs && Session.Role == SessionRole.Client)
+@if (workshopNeeds is { } needs && (Session.Role == SessionRole.Client || promptRunning))
 {
-    <WorkshopPrompt Session="Session" Workshop="Workshop" Needs="needs" OnClose="() => workshopNeeds = null" />
+    <WorkshopPrompt Session="Session" Workshop="Workshop" Needs="needs" OnRunStarted="() => promptRunning = true" OnClose="ClosePrompt" />
 }
 
 @code {
@@ -150,6 +150,9 @@ else
         u.MineName is { } mine && mine != u.Name ? $"{mine} (host: {u.Name})" : u.MineName ?? u.Name;
 
     WorkshopNeeds? workshopNeeds;
+    bool promptRunning; // the pop-up is installing/matching or showing the result: it stays open until closed
+
+    void ClosePrompt() => (workshopNeeds, promptRunning) = (null, false);
     bool opening; // working out the plan for the pop-up: further clicks are ignored
 
     // Match host: when something needs installing (or is host-only), show the Workshop pop-up instead of matching straight away.
@@ -228,8 +231,9 @@ else
             status = null;
             selectedId = null;
         }
-        // Not a client any more: drop the pop-up, so it can't come back by itself after a rejoin.
-        if (Session.Role != SessionRole.Client) workshopNeeds = null;
+        // Not a client any more: drop the pop-up, so it can't come back by itself after a rejoin. A pop-up that is
+        // running or showing its result stays, so the result (and the "host left" note) can still be read.
+        if (Session.Role != SessionRole.Client && !promptRunning) workshopNeeds = null;
         prevRole = Session.Role;
         StateHasChanged();
     });

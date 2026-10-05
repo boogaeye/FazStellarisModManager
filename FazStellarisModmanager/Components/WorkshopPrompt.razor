@@ -152,6 +152,9 @@
     [Parameter] public IWorkshopService? Workshop { get; set; }
     [Parameter, EditorRequired] public WorkshopNeeds Needs { get; set; } = default!;
     [Parameter] public EventCallback OnClose { get; set; }
+    /// <summary>A run started: from now until Close the pop-up shows its progress or summary and must stay open,
+    /// even if the session ends.</summary>
+    [Parameter] public EventCallback OnRunStarted { get; set; }
 
     enum Phase { Choose, Working, Done }
 
@@ -236,6 +239,7 @@
         CancelInfo();
         (phase, error, steamUnavailable, result, running) = (Phase.Working, null, false, null, ids);
         progress.Clear();
+        await OnRunStarted.InvokeAsync();
         try
         {
             result = await Session.InstallFromWorkshopAndMatchAsync(ids, new Sink(this));
