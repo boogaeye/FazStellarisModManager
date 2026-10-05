@@ -14,8 +14,11 @@ public static class GamestateScanner
     static readonly HashSet<string> CountryBlocks = new(StringComparer.Ordinal)
     {
         "name", "adjective", "flag", "variables", "relations_manager", "tech_status",
-        "government", "traditions", "ascension_perks", "active_policies", "edicts", "timed_modifier", "relics",
+        "government", "traditions", "ascension_perks", "active_policies", "edicts", "timed_modifier", "relics", "owned_leaders",
     };
+
+    // Ids a country's roster is built from (see AttachRosters).
+    sealed record RosterRefs(IReadOnlyList<long> OwnedLeaders, IReadOnlyList<long> CouncilPositions, long? FounderSpecies);
 
     public static (List<SavePlayer> Players, List<SaveCountry> Countries) Scan(byte[] data)
     {
@@ -29,19 +32,123 @@ public static class GamestateScanner
         var countries = new List<SaveCountry>();
         var resolutionTypes = new Dictionary<int, string>();
         var megas = new Dictionary<int, List<string>>();
+        var refs = new Dictionary<int, RosterRefs>();
+        var sections = new Dictionary<string, (int Start, int End)>(StringComparer.Ordinal);
         PdxBlock? community = null;
         var r = new Reader(data, 0, data.Length);
         while (r.NextEntry(out var key, out var value, out var body))
         {
             if (body is not { } b) continue;
             if (r.Is(key, "player")) players.AddRange(ReadPlayers(Parse(data, b)));
-            else if (r.Is(key, "country")) ScanCountries(data, b, countries);
+            else if (r.Is(key, "country")) ScanCountries(data, b, countries, refs);
             else if (r.Is(key, "resolution")) ScanResolutions(data, b, resolutionTypes);
             else if (r.Is(key, "megastructures")) ScanMegastructures(data, b, megas);
             else if (r.Is(key, "galactic_community")) community = Parse(data, b);
+            else if (r.Is(key, "leaders") || r.Is(key, "council_positions") || r.Is(key, "pop_factions") || r.Is(key, "species_db"))
+                sections[r.Text(key)] = b;
         }
+        AttachRosters(data, countries, refs, players.Select(p => p.CountryId).ToHashSet(), sections);
         return (players, countries, BuildCommunity(community, resolutionTypes),
             megas.ToDictionary(e => e.Key, e => (IReadOnlyList<string>)e.Value));
+    }
+
+    static long? Long(string? s) => long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var l) ? l : null;
+
+    static double Double(string? s) => double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : 0;
+
+    // Rosters for player countries only. The large sections (leaders, species_db) are walked with the byte reader and
+    // only the wanted entries are read.
+    static void AttachRosters(byte[] data, List<SaveCountry> countries, Dictionary<int, RosterRefs> refs, HashSet<int> playerIds,
+        Dictionary<string, (int Start, int End)> sections)
+    {
+        var wanted = countries.Where(c => playerIds.Contains(c.Id) && refs.ContainsKey(c.Id)).Select(c => c.Id).ToList();
+        if (wanted.Count == 0) return;
+
+        var positionIds = wanted.SelectMany(id => refs[id].CouncilPositions).ToHashSet();
+        var positions = new Dictionary<long, SaveCouncilor>();
+        if (sections.TryGetValue("council_positions", out var cp))
+        {
+            // council_positions = { council_positions = { id = { … } id = none … } }
+            var outer = new Reader(data, cp.Start, cp.End);
+            var range = cp;
+            while (outer.NextEntry(out var k, out _, out var inner))
+                if (inner is { } ib && outer.Is(k, "council_positions")) { range = ib; break; }
+            ForEachEntry(data, range, positionIds, (id, f, _) =>
+            {
+                if (f.GetValueOrDefault("type") is { } type) positions[id] = new SaveCouncilor(type, Long(f.GetValueOrDefault("leader")));
+            });
+        }
+
+        var leaderIds = wanted.SelectMany(id => refs[id].OwnedLeaders).ToHashSet();
+        foreach (var p in positions.Values)
+            if (p.LeaderId is { } l) leaderIds.Add(l);
+        var leaders = new Dictionary<long, SaveLeader>();
+        if (sections.TryGetValue("leaders", out var lr))
+            ForEachEntry(data, lr, leaderIds, (id, f, nested) => leaders[id] = new SaveLeader(id,
+                (int)Double(f.GetValueOrDefault("level")), (int)Double(f.GetValueOrDefault("bonus_skill_level")),
+                nested.GetValueOrDefault("location")?.FirstOrDefault(x => x.Key == "type").Value), "location");
+
+        var factions = new Dictionary<int, List<SaveFaction>>();
+        if (sections.TryGetValue("pop_factions", out var pf))
+            ForEachEntry(data, pf, null, (_, f, _) =>
+            {
+                if (!int.TryParse(f.GetValueOrDefault("country"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var country)
+                    || !playerIds.Contains(country) || f.GetValueOrDefault("type") is not { } type) return;
+                if (!factions.TryGetValue(country, out var list)) factions[country] = list = [];
+                list.Add(new SaveFaction(type, Double(f.GetValueOrDefault("support_power")), Double(f.GetValueOrDefault("faction_approval"))));
+            });
+
+        var speciesIds = wanted.Select(id => refs[id].FounderSpecies).OfType<long>().ToHashSet();
+        var traits = new Dictionary<long, List<string>>();
+        if (sections.TryGetValue("species_db", out var sp))
+            ForEachEntry(data, sp, speciesIds, (id, _, nested) => traits[id] = nested.GetValueOrDefault("traits")?
+                .Where(t => t.Key == "trait").Select(t => t.Value).ToList() ?? [], "traits");
+
+        for (var i = 0; i < countries.Count; i++)
+        {
+            var c = countries[i];
+            if (!playerIds.Contains(c.Id) || !refs.TryGetValue(c.Id, out var rf)) continue;
+            var councilors = rf.CouncilPositions.Where(positions.ContainsKey).Select(p => positions[p]).ToList();
+            var ids = rf.OwnedLeaders.Concat(councilors.Select(x => x.LeaderId).OfType<long>()).Distinct();
+            countries[i] = c with
+            {
+                Roster = new CountryRoster(
+                    ids.Where(leaders.ContainsKey).Select(id => leaders[id]).ToList(),
+                    councilors,
+                    factions.GetValueOrDefault(c.Id) ?? [],
+                    rf.FounderSpecies is { } s && traits.TryGetValue(s, out var t) ? t : []),
+            };
+        }
+    }
+
+    /// <summary>
+    /// For each "id = { … }" entry of a section (only ids in <paramref name="ids"/> when given): its scalar fields, and the
+    /// scalar entries (in order) of the named nested blocks. Other nested blocks are skipped unread.
+    /// </summary>
+    static void ForEachEntry(byte[] data, (int Start, int End) range, HashSet<long>? ids,
+        Action<long, Dictionary<string, string>, Dictionary<string, List<KeyValuePair<string, string>>>> handle, params string[] nestedKeys)
+    {
+        var r = new Reader(data, range.Start, range.End);
+        while (r.NextEntry(out var key, out _, out var body))
+        {
+            if (body is not { } b || Long(r.Text(key)) is not { } id || (ids is not null && !ids.Contains(id))) continue;
+            var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+            var nested = new Dictionary<string, List<KeyValuePair<string, string>>>(StringComparer.Ordinal);
+            var inner = new Reader(data, b.Start, b.End);
+            while (inner.NextEntry(out var k, out var v, out var nb))
+            {
+                if (v is { } tv) fields[inner.Text(k)] = inner.Text(tv);
+                else if (nb is { } nr && nestedKeys.Length > 0 && nestedKeys.Contains(inner.Text(k)))
+                {
+                    var list = new List<KeyValuePair<string, string>>();
+                    var nreader = new Reader(data, nr.Start, nr.End);
+                    while (nreader.NextEntry(out var nk, out var nv, out _))
+                        if (nv is { } ntv) list.Add(new(nreader.Text(nk), nreader.Text(ntv)));
+                    nested[inner.Text(k)] = list;
+                }
+            }
+            handle(id, fields, nested);
+        }
     }
 
     // Reads only the type of each "id={ ... }" entry; nested blocks (supporters and so on) are skipped by the reader.
@@ -84,7 +191,8 @@ public static class GamestateScanner
             .Select(s => int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ? (int?)i : null)
             .OfType<int>().ToList() ?? [];
         var passed = Ids("passed").Where(resolutionTypes.ContainsKey).Select(i => resolutionTypes[i]).ToList();
-        return new GalacticCommunity(Ids("members"), Ids("council"), passed);
+        int? leader = int.TryParse(block.GetString("leader"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var l) ? l : null;
+        return new GalacticCommunity(Ids("members"), Ids("council"), passed, leader, block.GetString("empire") == "yes");
     }
 
     static IEnumerable<SavePlayer> ReadPlayers(PdxBlock block)
@@ -94,17 +202,18 @@ public static class GamestateScanner
                 yield return new SavePlayer(name, id);
     }
 
-    static void ScanCountries(byte[] data, (int Start, int End) range, List<SaveCountry> countries)
+    static void ScanCountries(byte[] data, (int Start, int End) range, List<SaveCountry> countries, Dictionary<int, RosterRefs> refs)
     {
         var r = new Reader(data, range.Start, range.End);
         while (r.NextEntry(out var key, out _, out var body))
         {
             if (body is not { } b || !int.TryParse(r.Text(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)) continue;
-            countries.Add(ScanCountry(data, id, b));
+            countries.Add(ScanCountry(data, id, b, out var rf));
+            refs[id] = rf;
         }
     }
 
-    static SaveCountry ScanCountry(byte[] data, int id, (int Start, int End) range)
+    static SaveCountry ScanCountry(byte[] data, int id, (int Start, int End) range, out RosterRefs refs)
     {
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
         var blocks = new Dictionary<string, PdxBlock>(StringComparer.Ordinal);
@@ -121,6 +230,10 @@ public static class GamestateScanner
                 fields[name] = r.Text(v);
             }
         }
+        static List<long> Ids(PdxBlock? b) => b?.StringItems.Select(Long).OfType<long>().ToList() ?? [];
+        refs = new RosterRefs(Ids(blocks.GetValueOrDefault("owned_leaders")),
+            Ids(blocks.GetValueOrDefault("government")?.GetBlock("council_positions")),
+            Long(fields.GetValueOrDefault("founder_species_ref")));
         return Build(id, fields, blocks);
     }
 

@@ -24,8 +24,42 @@ public sealed record CountryHoldings(
     public static CountryHoldings Empty { get; } = new([], null, null, [], [], [], [], [], []);
 }
 
-/// <summary>The Galactic Community: member and council country ids, and the types of passed resolutions.</summary>
-public sealed record GalacticCommunity(IReadOnlyList<int> Members, IReadOnlyList<int> Council, IReadOnlyList<string> PassedResolutions);
+/// <summary>A leader: skill is level + bonus_skill_level; LocationType is location.type (galactic_community for the GC delegate).</summary>
+public sealed record SaveLeader(long Id, int Level, int BonusSkillLevel, string? LocationType)
+{
+    public int Skill => Level + BonusSkillLevel;
+}
+
+/// <summary>A filled or empty council position: the councilor type and its leader, if any.</summary>
+public sealed record SaveCouncilor(string Type, long? LeaderId);
+
+/// <summary>A pop faction of a country.</summary>
+public sealed record SaveFaction(string Type, double SupportPower, double Approval);
+
+/// <summary>
+/// The people of a country that carry diplomatic weight: its owned leaders (plus its councilors' leaders), council
+/// positions, pop factions and the traits of its founder species. Read for player countries only.
+/// </summary>
+public sealed record CountryRoster(
+    IReadOnlyList<SaveLeader> Leaders,
+    IReadOnlyList<SaveCouncilor> Councilors,
+    IReadOnlyList<SaveFaction> Factions,
+    IReadOnlyList<string> FounderTraits)
+{
+    public static CountryRoster Empty { get; } = new([], [], [], []);
+
+    /// <summary>The Galactic Community delegate: the leader located in the galactic community.</summary>
+    public SaveLeader? Delegate => Leaders.FirstOrDefault(l => l.LocationType == "galactic_community");
+
+    public SaveLeader? Leader(long id) => Leaders.FirstOrDefault(l => l.Id == id);
+}
+
+/// <summary>
+/// The Galactic Community: member and council country ids, and the types of passed resolutions. Leader is the
+/// custodian's or emperor's country (galactic_community.leader); Empire is true once the Galactic Imperium exists.
+/// </summary>
+public sealed record GalacticCommunity(IReadOnlyList<int> Members, IReadOnlyList<int> Council, IReadOnlyList<string> PassedResolutions,
+    int? Leader = null, bool Empire = false);
 
 /// <summary>The parts of a save's country the Live Game tab uses. Numbers are as stored (full precision, not wrapped).</summary>
 public sealed record SaveCountry(
@@ -46,7 +80,8 @@ public sealed record SaveCountry(
     double? CachedDiploWeight,
     IReadOnlyList<int> ContactedIds,
     IReadOnlyList<string> Techs,
-    CountryHoldings? Holdings = null);
+    CountryHoldings? Holdings = null,
+    CountryRoster? Roster = null);
 
 /// <summary>What the Live Game tab knows about one save.</summary>
 public sealed record GameSnapshot(

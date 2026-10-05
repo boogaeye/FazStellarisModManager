@@ -12,7 +12,7 @@ public static class LiveFilter
         var contacted = me?.ContactedIds.ToHashSet() ?? [];
         var countries = snapshot.Countries.Select(c =>
             c.Id == viewer ? c
-            : contacted.Contains(c.Id) ? c with { ContactedIds = [], Techs = [], Holdings = null }
+            : contacted.Contains(c.Id) ? c with { ContactedIds = [], Techs = [], Holdings = null, Roster = null }
             : new SaveCountry(c.Id, c.Type, null, new Dictionary<string, string>(), null, null, c.VictoryRank, 0, 0, 0, 0, 0, 0, 0, null, [], []))
             .ToList();
         var diplo = snapshot.Diplo?.GetValueOrDefault(viewer) is { } mine
