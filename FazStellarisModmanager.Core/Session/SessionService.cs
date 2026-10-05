@@ -1,6 +1,7 @@
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Hashing;
 using FazStellarisModmanager.Core.Lists;
+using FazStellarisModmanager.Core.Saves;
 using FazStellarisModmanager.Core.Snapshots;
 using FazStellarisModmanager.Core.Workshop;
 
@@ -12,7 +13,7 @@ public enum SessionRole { None, Host, Client }
 /// UI-facing multiplayer state. One operation (host, join, rescan, match, leave) runs at a time;
 /// <see cref="Changed"/> may fire on any thread.
 /// </summary>
-public sealed class SessionService(ModManagerService manager, IWorkshopService? workshop = null) : IAsyncDisposable
+public sealed class SessionService(ModManagerService manager, IWorkshopService? workshop = null, LiveGameService? live = null) : IAsyncDisposable, IHostLiveSource
 {
     readonly IWorkshopService? _workshop = workshop;
     readonly SemaphoreSlim _op = new(1, 1);
@@ -28,6 +29,9 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     volatile string? _lastDisconnectReason;
     volatile CancellationTokenSource? _opCts;
     volatile string? _lastBackupPath;
+    volatile LiveUpdate? _hostLive;
+    DateTime? _hostLiveReceivedUtc;
+    LiveUpdate? _seenLive;
     int _busyCount;
     long _lastProgressRaise;
     HashCache? _cache;
@@ -36,6 +40,11 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     public int? HostPort => _host?.Port;
     public string? HostAddress => _hostAddress;
     public MachineSnapshot? MySnapshot => _mySnapshot;
+
+    public bool IsClient => _client is not null;
+    public string? HostName => _client?.Roster.FirstOrDefault(p => p.IsHost)?.Name;
+    public LiveUpdate? HostLive => _hostLive;
+    public DateTime? HostLiveReceivedUtc => _hostLiveReceivedUtc;
 
     /// <summary>Client only: this machine compared with the host.</summary>
     public DiffResult? MyDiff => _myDiff;
@@ -82,6 +91,11 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             throw;
         }
         _host = host;
+        if (live is not null)
+        {
+            live.Changed += PushLive;
+            host.UpdateLive(live.Current);
+        }
         _lastDisconnectReason = null;
         return true;
     }, ct);
@@ -93,6 +107,9 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         if (Role != SessionRole.None) throw new InvalidOperationException("Already in a session. Leave it first.");
         var snapshot = await ScanAsync(ct);
         SetActivity($"Connecting to {address}:{port}…");
+        _hostLive = null;
+        _hostLiveReceivedUtc = null;
+        _seenLive = null;
         var client = await SessionClient.ConnectAsync(address, port, PlayerName, ct);
         try
         {
@@ -106,6 +123,12 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
                     lastTarget = client.Target; // the host's target changed: the old plan no longer describes it
                     _lastPlan = null;
                     _lastBackupPath = null;
+                }
+                if (client.Live is { } l && !ReferenceEquals(l, _seenLive))
+                {
+                    _seenLive = l;
+                    _hostLive = l;
+                    _hostLiveReceivedUtc = DateTime.UtcNow;
                 }
                 RecomputeDiff(onlyIfInputsChanged: true); // most messages are roster updates: same target, same diff
                 RaiseChanged();
@@ -254,6 +277,21 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         catch (ObjectDisposedException) { /* the operation just finished */ }
     }
 
+    public Task ViewAsAsync(int countryId) => _client is { } c ? c.SendViewAsAsync(countryId) : Task.CompletedTask;
+
+    public void ForgetHostLive()
+    {
+        if (_client is not null) return;
+        _hostLive = null;
+        _hostLiveReceivedUtc = null;
+        RaiseChanged();
+    }
+
+    void PushLive()
+    {
+        if (_host is { } h && live is not null) h.UpdateLive(live.Current);
+    }
+
     public Task LeaveAsync()
     {
         CancelCurrent();
@@ -277,6 +315,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         if (host is not null)
         {
             host.RosterChanged -= RaiseChanged;
+            if (live is not null) live.Changed -= PushLive;
             await host.DisposeAsync();
         }
         if (client is not null) await client.DisposeAsync();
