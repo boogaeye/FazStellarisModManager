@@ -197,7 +197,7 @@
         ("Technology", "tech power", d.Tech),
     ];
 
-    static string Pct(DiploBonus b) => (b.Percent * 100).ToString("+0.#;-0.#", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    static string Pct(DiploBonus b) => DiploBonus.FormatPercent(b.Percent);
 
     static string BonusClass(DiploBonus b) => b.Percent < 0 ? "neg-bonus" : "pos-bonus";
 

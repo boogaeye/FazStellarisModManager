@@ -3,7 +3,16 @@ using FazStellarisModmanager.Core.Saves;
 namespace FazStellarisModmanager.Core.Diplomacy;
 
 /// <summary>One tooltip line: a source and its bonus as a fraction (0.25 = +25%).</summary>
-public sealed record DiploBonus(string Name, double Percent);
+public sealed record DiploBonus(string Name, double Percent)
+{
+    /// <summary>A bonus as the game shows it: whole percent truncated toward zero, with its sign (0.425 → "+42%").</summary>
+    public static string FormatPercent(double fraction)
+    {
+        // Rounded first so that 0.29 × 100 = 28.999… still shows 29.
+        var whole = Math.Truncate(Math.Round(fraction * 100, 6));
+        return (fraction < 0 ? "-" : "+") + Math.Abs(whole).ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    }
+}
 
 /// <summary>A base part: Input × Factor = Base, then × (1 + Σ bonuses) = Total.</summary>
 public sealed record DiploPart(double Input, double Factor, IReadOnlyList<DiploBonus> Bonuses)

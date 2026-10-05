@@ -25,6 +25,7 @@ public sealed class DiploContext(ModifierCatalog catalog, DiploDefines defines, 
         return s with { Diplo = map };
     }
 
-    string Name(DiploSource source, string key) =>
+    /// <summary>Display name of a source: its localisation (nested $references$ resolved, colour and icon codes removed), or the key.</summary>
+    public string Name(DiploSource source, string key) =>
         names?.Get(key) ?? names?.Get("modifier_" + key) ?? key.Replace('_', ' ');
 }
