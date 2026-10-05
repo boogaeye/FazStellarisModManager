@@ -8,7 +8,7 @@ public sealed record ThumbnailSource(string FilePath, string? ZipEntry)
     public string Id => ZipEntry is null ? FilePath : FilePath + "|" + ZipEntry;
 }
 
-/// <summary>Finds a mod's picture: the descriptor's picture= (if a safe relative path), else thumbnail.png/.jpg/.jpeg, in the content folder or zip (then beside the zip).</summary>
+/// <summary>Finds a mod's picture: the descriptor's picture= (if a safe relative path), else thumbnail.png/.jpg/.jpeg, in the content folder or zip (then beside the zip, for Workshop mods only).</summary>
 public static class ModThumbnail
 {
     public const long MaxBytes = 20L * 1024 * 1024;
@@ -24,7 +24,7 @@ public static class ModThumbnail
             var names = Names(mod.Picture);
             if (Directory.Exists(content)) return InFolder(content, names);
             if (File.Exists(content) && content.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                return InZip(content, names) ?? InFolder(Path.GetDirectoryName(content)!, names);
+                return InZip(content, names) ?? (mod.Source == ModSource.Workshop ? InFolder(Path.GetDirectoryName(content)!, names) : null);
             return null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or NotSupportedException)

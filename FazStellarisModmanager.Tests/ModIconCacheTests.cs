@@ -54,4 +54,34 @@ public class ModIconCacheTests
         Assert.Null(await new ModIconCache(cache, _ => throw new InvalidOperationException()).GetAsync(Mod(Path.Combine(t.Path, "m"))));
         Assert.Null(await new ModIconCache(cache, b => b).GetAsync(Mod(Path.Combine(t.Path, "none"))));
     }
+
+    [Fact]
+    public async Task Null_result_is_retried()
+    {
+        using var t = new TempDir();
+        t.Write("m/thumbnail.png", "x");
+        var mod = Mod(Path.Combine(t.Path, "m"));
+        var calls = 0;
+        var cache = new ModIconCache(Path.Combine(t.Path, "cache"), _ => ++calls == 1 ? null : [1, 2, 3]);
+        Assert.Null(await cache.GetAsync(mod));
+        Assert.Equal("data:image/png;base64," + Convert.ToBase64String([1, 2, 3]), await cache.GetAsync(mod));
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Refresh_keeps_old_icon_until_new_one_loads()
+    {
+        using var t = new TempDir();
+        var f = t.Write("m/thumbnail.png", "one");
+        var mod = Mod(Path.Combine(t.Path, "m"));
+        var cache = new ModIconCache(Path.Combine(t.Path, "cache"), b => b);
+        var old = await cache.GetAsync(mod);
+        cache.Refresh();
+        Assert.Equal(old, cache.TryPeek(mod));
+        File.WriteAllText(f, "two!");
+        File.SetLastWriteTimeUtc(f, DateTime.UtcNow.AddMinutes(1));
+        var fresh = await cache.GetAsync(mod);
+        Assert.NotEqual(old, fresh);
+        Assert.Equal(fresh, cache.TryPeek(mod));
+    }
 }

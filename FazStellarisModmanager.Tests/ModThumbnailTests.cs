@@ -89,9 +89,18 @@ public class ModThumbnailTests
         using var t = new TempDir();
         var zip = Zip(t, "w/mod.zip", ("common/a.txt", "a"));
         t.Write("w/thumbnail.png", "beside");
-        var s = ModThumbnail.Find(Mod(zip))!;
+        var s = ModThumbnail.Find(Mod(zip) with { Source = ModSource.Workshop })!;
         Assert.Null(s.ZipEntry);
         Assert.Equal("beside", System.Text.Encoding.UTF8.GetString(ModThumbnail.Read(s)));
+    }
+
+    [Fact]
+    public void Local_zip_ignores_thumbnail_beside_it()
+    {
+        using var t = new TempDir();
+        var zip = Zip(t, "w/mod.zip", ("common/a.txt", "a"));
+        t.Write("w/thumbnail.png", "stray");
+        Assert.Null(ModThumbnail.Find(Mod(zip)));
     }
 
     [Fact]

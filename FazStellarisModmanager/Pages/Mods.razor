@@ -54,14 +54,14 @@
             var installed = Manager.IsInstalled(e);
             var isWorkshop = mod?.Source == ModSource.Workshop || (mod is null && ModKeys.WorkshopId(e.Key) is not null);
             var workshopId = ModMatcher.WorkshopIdOf(e.Key, mod?.RemoteId ?? e.RemoteId);
-            <li class="mrow @RowClass(index) @(installed ? "" : "missing")" draggable="true"
-                @ondragstart="() => { dragIndex = index; overIndex = null; }"
+            <li class="mrow @RowClass(e, index) @(installed ? "" : "missing")" draggable="true"
+                @ondragstart="() => { dragged = e; overIndex = null; }"
                 @ondragenter="() => overIndex = index"
-                @ondragend="() => { dragIndex = null; overIndex = null; }"
-                @ondragover:preventDefault @ondrop:preventDefault @ondrop="() => Drop(index)">
+                @ondragend="() => { dragged = null; overIndex = null; }"
+                @ondragover:preventDefault @ondrop:preventDefault @ondrop="() => Drop(e)">
                 <span class="grip" title="Drag to reorder">⋮⋮</span>
                 <input @key="posVersion" class="pos" type="number" min="1" max="@current.Count" value="@(index + 1)"
-                       title="Type a position and press Enter" @onchange="ev => SetPosition(index, ev.Value)" />
+                       title="Type a position and press Enter" @ondragstart:stopPropagation="true" @onchange="ev => SetPosition(e, ev.Value)" />
                 <ModIcon Uri="@(mod is null ? null : Icons.TryPeek(mod))" Name="@e.Name" />
                 <div class="mname">
                     <div title="@e.Name">@e.Name</div>
@@ -80,7 +80,7 @@
                 {
                     <a class="button small" href="steam://url/CommunityFilePage/@workshopId" target="_blank" title="Open on the Steam Workshop">Workshop ↗</a>
                 }
-                <button class="small danger" title="Remove from list" @onclick="() => Remove(index)">✕</button>
+                <button class="small danger" title="Remove from list" @onclick="() => Remove(e)">✕</button>
             </li>
         }
     </ol>
@@ -105,7 +105,7 @@
     string selectedList = "";
 
     string filter = "";
-    int? dragIndex;
+    ModListEntry? dragged;
     int? overIndex;
     int posVersion;
     bool adding;
@@ -136,6 +136,7 @@
         await RunAsync(async () =>
         {
             await Manager.RefreshLibraryAsync();
+            Icons.Refresh();
             LibraryChanged();
             return $"Found {Manager.Library.Count} installed mods." + ErrorSuffix();
         });
@@ -148,6 +149,7 @@
         foreach (var m in Manager.Library) byKey.TryAdd(m.Key, m);
 
         iconRun?.Cancel();
+        iconRun?.Dispose();
         var run = iconRun = new CancellationTokenSource();
         var inList = InListKeys();
         var mods = Manager.Library.OrderBy(m => inList.Contains(m.Key) ? 0 : 1).ToList();
@@ -171,28 +173,39 @@
 
     HashSet<string> InListKeys() => new(current.Select(e => e.Key), StringComparer.OrdinalIgnoreCase);
 
-    string RowClass(int index)
+    int IndexOf(ModListEntry e) => current.FindIndex(x => ReferenceEquals(x, e));
+
+    string RowClass(ModListEntry e, int index)
     {
-        if (dragIndex == index) return "dragging";
-        if (dragIndex is not int from || overIndex != index) return "";
+        if (dragged is null) return "";
+        if (ReferenceEquals(dragged, e)) return "dragging";
+        if (overIndex != index) return "";
+        var from = IndexOf(dragged);
+        if (from < 0) return "";
         return from < index ? "drop-below" : "drop-above";
     }
 
-    void Drop(int target)
+    void Drop(ModListEntry target)
     {
-        var from = dragIndex;
-        dragIndex = null;
+        var d = dragged;
+        dragged = null;
         overIndex = null;
-        if (from is int f && ModListEditor.Move(current, f, target))
+        if (d is null) return;
+        var from = IndexOf(d);
+        var to = IndexOf(target);
+        if (from < 0 || to < 0) return;
+        if (ModListEditor.Move(current, from, to))
         {
             confirmEmpty = false;
             posVersion++;
         }
     }
 
-    void SetPosition(int index, object? value)
+    void SetPosition(ModListEntry e, object? value)
     {
         posVersion++;   // recreate the number boxes so a rejected value doesn't stay typed in
+        var index = IndexOf(e);
+        if (index < 0) return;
         if (!int.TryParse(value?.ToString(), out var position))
         {
             (status, error) = ("Type a position number.", true);
@@ -204,9 +217,10 @@
         (status, error) = ($"Moved {current[to].Name} to position {to + 1}.", false);
     }
 
-    void Remove(int index)
+    void Remove(ModListEntry e)
     {
-        if (index < 0 || index >= current.Count) return;
+        var index = IndexOf(e);
+        if (index < 0) return;
         confirmEmpty = false;
         current.RemoveAt(index);
         posVersion++;

@@ -1,5 +1,5 @@
-<div class="modal-backdrop" @onclick="Close">
-    <div class="modal addmods-modal" @onclick:stopPropagation @onkeydown="Key">
+<div class="modal-backdrop" @onmousedown="() => downOnBackdrop = true" @onclick="BackdropClick">
+    <div class="modal addmods-modal" tabindex="-1" @onclick:stopPropagation @onmousedown:stopPropagation @onmousedown="() => downOnBackdrop = false" @onkeydown="Key">
         <div class="modal-head">
             <h2>Add mods to "@ListName"</h2>
             <button class="small" title="Close" @onclick="Close">✕</button>
@@ -40,6 +40,14 @@
 </div>
 
 @code {
+    bool downOnBackdrop;
+
+    async Task BackdropClick()
+    {
+        if (downOnBackdrop) await Close();
+        downOnBackdrop = false;
+    }
+
     const int MaxShown = 300;
 
     [Parameter, EditorRequired] public IReadOnlyList<InstalledMod> Library { get; set; } = [];
