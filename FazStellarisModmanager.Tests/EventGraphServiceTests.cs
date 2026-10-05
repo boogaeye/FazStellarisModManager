@@ -44,6 +44,24 @@ public class EventGraphServiceTests
     }
 
     [Fact]
+    public async Task Leaving_the_page_stops_waiting_but_not_the_build()
+    {
+        var (fake, _, events) = Create();
+        using var _cleanup = fake;
+        using var leave = new CancellationTokenSource();
+
+        var waiting = events.EnsureAsync(leave.Token);
+        leave.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+
+        // Coming back joins the same build (or gets its result); it was never cancelled.
+        var graph = await events.EnsureAsync();
+        Assert.NotNull(graph);
+        Assert.Null(events.Error);
+        Assert.Same(graph, await events.EnsureAsync());
+    }
+
+    [Fact]
     public async Task The_graph_is_cached_per_tree_and_rebuilt_when_the_tree_changes()
     {
         var (fake, trees, events) = Create();

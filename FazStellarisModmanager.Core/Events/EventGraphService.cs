@@ -19,6 +19,8 @@ public sealed class EventGraphService
     volatile string? _error;
     volatile bool _waitingForTree;
     long _lastProgress;
+    readonly Lock _runningLock = new();
+    Task<EventGraph?>? _running;
 
     sealed record Built(TechTree Tree, EventGraph Graph);
 
@@ -46,11 +48,25 @@ public sealed class EventGraphService
 
     /// <summary>
     /// The graph for the current tree: the cached one, or a new build (building the current game's tech tree first when none is
-    /// loaded). Null when building failed; see <see cref="Error"/>. Cancellation throws.
+    /// loaded). Null when building failed; see <see cref="Error"/>. Cancelling <paramref name="ct"/> only stops waiting: the build
+    /// is shared and keeps running in the background, so leaving the page and coming back picks up where it is.
     /// </summary>
-    public async Task<EventGraph?> EnsureAsync(CancellationToken ct = default)
+    public Task<EventGraph?> EnsureAsync(CancellationToken ct = default)
     {
-        if (_built is { } cached && ReferenceEquals(cached.Tree, _trees.Current)) return cached.Graph;
+        if (_built is { } cached && ReferenceEquals(cached.Tree, _trees.Current)) return Task.FromResult<EventGraph?>(cached.Graph);
+        Task<EventGraph?> running;
+        lock (_runningLock)
+        {
+            if (_running is null || _running.IsCompleted) _running = Task.Run(BuildLatestAsync);
+            running = _running;
+        }
+        return running.WaitAsync(ct);
+    }
+
+    // Never cancelled: callers that stop waiting don't stop the work.
+    async Task<EventGraph?> BuildLatestAsync()
+    {
+        var ct = CancellationToken.None;
         await _build.WaitAsync(ct);
         try
         {
@@ -82,7 +98,7 @@ public sealed class EventGraphService
                 }
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
             _error = ex.Message;
             return null;
