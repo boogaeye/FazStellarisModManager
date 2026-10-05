@@ -81,7 +81,9 @@ public sealed record SaveCountry(
     IReadOnlyList<int> ContactedIds,
     IReadOnlyList<string> Techs,
     CountryHoldings? Holdings = null,
-    CountryRoster? Roster = null);
+    CountryRoster? Roster = null,
+    IReadOnlyList<string>? Flags = null,
+    IReadOnlyList<string>? Ethics = null);
 
 /// <summary>What the Live Game tab knows about one save.</summary>
 public sealed record GameSnapshot(
@@ -94,4 +96,6 @@ public sealed record GameSnapshot(
     IReadOnlyList<SaveCountry> Countries,
     GalacticCommunity? Community = null,
     IReadOnlyDictionary<int, IReadOnlyList<string>>? Megastructures = null,
-    IReadOnlyDictionary<int, FazStellarisModmanager.Core.Diplomacy.DiploBreakdown>? Diplo = null);
+    IReadOnlyDictionary<int, FazStellarisModmanager.Core.Diplomacy.DiploBreakdown>? Diplo = null,
+    IReadOnlyList<string>? GlobalFlags = null,
+    IReadOnlyList<string>? Dlcs = null);
