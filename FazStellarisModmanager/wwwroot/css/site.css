@@ -235,3 +235,12 @@ a.button.small { padding: .1rem .45rem; font-size: .85rem; }
 .addlist .pick { display: flex; gap: .55rem; align-items: center; padding: .25rem .4rem; border-radius: 5px; cursor: pointer; }
 .addlist .pick:hover { background: var(--panel-2); }
 .addlist .pname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* File conflicts */
+button.warnbadge { color: #f2c94c; background: #3a2e12; border: 1px solid #6b5520; border-radius: 5px; padding: .05rem .45rem; font-size: .78rem; white-space: nowrap; }
+button.warnbadge:hover:not(:disabled) { border-color: #f2c94c; }
+.conflict-panel { list-style: none; background: var(--panel); border: 1px solid #3a4a5c; border-radius: 8px; padding: .6rem .8rem; margin: -1px 0 6px 2.5rem; cursor: default; user-select: text; }
+.conflict-panel h4 { margin: 0 0 .35rem; font-size: .85rem; }
+.conflict-panel .cgroup { margin: .45rem 0 .15rem; color: #9fd2ff; font-size: .82rem; }
+.conflict-panel ul { margin: 0; padding-left: 1.2rem; color: var(--muted); font-family: Consolas, monospace; font-size: .74rem; }
+.conflict-panel p { margin: .5rem 0 0; font-size: .78rem; }
