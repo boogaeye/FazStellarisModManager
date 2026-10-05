@@ -21,7 +21,7 @@ public sealed class DiploContext(ModifierCatalog catalog, DiploDefines defines, 
         var map = new Dictionary<int, DiploBreakdown>();
         foreach (var p in s.Players)
             if (s.Countries.FirstOrDefault(c => c.Id == p.CountryId) is { } c)
-                map[c.Id] = DiploCalculator.Compute(c, s, catalog.Get, defines, Name, catalog.ResolutionCategory, catalog.IsTargetedResolution);
+                map[c.Id] = DiploCalculator.Compute(c, s, catalog.Get, defines, Name, catalog.ResolutionCategory, catalog.IsTargetedResolution, catalog.Swaps);
         return s with { Diplo = map };
     }
 

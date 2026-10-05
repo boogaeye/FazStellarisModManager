@@ -16,7 +16,7 @@ public sealed record DiploPart(double Input, double Factor, IReadOnlyList<DiploB
 /// <summary>Diplomatic weight laid out like the game's tooltip. Pops use the middle of the happiness range.</summary>
 public sealed record DiploBreakdown(DiploPart Fleet, DiploPart Pops, DiploPart Economy, DiploPart Tech, IReadOnlyList<DiploBonus> Overall, bool Approximate)
 {
-    public const string NotCalculated = "Not calculated: leader, councilor and delegate bonuses, faction bonuses and other scripted sources.";
+    public const string NotCalculated = "Not calculated: leader traits, triggered modifiers and other scripted sources; faction approval is not applied.";
     public double BaseTotal => Fleet.Total + Pops.Total + Economy.Total + Tech.Total;
     public double OverallMultiplier => 1 + Overall.Sum(b => b.Percent);
     public double Real => BaseTotal * OverallMultiplier;
@@ -42,14 +42,24 @@ public static class DiploCalculator
     /// <param name="resolutionCategory">Category of a resolution type; without it every passed resolution counts.</param>
     /// <param name="isTargeted">True for target = yes resolutions, which are skipped.</param>
     /// <param name="name">Display name for a source key (localisation, or the key).</param>
+    /// <param name="swaps">Tradition swaps of a tradition or perk (the catalog's Swaps); without it the base definitions count.</param>
     public static DiploBreakdown Compute(SaveCountry c, GameSnapshot snapshot, Func<DiploSource, string, DiploMods?> lookup,
         DiploDefines defines, Func<DiploSource, string, string> name,
-        Func<string, (string Category, bool MultipleActive)?>? resolutionCategory = null, Func<string, bool>? isTargeted = null)
+        Func<string, (string Category, bool MultipleActive)?>? resolutionCategory = null, Func<string, bool>? isTargeted = null,
+        Func<DiploSource, string, IReadOnlyList<TraditionSwap>>? swaps = null)
     {
+        var gc = snapshot.Community;
+        var member = gc is not null && gc.Members.Contains(c.Id);
+        var leads = gc is not null && gc.Leader == c.Id;
+        bool emperor = leads && gc!.Empire, custodian = leads && !gc!.Empire;
+
         var lines = new List<(string Name, DiploMods Mods)>();
         void Add(DiploSource s, string? key, double multiplier = 1)
         {
-            if (key is null || lookup(s, key) is not { } m || m.IsZero) return;
+            if (key is null) return;
+            var mods = lookup(s, key);
+            if (swaps?.Invoke(s, key).FirstOrDefault(x => x.Applies(emperor, custodian)) is { } swap) mods = swap.Mods;
+            if (mods is not { } m || m.IsZero) return;
             lines.Add((name(s, key), m.Scale(multiplier)));
         }
 
@@ -70,13 +80,33 @@ public static class DiploCalculator
         if (snapshot.Megastructures?.GetValueOrDefault(c.Id) is { } megas)
             foreach (var m in megas) Add(DiploSource.Megastructure, m);
 
-        if (snapshot.Community is { } gc && gc.Members.Contains(c.Id))
+        var roster = c.Roster ?? CountryRoster.Empty;
+        if (member)
         {
-            foreach (var r in ActiveResolutions(gc.PassedResolutions, resolutionCategory, isTargeted)) Add(DiploSource.Resolution, r);
+            foreach (var r in ActiveResolutions(gc!.PassedResolutions, resolutionCategory, isTargeted)) Add(DiploSource.Resolution, r);
             if (gc.Council.Contains(c.Id)) Add(DiploSource.StaticModifier, "council_member");
+            // Every member with a delegate has this static modifier; the game names its line "Delegate".
+            if (roster.Delegate is not null && lookup(DiploSource.StaticModifier, "galactic_community_delegate") is { IsZero: false } d)
+                lines.Add(("Delegate", d));
         }
 
-        var onCouncil = snapshot.Community is { } council && council.Council.Contains(c.Id);
+        // Councilors: modifier × (leader skill + councilor_skill_add from every source so far and the founder species' traits).
+        var skillAdd = lines.Sum(l => l.Mods.CouncilorSkill)
+                       + roster.FounderTraits.Sum(t => lookup(DiploSource.SpeciesTrait, t)?.CouncilorSkill ?? 0);
+        foreach (var councilor in roster.Councilors)
+        {
+            if (councilor.LeaderId is not { } id || roster.Leader(id) is not { } leader
+                || lookup(DiploSource.Councilor, councilor.Type) is not { IsZero: false } m) continue;
+            lines.Add((name(DiploSource.Councilor, councilor.Type), m.Scale(leader.Skill + skillAdd) with { Delegate = m.Delegate, CouncilorSkill = 0 }));
+        }
+
+        // Pop factions: country_modifier × support power, as one line (approval is not applied).
+        var factions = roster.Factions.Select(f => lookup(DiploSource.PopFaction, f.Type)?.Scale(f.SupportPower)).OfType<DiploMods>()
+            .Aggregate(DiploMods.Zero, (a, b) => a + b);
+        if (!factions.IsZero) lines.Add(("From Factions", factions));
+
+        var onCouncil = gc is not null && gc.Council.Contains(c.Id);
+        var delegateSkill = roster.Delegate?.Skill ?? 0;
         List<DiploBonus> Pick(Func<DiploMods, double> part) =>
             lines.Where(l => part(l.Mods) != 0).Select(l => new DiploBonus(l.Name, part(l.Mods))).ToList();
 
@@ -85,7 +115,7 @@ public static class DiploCalculator
             new DiploPart(c.Pops, defines.PopBase * (1 + defines.PopHappiness * 0.5), Pick(m => m.Pops)),
             new DiploPart(c.EconomyPower, defines.Economy, Pick(m => m.Economy)),
             new DiploPart(c.TechPower, defines.Technology, Pick(m => m.Tech)),
-            Pick(m => m.Overall + (onCouncil ? m.Council : 0)),
+            Pick(m => m.Overall + (onCouncil ? m.Council : 0) + m.Delegate * delegateSkill),
             Approximate: true);
     }
 }
