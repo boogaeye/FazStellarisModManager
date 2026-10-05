@@ -50,7 +50,7 @@
         </div>
 
         <div class="filters">
-            <input class="search" placeholder="Search name or id…" @bind="searchInput" @bind:event="oninput" @bind:after="SearchChanged" />
+            <input class="search" placeholder="Search name, id or effect (e.g. energy)…" @bind="searchInput" @bind:event="oninput" @bind:after="SearchChanged" />
             <select @bind="tierText">
                 <option value="">Tier: all</option>
                 @foreach (var t in db.Tiers)
@@ -91,6 +91,18 @@
                         <div class="grow">
                             <div class="name">@if (researched.Contains(tech.Key)) { <span class="done-mark">✓</span> }@tech.Name</div>
                             <div class="src @(tech.ChangedByMods ? "mod" : "")">T@(TierText(tech)) · @tech.Source.SourceName</div>
+                            @if (search.Trim().Length > 0 && !TechDatabase.NameMatches(tech, search.Trim()))
+                            {
+                                var hits = db.EffectMatches(tech, search);
+                                @foreach (var hit in hits.Take(2))
+                                {
+                                    <div class="hit">↳ @hit</div>
+                                }
+                                @if (hits.Count > 2)
+                                {
+                                    <div class="hit">↳ +@(hits.Count - 2) more</div>
+                                }
+                            }
                         </div>
                     </div>
                 }

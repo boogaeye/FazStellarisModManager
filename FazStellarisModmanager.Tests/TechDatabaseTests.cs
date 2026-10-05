@@ -90,6 +90,33 @@ public class TechDatabaseTests
     }
 
     [Fact]
+    public void Search_matches_effects_and_lists_name_matches_first()
+    {
+        using var tmp = new TempDir();
+        tmp.Write("base/common/technology/00_t.txt", """
+            tech_power_plants = { area = physics tier = 1 cost = 1 modifier = { country_energy_produces_mult = 0.1 } }
+            tech_energy_lasers = { area = physics tier = 2 cost = 1 }
+            tech_armies = { area = society tier = 1 cost = 1 modifier = { army_damage_mult = 0.05 } }
+            """);
+        tmp.Write("base/localisation/english/t_l_english.yml",
+            "l_english:" + (char)10 +
+            " tech_power_plants:0 \"Power Plants\"" + (char)10 +
+            " tech_energy_lasers:0 \"Energy Lasers\"" + (char)10 +
+            " tech_armies:0 \"Armies\"" + (char)10 +
+            " mod_country_energy_produces_mult:0 \"Energy Credits from Jobs\"" + (char)10);
+        using var source = ContentSource.FromPath("Base game", Path.Combine(tmp.Path, "base"), isBaseGame: true);
+        var db = TechDatabase.Build([source]);
+
+        Assert.Equal(new[] { "tech_energy_lasers", "tech_power_plants" }, db.Query(new TechFilter(Search: "energy")).Select(t => t.Key));
+        var hits = db.EffectMatches(db.Techs["tech_power_plants"], "energy credits");
+        Assert.Single(hits);
+        Assert.Contains("Energy Credits from Jobs", hits[0]);
+        Assert.Contains("+10%", hits[0]);
+        Assert.Empty(db.EffectMatches(db.Techs["tech_armies"], "energy"));
+        Assert.Empty(db.EffectMatches(db.Techs["tech_power_plants"], " "));
+    }
+
+    [Fact]
     public void Unreadable_files_become_warnings()
     {
         using var tmp = new TempDir();

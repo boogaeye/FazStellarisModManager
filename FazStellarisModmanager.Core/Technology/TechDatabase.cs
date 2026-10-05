@@ -101,6 +101,31 @@ public sealed class TechDatabase
 
     public int Count(TechArea? area) => area is null ? Techs.Count : Techs.Values.Count(t => t.Area == area);
 
+    /// <summary>True when the tech's name or id contains <paramref name="search"/>.</summary>
+    public static bool NameMatches(Tech t, string search) =>
+        t.Name.Contains(search, StringComparison.OrdinalIgnoreCase) || t.Key.Contains(search, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The tech's effects that contain <paramref name="search"/>: bonus lines (by name, modifier key or an
+    /// empire-dependent name, e.g. "+10% Energy Credits") and unlocks (e.g. "Building: Energy Grid"). Empty for a blank search.
+    /// </summary>
+    public IReadOnlyList<string> EffectMatches(Tech t, string search)
+    {
+        var s = search.Trim();
+        if (s.Length == 0) return [];
+        var hits = new List<string>();
+        foreach (var b in t.Details.Bonuses)
+        {
+            if (b.Name.Contains(s, StringComparison.OrdinalIgnoreCase) || b.Key.Contains(s, StringComparison.OrdinalIgnoreCase)
+                || b.Variants.Any(v => v.Name.Contains(s, StringComparison.OrdinalIgnoreCase)))
+                hits.Add(b.Display + " " + b.Name);
+        }
+        foreach (var u in Unlocks(t.Key))
+            if (u.Name.Contains(s, StringComparison.OrdinalIgnoreCase)) hits.Add($"{u.Kind}: {u.Name}");
+        return hits.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Filtered techs. A search matches the name or id, or any effect (see <see cref="EffectMatches"/>); name matches come first.</summary>
     public IEnumerable<Tech> Query(TechFilter f)
     {
         var search = f.Search?.Trim();
@@ -115,10 +140,9 @@ public sealed class TechDatabase
                 (!f.RepeatableOnly || t.IsRepeatable) &&
                 (!f.StartOnly || t.IsStart) &&
                 (!f.ChangedByModsOnly || t.ChangedByMods) &&
-                (string.IsNullOrEmpty(search) ||
-                 t.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                 t.Key.Contains(search, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(t => t.Area)
+                (string.IsNullOrEmpty(search) || NameMatches(t, search) || EffectMatches(t, search).Count > 0))
+            .OrderBy(t => string.IsNullOrEmpty(search) || NameMatches(t, search) ? 0 : 1)
+            .ThenBy(t => t.Area)
             .ThenBy(t => t.Tier ?? int.MaxValue)
             .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase);
     }
