@@ -58,4 +58,5 @@ public sealed record GameSnapshot(
     IReadOnlyList<SavePlayer> Players,
     IReadOnlyList<SaveCountry> Countries,
     GalacticCommunity? Community = null,
-    IReadOnlyDictionary<int, IReadOnlyList<string>>? Megastructures = null);
+    IReadOnlyDictionary<int, IReadOnlyList<string>>? Megastructures = null,
+    IReadOnlyDictionary<int, FazStellarisModmanager.Core.Diplomacy.DiploBreakdown>? Diplo = null);
