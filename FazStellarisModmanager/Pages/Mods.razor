@@ -4,6 +4,7 @@
 @inject ModManagerService Manager
 @inject ModIconCache Icons
 @inject ModFileCache FileCache
+@inject EditedModList State
 
 <div class="mods-page">
     <div class="mods-toolbar">
@@ -121,14 +122,14 @@
 }
 
 @code {
-    List<ModListEntry> current = [];
-    List<string> disabledDlcs = [];
-    string listName = "Current";
+    List<ModListEntry> current => State.Mods;
+    List<string> disabledDlcs => State.DisabledDlcs;
+    string listName { get => State.Name; set => State.Name = value; }
+    bool loaded => State.Loaded;
     IReadOnlyList<ModList> savedLists = [];
     string? status;
     bool error;
     bool busy;
-    bool loaded;
     bool confirmEmpty;
     string selectedList = "";
 
@@ -152,6 +153,7 @@
     // Re-checks file conflicts half a second after the last list change, off the UI thread.
     void ScheduleConflicts()
     {
+        State.Touch();
         conflictRun?.Cancel();
         conflictRun?.Dispose();
         var run = conflictRun = new CancellationTokenSource();
@@ -199,10 +201,12 @@
         {
             await Manager.RefreshLibraryAsync();
             savedLists = Manager.Lists.LoadAll();
-            SetList(Manager.ImportCurrent("Current"));
-            loaded = true;
+            var imported = !State.Loaded;
+            if (imported) SetList(Manager.ImportCurrent("Current"));
             LibraryChanged();
-            return $"Loaded {current.Count} enabled mods from dlc_load.json." + ErrorSuffix();
+            return imported
+                ? $"Loaded {current.Count} enabled mods from dlc_load.json." + ErrorSuffix()
+                : $"{current.Count} mods in '{listName}'." + ErrorSuffix();
         });
     }
 
@@ -351,9 +355,7 @@
     void SetList(ModList list)
     {
         confirmEmpty = false;
-        listName = list.Name;
-        current = list.Mods.ToList();
-        disabledDlcs = list.DisabledDlcs.ToList();
+        State.Set(list);
         ScheduleConflicts();
     }
 
@@ -361,7 +363,6 @@
     {
         selectedList = "";
         SetList(Manager.ImportCurrent("Current"));
-        loaded = true;
         return $"Imported {current.Count} mods from dlc_load.json.";
     });
 
@@ -386,7 +387,6 @@
         selectedList = "";
         if (name.Length == 0) return null;
         SetList(Manager.Lists.Load(name) ?? throw new InvalidOperationException($"List '{name}' not found."));
-        loaded = true;
         return $"Loaded list '{name}'.";
     });
 

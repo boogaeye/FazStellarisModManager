@@ -6,6 +6,7 @@ using System.Threading;
 using FazStellarisModmanager.Core;
 using FazStellarisModmanager.Core.Conflicts;
 using FazStellarisModmanager.Core.Library;
+using FazStellarisModmanager.Core.Lists;
 using FazStellarisModmanager.Core.Session;
 using FazStellarisModmanager.Core.Technology;
 using FazStellarisModmanager.Core.Updates;
@@ -28,6 +29,8 @@ public static class AppServices
         services.AddSingleton(paths);
         services.AddSingleton(new ModIconCache(paths.ModIcons, ImageShrinker.ToSmallPng));
         services.AddSingleton(new ModFileCache());
+        services.AddSingleton(new EditedModList());
+        services.AddSingleton(new DefinitionScanService());
         // Steam client calls run in this exe started as a helper process: Steam treats whichever process connected as the
         // running game until it exits, so connecting from the app itself would block launching Stellaris until it closes.
         services.AddSingleton<IWorkshopService>(_ => new HelperProcessWorkshopService(
