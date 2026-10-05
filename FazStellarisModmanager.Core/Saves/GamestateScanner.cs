@@ -14,20 +14,77 @@ public static class GamestateScanner
     static readonly HashSet<string> CountryBlocks = new(StringComparer.Ordinal)
     {
         "name", "adjective", "flag", "variables", "relations_manager", "tech_status",
+        "government", "traditions", "ascension_perks", "active_policies", "edicts", "timed_modifier", "relics",
     };
 
     public static (List<SavePlayer> Players, List<SaveCountry> Countries) Scan(byte[] data)
     {
+        var (players, countries, _, _) = ScanAll(data);
+        return (players, countries);
+    }
+
+    public static (List<SavePlayer> Players, List<SaveCountry> Countries, GalacticCommunity? Community, IReadOnlyDictionary<int, IReadOnlyList<string>> Megastructures) ScanAll(byte[] data)
+    {
         var players = new List<SavePlayer>();
         var countries = new List<SaveCountry>();
+        var resolutionTypes = new Dictionary<int, string>();
+        var megas = new Dictionary<int, List<string>>();
+        PdxBlock? community = null;
         var r = new Reader(data, 0, data.Length);
         while (r.NextEntry(out var key, out var value, out var body))
         {
             if (body is not { } b) continue;
             if (r.Is(key, "player")) players.AddRange(ReadPlayers(Parse(data, b)));
             else if (r.Is(key, "country")) ScanCountries(data, b, countries);
+            else if (r.Is(key, "resolution")) ScanResolutions(data, b, resolutionTypes);
+            else if (r.Is(key, "megastructures")) ScanMegastructures(data, b, megas);
+            else if (r.Is(key, "galactic_community")) community = Parse(data, b);
         }
-        return (players, countries);
+        return (players, countries, BuildCommunity(community, resolutionTypes),
+            megas.ToDictionary(e => e.Key, e => (IReadOnlyList<string>)e.Value));
+    }
+
+    // Reads only the type of each "id={ ... }" entry; nested blocks (supporters and so on) are skipped by the reader.
+    static void ScanResolutions(byte[] data, (int Start, int End) range, Dictionary<int, string> types)
+    {
+        var r = new Reader(data, range.Start, range.End);
+        while (r.NextEntry(out var key, out _, out var body))
+        {
+            if (body is not { } b || !int.TryParse(r.Text(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)) continue;
+            var inner = new Reader(data, b.Start, b.End);
+            while (inner.NextEntry(out var k, out var v, out _))
+                if (v is { } tv && inner.Is(k, "type")) { types[id] = inner.Text(tv); break; }
+        }
+    }
+
+    static void ScanMegastructures(byte[] data, (int Start, int End) range, Dictionary<int, List<string>> owned)
+    {
+        var r = new Reader(data, range.Start, range.End);
+        while (r.NextEntry(out _, out _, out var body))
+        {
+            if (body is not { } b) continue;
+            string? type = null, owner = null;
+            var inner = new Reader(data, b.Start, b.End);
+            while (inner.NextEntry(out var k, out var v, out _))
+            {
+                if (v is not { } tv) continue;
+                if (inner.Is(k, "type")) type = inner.Text(tv);
+                else if (inner.Is(k, "owner")) owner = inner.Text(tv);
+            }
+            if (type is null || !int.TryParse(owner, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ownerId)) continue;
+            if (!owned.TryGetValue(ownerId, out var list)) owned[ownerId] = list = [];
+            list.Add(type);
+        }
+    }
+
+    static GalacticCommunity? BuildCommunity(PdxBlock? block, Dictionary<int, string> resolutionTypes)
+    {
+        if (block is null) return null;
+        List<int> Ids(string key) => block.GetBlock(key)?.StringItems
+            .Select(s => int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ? (int?)i : null)
+            .OfType<int>().ToList() ?? [];
+        var passed = Ids("passed").Where(resolutionTypes.ContainsKey).Select(i => resolutionTypes[i]).ToList();
+        return new GalacticCommunity(Ids("members"), Ids("council"), passed);
     }
 
     static IEnumerable<SavePlayer> ReadPlayers(PdxBlock block)
@@ -100,6 +157,22 @@ public static class GamestateScanner
         var techs = b.GetValueOrDefault("tech_status")?.Entries
             .Where(e => e.Key == "technology" && e.Value is string).Select(e => (string)e.Value).Distinct().ToList() ?? [];
 
+        var government = b.GetValueOrDefault("government");
+        var holdings = new CountryHoldings(
+            government?.GetBlock("civics")?.StringItems.ToList() ?? [],
+            government?.GetString("origin"),
+            government?.GetString("authority"),
+            b.GetValueOrDefault("traditions")?.StringItems.ToList() ?? [],
+            b.GetValueOrDefault("ascension_perks")?.StringItems.ToList() ?? [],
+            b.GetValueOrDefault("active_policies")?.Items.OfType<PdxBlock>().Select(p => p.GetString("selected")).OfType<string>().ToList() ?? [],
+            b.GetValueOrDefault("edicts")?.Items.OfType<PdxBlock>().Select(e => e.GetString("edict")).OfType<string>().ToList() ?? [],
+            b.GetValueOrDefault("relics")?.StringItems.ToList() ?? [],
+            b.GetValueOrDefault("timed_modifier")?.GetBlock("items")?.Items.OfType<PdxBlock>()
+                .Where(t => t.GetString("modifier") is not null)
+                .Select(t => new TimedModifier(t.GetString("modifier")!,
+                    double.TryParse(t.GetString("multiplier"), NumberStyles.Float, CultureInfo.InvariantCulture, out var mult) ? mult : 1))
+                .ToList() ?? []);
+
         double? cached = b.GetValueOrDefault("variables")?.GetString("egm_cached_diplo_weight") is { } cv
                          && double.TryParse(cv, NumberStyles.Float, CultureInfo.InvariantCulture, out var cd) ? cd : null;
 
@@ -120,7 +193,8 @@ public static class GamestateScanner
             Num("num_sapient_pops"),
             cached,
             contacts,
-            techs);
+            techs,
+            holdings);
     }
 
     // { variables={ { key="adjective" value={ key="Fazbear" } } … } } → adjective → Fazbear (first wins).

@@ -22,7 +22,7 @@ public static class SaveReader
 
         var data = new byte[stateEntry.Length];
         using (var stream = stateEntry.Open()) stream.ReadExactly(data);
-        var (players, countries) = GamestateScanner.Scan(data);
+        var (players, countries, community, megastructures) = GamestateScanner.ScanAll(data);
 
         return new GameSnapshot(
             meta.GetString("name") ?? Path.GetFileNameWithoutExtension(path),
@@ -31,6 +31,8 @@ public static class SaveReader
             path,
             File.GetLastWriteTimeUtc(path),
             players,
-            countries);
+            countries,
+            community,
+            megastructures);
     }
 }

@@ -2,10 +2,10 @@ namespace FazStellarisModmanager.Core.Saves;
 
 /// <summary>
 /// Watches the save games folder and keeps <see cref="Current"/> as the newest readable save. Reads run on the thread
-/// pool, one at a time. A failed read keeps the previous snapshot and is not retried until the file changes.
+/// pool, one at a time; <c>enrich</c> (optional) runs on that same thread after each read. A failed read keeps the previous snapshot and is not retried until the file changes.
 /// <see cref="Changed"/> fires on any thread.
 /// </summary>
-public sealed class LiveGameService(Func<string?> saveGamesDir, Func<string, GameSnapshot>? read = null, TimeSpan? stableDelay = null) : IDisposable
+public sealed class LiveGameService(Func<string?> saveGamesDir, Func<string, GameSnapshot>? read = null, TimeSpan? stableDelay = null, Func<GameSnapshot, GameSnapshot>? enrich = null) : IDisposable
 {
     readonly Func<string, GameSnapshot> _read = read ?? SaveReader.Read;
     readonly TimeSpan _stableDelay = stableDelay ?? TimeSpan.FromSeconds(2);
@@ -77,8 +77,19 @@ public sealed class LiveGameService(Func<string?> saveGamesDir, Func<string, Gam
             Changed?.Invoke();
             try
             {
-                Current = await Task.Run(() => _read(newest.FullName));
-                Error = null;
+                string? enrichError = null;
+                Current = await Task.Run(() =>
+                {
+                    var snap = _read(newest.FullName);
+                    if (enrich is null) return snap;
+                    try { return enrich(snap); }
+                    catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+                    {
+                        enrichError = "Diplomatic weight could not be calculated: " + ex.Message;
+                        return snap;
+                    }
+                });
+                Error = enrichError;
                 Status = null;
                 _failed = null;
             }

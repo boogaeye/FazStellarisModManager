@@ -288,6 +288,9 @@ table.ctable .why { color: var(--muted); }
 .lstat { display: flex; justify-content: space-between; gap: .5rem; padding: .3rem 0; border-bottom: 1px solid var(--panel-2); font-variant-numeric: tabular-nums; }
 .ldiplo { margin: .2rem 0 .4rem; font-size: .82rem; }
 .ldiplo summary { cursor: pointer; color: var(--muted); }
+.ldiplo .lines { padding-left: .8rem }
+.pos-bonus { color: #6fcf97 }
+.neg-bonus { color: #ff8a80 }
 .lflag { width: 30px; height: 30px; border-radius: 4px; flex: none; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; color: #fff; box-shadow: inset 0 0 0 1px #0006; }
 .lflag.big { width: 52px; height: 52px; font-size: 1.5rem; }
 .live-board { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: .35rem; overflow: auto; position: relative; }

@@ -44,14 +44,16 @@ public static class AppServices
                 LaunchBlockedReason = () => workshop.IsActive ? "Wait for the Workshop downloads to finish before launching Stellaris." : null,
             };
         });
+        services.AddSingleton(sp => new DiploEnricher(sp.GetRequiredService<ModManagerService>()));
         services.AddSingleton(sp =>
         {
             var manager = sp.GetRequiredService<ModManagerService>();
+            var enricher = sp.GetRequiredService<DiploEnricher>();
             return new LiveGameService(() =>
             {
                 try { return Path.Combine(manager.Resolve().UserDir, "save games"); }
                 catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException) { return null; }
-            });
+            }, enrich: enricher.Enrich);
         });
         services.AddSingleton(new LiveViewerStore(paths.LiveGame));
         services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>(), sp.GetRequiredService<LiveGameService>()));

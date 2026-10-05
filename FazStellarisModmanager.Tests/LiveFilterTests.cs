@@ -68,4 +68,30 @@ public class LiveFilterTests
         Assert.Equal(["red"], back.Snapshot.Countries.Single(c => c.Id == 0).Flag!.Colors);
         Assert.Equal(1, Assert.IsType<LiveViewAs>(await Framing.ReadAsync(stream)).CountryId);
     }
+
+    [Fact]
+    public void Holdings_diplo_community_and_megastructures_only_for_viewer()
+    {
+        var h = CountryHoldings.Empty with { Origin = "origin_x" };
+        var bd = new FazStellarisModmanager.Core.Diplomacy.DiploBreakdown(new(0, 0, []), new(0, 0, []), new(0, 0, []), new(0, 0, []), [], false);
+        var s = S() with
+        {
+            Countries = S().Countries.Select(c => c with { Holdings = h }).ToList(),
+            Community = new GalacticCommunity([0, 1], [0], ["r"]),
+            Megastructures = new Dictionary<int, IReadOnlyList<string>> { [1] = ["m"] },
+            Diplo = new Dictionary<int, FazStellarisModmanager.Core.Diplomacy.DiploBreakdown> { [0] = bd, [1] = bd },
+        };
+        var f = LiveFilter.For(s, 1);
+        Assert.NotNull(f.Countries.Single(c => c.Id == 1).Holdings);
+        Assert.All(f.Countries.Where(c => c.Id != 1), c => Assert.Null(c.Holdings));
+        Assert.Equal([1], f.Diplo!.Keys);
+        Assert.Null(f.Community);
+        Assert.Null(f.Megastructures);
+
+        var none = LiveFilter.For(s, null);
+        Assert.Null(none.Diplo);
+        Assert.Null(none.Community);
+        Assert.Null(none.Megastructures);
+        Assert.Null(LiveFilter.For(s, 99).Diplo);
+    }
 }
