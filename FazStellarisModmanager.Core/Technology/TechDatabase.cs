@@ -1,3 +1,4 @@
+using FazStellarisModmanager.Core.Descriptors;
 using System.Globalization;
 
 namespace FazStellarisModmanager.Core.Technology;
@@ -53,9 +54,11 @@ public sealed class TechDatabase
     readonly GrantIndex _grants;
 
     TechDatabase(Dictionary<string, Tech> techs, Dictionary<string, IReadOnlyList<string>> dependents, List<string> warnings, List<string> sourceNames,
-        IReadOnlyDictionary<string, IReadOnlyList<Unlock>> unlocks, SpriteIndex sprites, GrantIndex grants)
+        IReadOnlyDictionary<string, IReadOnlyList<Unlock>> unlocks, SpriteIndex sprites, GrantIndex grants,
+        IReadOnlyDictionary<string, PdxBlock> scriptedTriggers)
     {
         Techs = techs;
+        ScriptedTriggers = scriptedTriggers;
         _dependents = dependents;
         Warnings = warnings.Distinct().ToList();
         _unlocks = unlocks;
@@ -92,6 +95,9 @@ public sealed class TechDatabase
     public IReadOnlyList<Unlock> AllUnlocks { get; }
 
     public SpriteIndex Sprites { get; }
+
+    /// <summary>common/scripted_triggers of the sources (name to body), for evaluating conditions.</summary>
+    public IReadOnlyDictionary<string, PdxBlock> ScriptedTriggers { get; }
 
     public int Count(TechArea? area) => area is null ? Techs.Count : Techs.Values.Count(t => t.Area == area);
 
@@ -167,6 +173,7 @@ public sealed class TechDatabase
         var techs = new Dictionary<string, Tech>(StringComparer.OrdinalIgnoreCase);
         IReadOnlyDictionary<string, IReadOnlyList<Unlock>> unlocks;
         SpriteIndex sprites;
+        IReadOnlyDictionary<string, PdxBlock> scriptedTriggers = new Dictionary<string, PdxBlock>();
         try
         {
             progress?.Report("Collecting technology files…");
@@ -210,7 +217,7 @@ public sealed class TechDatabase
             loc.Scripted = ScriptedLoc.Build(sources, warnings, ct);
             progress?.Report("Reading job swaps…");
             loc.Jobs = JobSwaps.From(CommonDefinitions.Load(sources, "common/pop_jobs", warnings, ct));
-            loc.ScriptedTriggers = CommonDefinitions.Load(sources, "common/scripted_triggers", warnings, ct);
+            loc.ScriptedTriggers = scriptedTriggers = CommonDefinitions.Load(sources, "common/scripted_triggers", warnings, ct);
 
             // Finding the grants needs the localisation and the tech keys (the winning definitions' spelling); it runs alongside
             // the unlock and sprite scans.
@@ -274,7 +281,7 @@ public sealed class TechDatabase
             .Where(n => techs.Values.Any(t => t.Source.SourceName == n)).ToList();
         return new TechDatabase(techs,
             dependents.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value.Order(StringComparer.Ordinal).ToList(), StringComparer.OrdinalIgnoreCase),
-            warnings, sourceNames, unlocks, sprites, grants);
+            warnings, sourceNames, unlocks, sprites, grants, scriptedTriggers);
     }
 
     static Dictionary<string, FileWinner> Winners(IReadOnlyList<ContentSource> sources, string folder, bool topLevelOnly)

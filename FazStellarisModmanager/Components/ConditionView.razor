@@ -1,0 +1,48 @@
+@using FazStellarisModmanager.Core.Conditions
+
+<div class="cv">
+    @{ var lines = Flatten().ToList(); }
+    @for (var i = 0; i < lines.Count; i++)
+    {
+        var (depth, node) = lines[i];
+        var delay = Math.Min(i * StepMs, MaxDelayMs);
+        <div class="cv-line" style="@($"--d:{delay}ms;padding-left:{depth * 1.1:0.##}rem")">
+            <span class="@MarkClass(node.Result)" title="@MarkTitle(node.Result)">@MarkChar(node.Result)</span><span class="cv-text">@node.Text</span>
+        </div>
+    }
+</div>
+
+@code {
+    const int StepMs = 35;
+    const int MaxDelayMs = 700;
+
+    /// <summary>The evaluated condition; its own line is not shown, only what is inside it.</summary>
+    [Parameter, EditorRequired] public ConditionNode Root { get; set; } = default!;
+
+    IEnumerable<(int Depth, ConditionNode Node)> Flatten()
+    {
+        var stack = new Stack<(int, ConditionNode)>(Root.Children.Reverse().Select(c => (0, c)));
+        while (stack.Count > 0)
+        {
+            var (depth, node) = stack.Pop();
+            yield return (depth, node);
+            foreach (var child in node.Children.Reverse()) stack.Push((depth + 1, child));
+        }
+    }
+
+    public static string MarkClass(Truth t) => t switch
+    {
+        Truth.True => "cv-mark cv-true",
+        Truth.False => "cv-mark cv-false",
+        _ => "cv-mark cv-unknown",
+    };
+
+    public static string MarkChar(Truth t) => t switch { Truth.True => "✓", Truth.False => "✗", _ => "?" };
+
+    public static string MarkTitle(Truth t) => t switch
+    {
+        Truth.True => "Met",
+        Truth.False => "Not met",
+        _ => "Can't be told from the live data",
+    };
+}

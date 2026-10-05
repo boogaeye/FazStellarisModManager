@@ -1,5 +1,6 @@
 @page "/tech"
 @using System.Globalization
+@using FazStellarisModmanager.Core.Conditions
 @implements IDisposable
 @inject TechTreeService Tree
 @inject LiveFeed Feed
@@ -165,7 +166,7 @@
                 {
                     <TechSidebar Tech="side" Database="db" Tree="Tree" OnSelect="key => selectedKey = key"
                                  Targets="targets" Researched="researched" Route="route"
-                                 OnToggleTarget="ToggleTarget" />
+                                 OnToggleTarget="ToggleTarget" Facts="facts" />
                 }
                 else
                 {
@@ -223,9 +224,28 @@
         UpdateResearched();
     }
 
+    // The viewer's empire for the ✓/✗ marks, rebuilt only when the snapshot or the viewer changed. Null when the live data lacks
+    // what the conditions need (an older host, a country that was not read).
+    EmpireFacts? facts;
+    GameSnapshot? factsSnapshot;
+    int? factsViewer;
+
+    void UpdateFacts()
+    {
+        var snap = Feed.Current;
+        var viewer = Feed.ViewerId;
+        if (ReferenceEquals(snap, factsSnapshot) && viewer == factsViewer) return;
+        (factsSnapshot, factsViewer) = (snap, viewer);
+        facts = snap is not null && viewer is int id && snap.Countries.FirstOrDefault(c => c.Id == id) is { Holdings: not null, Flags: not null } me
+                && snap.GlobalFlags is not null
+            ? EmpireFacts.From(me, snap, snap.Players.Any(p => p.CountryId == id))
+            : null;
+    }
+
     // Researched techs come from the live game; the route is rebuilt only when that set changed.
     void UpdateResearched()
     {
+        UpdateFacts();
         var live = Feed.ResearchedTechs;
         if (!live.SetEquals(researched)) researched = new HashSet<string>(live, StringComparer.OrdinalIgnoreCase);
         RecomputeRoute();

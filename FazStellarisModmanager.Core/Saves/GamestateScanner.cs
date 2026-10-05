@@ -15,6 +15,7 @@ public static class GamestateScanner
     {
         "name", "adjective", "flag", "variables", "relations_manager", "tech_status",
         "government", "traditions", "ascension_perks", "active_policies", "edicts", "timed_modifier", "relics", "owned_leaders",
+        "flags", "ethos",
     };
 
     // Ids a country's roster is built from (see AttachRosters).
@@ -28,6 +29,14 @@ public static class GamestateScanner
 
     public static (List<SavePlayer> Players, List<SaveCountry> Countries, GalacticCommunity? Community, IReadOnlyDictionary<int, IReadOnlyList<string>> Megastructures) ScanAll(byte[] data)
     {
+        var (players, countries, community, megastructures, _) = ScanWithGlobals(data);
+        return (players, countries, community, megastructures);
+    }
+
+    /// <summary>Like <see cref="ScanAll"/>, plus the keys of the top-level flags block (global flags).</summary>
+    public static (List<SavePlayer> Players, List<SaveCountry> Countries, GalacticCommunity? Community, IReadOnlyDictionary<int, IReadOnlyList<string>> Megastructures, IReadOnlyList<string> GlobalFlags) ScanWithGlobals(byte[] data)
+    {
+        var globalFlags = new List<string>();
         var players = new List<SavePlayer>();
         var countries = new List<SaveCountry>();
         var resolutionTypes = new Dictionary<int, string>();
@@ -44,12 +53,25 @@ public static class GamestateScanner
             else if (r.Is(key, "resolution")) ScanResolutions(data, b, resolutionTypes);
             else if (r.Is(key, "megastructures")) ScanMegastructures(data, b, megas);
             else if (r.Is(key, "galactic_community")) community = Parse(data, b);
+            else if (r.Is(key, "flags")) ReadKeys(data, b, globalFlags);
             else if (r.Is(key, "leaders") || r.Is(key, "council_positions") || r.Is(key, "pop_factions") || r.Is(key, "species_db"))
                 sections[r.Text(key)] = b;
         }
         AttachRosters(data, countries, refs, players.Select(p => p.CountryId).ToHashSet(), sections);
         return (players, countries, BuildCommunity(community, resolutionTypes),
-            megas.ToDictionary(e => e.Key, e => (IReadOnlyList<string>)e.Value));
+            megas.ToDictionary(e => e.Key, e => (IReadOnlyList<string>)e.Value), globalFlags);
+    }
+
+    // The keys of a "name = value" block, read with the byte reader (the global flags block can be large).
+    static void ReadKeys(byte[] data, (int Start, int End) range, List<string> keys)
+    {
+        var seen = new HashSet<string>(keys, StringComparer.Ordinal);
+        var r = new Reader(data, range.Start, range.End);
+        while (r.NextEntry(out var key, out _, out _))
+        {
+            var name = r.Text(key);
+            if (seen.Add(name)) keys.Add(name);
+        }
     }
 
     static long? Long(string? s) => long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var l) ? l : null;
@@ -271,6 +293,12 @@ public static class GamestateScanner
             .Where(e => e.Key == "technology" && e.Value is string).Select(e => (string)e.Value).Distinct().ToList() ?? [];
 
         var government = b.GetValueOrDefault("government");
+        var flags = b.GetValueOrDefault("flags")?.Entries.Select(e => e.Key).Distinct().ToList() ?? [];
+        // ethos = { ethics = { "ethic_x" "ethic_y" } } in saves; ethic = "ethic_x" entries are read as well.
+        var ethos = b.GetValueOrDefault("ethos");
+        var ethics = (ethos?.GetBlock("ethics")?.StringItems ?? [])
+            .Concat(ethos?.Entries.Where(e => e.Key == "ethic" && e.Value is string).Select(e => (string)e.Value) ?? []).Distinct().ToList();
+
         var holdings = new CountryHoldings(
             government?.GetBlock("civics")?.StringItems.ToList() ?? [],
             government?.GetString("origin"),
@@ -307,7 +335,9 @@ public static class GamestateScanner
             cached,
             contacts,
             techs,
-            holdings);
+            holdings,
+            Flags: flags,
+            Ethics: ethics);
     }
 
     // { variables={ { key="adjective" value={ key="Fazbear" } } … } } → adjective → Fazbear (first wins).
