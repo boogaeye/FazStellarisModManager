@@ -35,6 +35,13 @@
             <rect class="ov-hit" x="@F(n.X)" y="@F(n.Y)" width="@F(TechOverviewLayout.NodeWidth)" height="@F(TechOverviewLayout.NodeHeight)" fill="transparent" />
             <circle class="ov-dot" cx="@F(n.X + TechOverviewLayout.NodeWidth / 2)" cy="@F(n.Y + TechOverviewLayout.NodeHeight / 2)" r="@F(TechOverviewLayout.NodeHeight / 2)" fill="@AreaColor(t.Area)" />
         }
+        @if (Researched.Contains(key))
+        {
+            <g class="ov-check">
+                <circle cx="@F(n.X + TechOverviewLayout.NodeWidth - 4)" cy="@F(n.Y + 4)" r="7" fill="#6fcf97" stroke="#10151b" stroke-width="1.5" />
+                <text x="@F(n.X + TechOverviewLayout.NodeWidth - 4)" y="@F(n.Y + 7.5)" text-anchor="middle" fill="#10151b" font-size="10" font-weight="700">✓</text>
+            </g>
+        }
     </g>
 }
 
@@ -95,8 +102,8 @@
     string Tooltip(Tech t)
     {
         var tier = t.IsRepeatable ? "R" : t.Tier?.ToString(CultureInfo.InvariantCulture) ?? "?";
-        var state = Researched.Contains(t.Key) ? " · researched" : Targets.Contains(t.Key) ? " · route target" : "";
-        return $"{t.Name} · Tier {tier} · Cost {t.Cost}{state} (right-click: researched, Shift+click: route target)";
+        var state = Researched.Contains(t.Key) ? " · researched (Live Game)" : Targets.Contains(t.Key) ? " · route target" : "";
+        return $"{t.Name} · Tier {tier} · Cost {t.Cost}{state} (Shift+click: route target)";
     }
 
     static string EdgePath(OverviewEdge e, OverviewNode from, OverviewNode to)

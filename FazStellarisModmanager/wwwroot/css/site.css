@@ -154,6 +154,13 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); cur
 .ov-node.sel .ov-box { stroke: #ffffff; stroke-width: 2.5; }
 .ov-node.done .ov-box { stroke-dasharray: 4 3; }
 .ov-node.done .ov-name { fill: #6fcf97; }
+.ov-node.done .ov-box { fill: #18261f; stroke: #6fcf97; }
+.ov-node.done.tgt .ov-box { stroke: #f2c983; }
+.ov-node.done.sel .ov-box { stroke: #ffffff; }
+.tech-row.done .name { color: #6fcf97; opacity: .85; }
+.tech-row .done-mark, .tech-sidebar-card .done-tag { color: #6fcf97; font-weight: 700; }
+.tech-row .done-mark { margin-right: .3rem; }
+.tech-sidebar-card .done-tag { display: inline-block; margin-top: .2rem; border: 1px solid #6fcf97; background: #18261f; }
 .ov-node.dim { opacity: .22; }
 .ov-node.done .ov-dot { opacity: .45; }
 .ov-node.tgt .ov-dot { stroke: #f2c983; stroke-width: 6; }

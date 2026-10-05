@@ -7,6 +7,7 @@
         <div class="grow">
             <div class="title">@Tech.Name</div>
             <div class="muted small">@Tech.Key</div>
+            @if (Researched.Contains(Tech.Key)) { <span class="tag done-tag">✓ Researched (from Live Game)</span> }
         </div>
     </div>
     <div class="tags">

@@ -85,10 +85,10 @@
                 @foreach (var t in results.Take(MaxRows))
                 {
                     var tech = t;
-                    <div @key="tech.Key" class="tech-row @(tech.Key == selectedKey ? "sel" : "")" @onclick="() => selectedKey = tech.Key">
+                    <div @key="tech.Key" class="tech-row @(tech.Key == selectedKey ? "sel" : "") @(researched.Contains(tech.Key) ? "done" : "")" @onclick="() => selectedKey = tech.Key">
                         <TechIcon Uri="@Tree.IconUri(tech)" Size="24" />
                         <div class="grow">
-                            <div class="name">@tech.Name</div>
+                            <div class="name">@if (researched.Contains(tech.Key)) { <span class="done-mark">✓</span> }@tech.Name</div>
                             <div class="src @(tech.ChangedByMods ? "mod" : "")">T@(TierText(tech)) · @tech.Source.SourceName</div>
                         </div>
                     </div>
@@ -151,7 +151,7 @@
                         </label>
                     </div>
                     <div class="graph-scroll">
-                        <TechGraphView Graph="TechGraphLayout.Build(db, sel.Key, depth)" Database="db" IconUri="Tree.IconUri" OnSelect="key => selectedKey = key" />
+                        <TechGraphView Graph="TechGraphLayout.Build(db, sel.Key, depth)" Database="db" Researched="researched" IconUri="Tree.IconUri" OnSelect="key => selectedKey = key" />
                     </div>
                 }
                 else
