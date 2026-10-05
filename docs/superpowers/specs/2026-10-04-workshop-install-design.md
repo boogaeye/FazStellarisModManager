@@ -48,14 +48,15 @@ This builds on sub-project 9 (mod identity): `MatchPlan.NeedsWorkshopInstall`, `
 
 ### Steam adapter (`FazStellarisModmanager.Steam`, new project)
 - **Setup:** `SteamWorkshopService : IWorkshopService` uses Facepunch.Steamworks 2.3.3. The project copies the package's `content/steam_api64.dll` to the output, so it reaches the app's output and the release zip.
-- **Connection:** `SteamClient.Init(281990, asyncCallbacks: true)` inside a call, and `SteamClient.Shutdown()` in `finally`. Calls are serialised.
+- **Connection:** `SteamClient.Init(281990, asyncCallbacks: false)` inside a call, and `SteamClient.Shutdown()` in `finally`. Calls are serialised.
+- **Manual pumping:** Facepunch's background pump is off. We call `SteamClient.RunCallbacks()` ourselves every ~16 ms while waiting for a Steam call (`Pumped`) and in the download poll. So none of our code, and never `Shutdown`, runs inside a callback frame, and the calls work from any thread (the session runs them via `Task.Run`). `Dispatch.OnException` logs to Debug.
 - **Per item, in sequence:**
   1. Get the item. If its `Result` isn't OK, the item fails with "not found or not visible to this account".
   2. Subscribe if not subscribed. Getting and subscribing each have a 30 s limit ("Steam did not respond.").
-  3. If already installed and up to date, it succeeds at once. Otherwise `Download(highPriority)`, then poll every 250 ms.
-  4. Progress comes from Steam's live byte counters (`DownloadBytesDownloaded / DownloadBytesTotal`); `Item.DownloadAsync` reports nothing until a download completes. It succeeds when the item is not downloading, installed and doesn't need an update.
+  3. Always `Download(highPriority: true)`, even for an installed item: that is what makes Steam check for an update. Then poll every 16 ms (pumping callbacks) and report progress at most every 250 ms.
+  4. Progress comes from Steam's live byte counters (`DownloadBytesDownloaded / DownloadBytesTotal`); `Item.DownloadAsync` reports nothing until a download completes. The pure `Core/Workshop/DownloadWatch` decides from state snapshots. "Finished" means installed, and not downloading, pending or needing an update. It only counts once Steam has visibly reacted, meaning the item was missing, downloading, pending or needing an update at some point, or after an 8 s grace period with the item still finished, which means it really is up to date.
   5. Any other exception fails only that item.
-- **Stalls:** a download stalls when the downloaded bytes don't grow for 2 minutes. The item then fails with "The download stalled", and the rest continue. A finished item is never reported as stalled.
+- **Stalls:** a download stalls when the downloaded bytes don't grow for 2 minutes. The item then fails with "The download stalled.", and the rest continue. If it is still pending with nothing downloaded, the message is "Steam queued the download but didn't start it; check Steam's Downloads page." A finished item is never reported as stalled.
 - **Init failure:** `SteamClient.Shutdown()` is still called, and the `SteamAppId`/`SteamGameId` variables are cleared after every connection so the game doesn't inherit them.
 - **Cancel:** the current item and the remaining ones become Cancelled.
 - **The API is checked first:** task 1 is a spike that connects, queries one known item without subscribing, and records the real member names. The adapter follows its findings.
@@ -77,6 +78,7 @@ This builds on sub-project 9 (mod identity): `MatchPlan.NeedsWorkshopInstall`, `
   - each item: installed or updated, or failed with the reason and an **Open in Steam** link (`steam://url/CommunityFilePage/<id>`);
   - the match outcome (from `MatchPlan`);
   - "still different" items from the new diff. An updated mod that still differs gets the note "the host may be on an older version".
+- **Staying open:** leaving the client role closes a pop-up that is still choosing. Once a run starts, the pop-up stays until **Close**, even if the host disconnects, so the summary and its "host left" note can be read.
 
 ### Safety
 - `ModManagerService.Launch` throws "Wait for the Workshop downloads to finish…" while `IWorkshopService.IsActive`. The app wires this check through a `LaunchBlockedReason` function set at startup.
@@ -95,6 +97,7 @@ This builds on sub-project 9 (mod identity): `MatchPlan.NeedsWorkshopInstall`, `
   - no Workshop service throws;
   - `PlanAsync` doesn't write `dlc_load.json`.
 - **`ModManagerService.Launch`** is blocked while the Workshop service is active.
+- **`DownloadWatch`** (the adapter's download decision): an up-to-date item is done after the grace period; an outdated item that starts downloading is done when it finishes; bytes that stop growing stall; queued but never started; a finish just before the stall is done.
 - **Steam adapter:** checked by the spike and manually.
 
 ## Out of scope
