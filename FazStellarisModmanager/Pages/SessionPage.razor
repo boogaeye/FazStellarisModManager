@@ -143,7 +143,6 @@ else
 {
     <WorkshopPrompt Session="Session" Workshop="Workshop" Needs="needs" OnClose="() => workshopNeeds = null" />
 }
-```
 
 @code {
     // My mod's name, plus the host's when it differs.
@@ -151,37 +150,60 @@ else
         u.MineName is { } mine && mine != u.Name ? $"{mine} (host: {u.Name})" : u.MineName ?? u.Name;
 
     WorkshopNeeds? workshopNeeds;
+    bool opening; // working out the plan for the pop-up: further clicks are ignored
 
     // Match host: when something needs installing (or is host-only), show the Workshop pop-up instead of matching straight away.
     async Task OpenOrMatch()
     {
+        if (opening) return;
+        opening = true;
         try
         {
-            var needs = WorkshopNeeds.From(await Session.PlanAsync());
+            if (await PlanNeeds() is not { } needs) return;
             if (needs.NeedsPrompt)
             {
                 workshopNeeds = needs;
                 return;
             }
+            await Match();
         }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
+        finally
         {
-            (status, error) = (ex.Message, true);
-            return;
+            opening = false;
         }
-        await Match();
     }
 
     async Task OpenWorkshop()
     {
+        if (opening) return;
+        opening = true;
         try
         {
-            workshopNeeds = WorkshopNeeds.From(await Session.PlanAsync());
+            if (await PlanNeeds() is { } needs) workshopNeeds = needs;
+        }
+        finally
+        {
+            opening = false;
+        }
+    }
+
+    // What the pop-up would offer right now; null (with the status set) when the plan could not be made.
+    async Task<WorkshopNeeds?> PlanNeeds()
+    {
+        (status, error) = (null, false);
+        try
+        {
+            return WorkshopNeeds.From(await Session.PlanAsync());
+        }
+        catch (OperationCanceledException)
+        {
+            status = "Cancelled.";
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             (status, error) = (ex.Message, true);
         }
+        return null;
     }
 
     int hostPort = SessionProtocol.DefaultPort;
@@ -206,6 +228,8 @@ else
             status = null;
             selectedId = null;
         }
+        // Not a client any more: drop the pop-up, so it can't come back by itself after a rejoin.
+        if (Session.Role != SessionRole.Client) workshopNeeds = null;
         prevRole = Session.Role;
         StateHasChanged();
     });

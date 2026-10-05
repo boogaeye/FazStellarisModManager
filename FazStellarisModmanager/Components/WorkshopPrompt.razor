@@ -1,8 +1,9 @@
+@using System.Collections.Concurrent
 @using System.Globalization
 @implements IDisposable
 
 <div class="modal-backdrop">
-    <div class="modal workshop-modal" role="dialog" aria-modal="true" aria-labelledby="ws-title">
+    <div class="modal workshop-modal" role="dialog" aria-modal="true" aria-labelledby="ws-title" tabindex="-1" @ref="dialog" @onkeydown="OnKeyDown">
         <h2 id="ws-title">Workshop mods for this host</h2>
 
         @if (phase == Phase.Choose)
@@ -59,7 +60,13 @@
         }
         else if (phase == Phase.Working)
         {
-            <p>@(Session.Activity ?? "Working…")</p>
+            <div aria-live="polite">
+                <p>@(Session.Activity ?? "Working…")</p>
+                @if (running.Count > 0)
+                {
+                    <p class="muted small">@FinishedCount() of @running.Count done</p>
+                }
+            </div>
             <ul class="ws-list">
                 @foreach (var id in running)
                 {
@@ -67,7 +74,7 @@
                     <li>
                         <span>@NameOf(id)</span>
                         <span class="muted small">@StateText(p)</span>
-                        <progress max="1" value="@F(p?.Fraction ?? 0)"></progress>
+                        <progress max="1" value="@F(p?.Fraction ?? 0)" aria-label="@($"{NameOf(id)} download progress")"></progress>
                     </li>
                 }
             </ul>
@@ -100,22 +107,29 @@
                         }
                     </ul>
                 }
-                <p>@MatchText(r.Plan)</p>
-                @if (StillDifferent() is { Count: > 0 } diffs)
+                @if (r.Note is { } note)
                 {
-                    <h3>Still different from the host</h3>
-                    <ul>
-                        @foreach (var d in diffs)
-                        {
-                            <li>@(d.MineName ?? d.Name)@(UpdatedHere(d) ? " (updated just now; the host may be on an older version)" : "")</li>
-                        }
-                    </ul>
+                    <p class="status error">@note</p>
+                }
+                @if (r.Plan is { } plan)
+                {
+                    <p>@MatchText(plan)</p>
+                    @if (StillDifferent() is { Count: > 0 } diffs)
+                    {
+                        <h3>Still different from the host</h3>
+                        <ul>
+                            @foreach (var d in diffs)
+                            {
+                                <li>@(d.MineName ?? d.Name)@(UpdatedHere(d) ? " (updated just now; the host may be on an older version)" : "")</li>
+                            }
+                        </ul>
+                    }
                 }
             }
             @if (error is not null)
             {
                 <p class="status error">@error</p>
-                @if (running.Count > 0)
+                @if (steamUnavailable && running.Count > 0)
                 {
                     <p class="muted small">You can install these from Steam instead:</p>
                     <ul>
@@ -141,44 +155,86 @@
 
     enum Phase { Choose, Working, Done }
 
+    // Titles and sizes fetched during this run of the app, by Workshop id, so reopening the pop-up doesn't ask Steam again.
+    static readonly ConcurrentDictionary<ulong, WorkshopItemInfo> Info = new();
+    static readonly TimeSpan InfoTimeout = TimeSpan.FromSeconds(20);
+
     Phase phase = Phase.Choose;
     readonly HashSet<ulong> selected = [];
     readonly Dictionary<ulong, WorkshopProgress> progress = [];
-    Dictionary<ulong, WorkshopItemInfo> info = [];
+    ElementReference dialog;
     List<ulong> running = [];
     WorkshopMatchResult? result;
     string? error;
+    bool steamUnavailable; // the error is "Steam can't be reached": offer the Steam pages instead
     string? infoError;
     WorkshopNeeds? shownNeeds;
+    CancellationTokenSource? infoCts; // the running info fetch; cancelled by Run, Close, Dispose and newer needs
 
     protected override void OnInitialized() => Session.Changed += OnSessionChanged;
 
     void OnSessionChanged() => _ = InvokeAsync(StateHasChanged);
 
-    public void Dispose() => Session.Changed -= OnSessionChanged;
+    public void Dispose()
+    {
+        CancelInfo();
+        Session.Changed -= OnSessionChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { await dialog.FocusAsync(); }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { /* focus is a convenience */ }
+    }
+
+    async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape" && phase != Phase.Working) await Close();
+    }
 
     protected override async Task OnParametersSetAsync()
     {
         if (ReferenceEquals(shownNeeds, Needs)) return;
-        shownNeeds = Needs;
-        (phase, result, error, infoError) = (Phase.Choose, null, null, null);
+        var needs = Needs;
+        shownNeeds = needs;
+        (phase, result, error, steamUnavailable, infoError) = (Phase.Choose, null, null, false, null);
         selected.Clear();
-        foreach (var need in Needs.Items) selected.Add(need.Id);
-        if (Workshop is null || Needs.Items.Count == 0) return;
+        foreach (var need in needs.Items) selected.Add(need.Id);
+        CancelInfo();
+        var missing = needs.Items.Select(i => i.Id).Where(id => !Info.ContainsKey(id)).ToList();
+        if (Workshop is null || missing.Count == 0) return;
+
+        using var cts = new CancellationTokenSource(InfoTimeout);
+        infoCts = cts;
         try
         {
-            var details = await Workshop.GetInfoAsync(Needs.Items.Select(i => i.Id).ToList(), CancellationToken.None);
-            info = details.ToDictionary(d => d.Id);
+            foreach (var details in await Workshop.GetInfoAsync(missing, cts.Token)) Info[details.Id] = details;
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            infoError = ex.Message;
+            // Only the current fetch reports: one cancelled by Run, Close, Dispose or newer needs is ignored.
+            if (ReferenceEquals(infoCts, cts) && ReferenceEquals(shownNeeds, needs))
+                infoError = ex is OperationCanceledException ? "Steam did not answer in time." : ex.Message;
         }
+        finally
+        {
+            if (ReferenceEquals(infoCts, cts)) infoCts = null;
+        }
+    }
+
+    void CancelInfo()
+    {
+        var cts = infoCts;
+        infoCts = null;
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { /* the fetch just finished */ }
     }
 
     async Task Run(List<ulong> ids)
     {
-        (phase, error, result, running) = (Phase.Working, null, null, ids);
+        CancelInfo();
+        (phase, error, steamUnavailable, result, running) = (Phase.Working, null, false, null, ids);
         progress.Clear();
         try
         {
@@ -187,6 +243,10 @@
         catch (OperationCanceledException)
         {
             error = "Cancelled. The host's list was not applied.";
+        }
+        catch (WorkshopUnavailableException ex)
+        {
+            (error, steamUnavailable) = (ex.Message, true);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -209,10 +269,10 @@
     WorkshopNeedKind? KindOf(ulong id) => NeedOf(id)?.Kind;
 
     string NameOf(ulong id) =>
-        info.TryGetValue(id, out var i) && i.Title is { Length: > 0 } title ? title : NeedOf(id)?.Name ?? $"Workshop {id}";
+        Info.TryGetValue(id, out var i) && i.Title is { Length: > 0 } title ? title : NeedOf(id)?.Name ?? $"Workshop {id}";
 
-    string SizeOf(ulong id) =>
-        info.TryGetValue(id, out var i) && i.SizeBytes is long bytes && bytes > 0 ? " · " + Size(bytes) : "";
+    static string SizeOf(ulong id) =>
+        Info.TryGetValue(id, out var i) && i.SizeBytes is long bytes && bytes > 0 ? " · " + Size(bytes) : "";
 
     static string Size(long bytes) =>
         bytes >= 1L << 30 ? $"{bytes / (double)(1L << 30):0.0} GB"
@@ -228,6 +288,9 @@
         WorkshopItemState.Failed => "failed" + (p.Message is { } m ? ": " + m : ""),
         _ => "cancelled",
     };
+
+    int FinishedCount() => running.Count(id => progress.TryGetValue(id, out var p)
+        && p.State is WorkshopItemState.Installed or WorkshopItemState.Failed or WorkshopItemState.Cancelled);
 
     static string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
 
@@ -256,5 +319,9 @@
         if (on) foreach (var need in Needs.Items) selected.Add(need.Id);
     }
 
-    Task Close() => OnClose.InvokeAsync();
+    Task Close()
+    {
+        CancelInfo();
+        return OnClose.InvokeAsync();
+    }
 }
