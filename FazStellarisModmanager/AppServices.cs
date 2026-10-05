@@ -7,6 +7,7 @@ using FazStellarisModmanager.Core;
 using FazStellarisModmanager.Core.Conflicts;
 using FazStellarisModmanager.Core.Library;
 using FazStellarisModmanager.Core.Lists;
+using FazStellarisModmanager.Core.Saves;
 using FazStellarisModmanager.Core.Session;
 using FazStellarisModmanager.Core.Technology;
 using FazStellarisModmanager.Core.Updates;
@@ -43,6 +44,16 @@ public static class AppServices
                 LaunchBlockedReason = () => workshop.IsActive ? "Wait for the Workshop downloads to finish before launching Stellaris." : null,
             };
         });
+        services.AddSingleton(sp =>
+        {
+            var manager = sp.GetRequiredService<ModManagerService>();
+            return new LiveGameService(() =>
+            {
+                try { return Path.Combine(manager.Resolve().UserDir, "save games"); }
+                catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException) { return null; }
+            });
+        });
+        services.AddSingleton(new LiveViewerStore(paths.LiveGame));
         services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>()));
         services.AddSingleton(sp => new TechTreeService(sp.GetRequiredService<ModManagerService>()));
         services.AddSingleton(sp => new UpdateService(
