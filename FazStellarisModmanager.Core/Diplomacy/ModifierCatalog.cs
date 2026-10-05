@@ -314,8 +314,31 @@ public sealed class ModifierCatalog
 
     static readonly Regex ExpressionToken = new(@"[0-9]+(?:\.[0-9]+)?|\.[0-9]+|@?[A-Za-z_][A-Za-z0-9_]*|[-+*/()]", RegexOptions.Compiled);
 
-    // The parser splits "@[ a * b ]" into separate words; quote each expression so it stays one value.
-    static readonly Regex InlineExpression = new(@"@\[([^\[\]""{}]*)\]", RegexOptions.Compiled);
+    // The parser splits "@[ a * b ]" into separate words; quote each expression (outside comments and strings) so it stays
+    // one value.
+    static string QuoteExpressions(string text)
+    {
+        if (!text.Contains("@[", StringComparison.Ordinal)) return text;
+        var sb = new System.Text.StringBuilder(text.Length + 16);
+        int i = 0, copied = 0;
+        while (i < text.Length)
+        {
+            var c = text[i];
+            if (c == '#') { i = LineEnd(text, i); continue; }
+            if (c == '"') { i = StringEnd(text, i); continue; }
+            if (c == '@' && i + 1 < text.Length && text[i + 1] == '[')
+            {
+                var end = text.IndexOf(']', i);
+                var newline = text.IndexOf((char)10, i);
+                if (end < 0 || (newline >= 0 && newline < end)) { i++; continue; }
+                sb.Append(text, copied, i - copied).Append('"').Append("@[").Append(text[(i + 2)..end].Trim()).Append(']').Append('"');
+                i = copied = end + 1;
+                continue;
+            }
+            i++;
+        }
+        return copied == 0 ? text : sb.Append(text, copied, text.Length - copied).ToString();
+    }
 
     static IEnumerable<(ContentSource Source, string Rel)> Ordered(IReadOnlyList<ContentSource> sources, string folder) =>
         sources.SelectMany((s, i) => s.Files(folder, ".txt").Select(rel => (Source: s, Index: i, Rel: rel)))
@@ -324,28 +347,58 @@ public sealed class ModifierCatalog
 
     const int MaxInlineDepth = 5;
 
-    static readonly Regex InlineBlock = new(@"inline_script\s*=\s*\{([^{}]*)\}", RegexOptions.Compiled);
-    static readonly Regex InlineName = new(@"inline_script\s*=\s*(?:""([^""]*)""|([^\s{}""=]+))", RegexOptions.Compiled);
-    static readonly Regex Param = new(@"([A-Za-z0-9_]+)\s*=\s*(?:""([^""]*)""|([^\s{}""=]+))", RegexOptions.Compiled);
+    const string InlineKeyword = "inline_script";
+    const char Backslash = (char)92;
 
     // Textual expansion: each inline_script (name or { script = name PARAM = value }) is replaced by the script file's text
-    // with $PARAM$ substituted. The last source that has the script wins. Too deep or missing scripts become empty.
+    // with $PARAM$ substituted. The last source that has the script wins. Too deep or missing scripts become empty, and so
+    // does a script whose expansion has unbalanced braces or quotes (e.g. a script name computed from an @[ ] expression),
+    // so that it cannot swallow the definitions after it. Calls in comments and quoted strings are left alone.
     static string ExpandInlineScripts(string text, IReadOnlyList<ContentSource> sources, int depth)
     {
-        if (!text.Contains("inline_script", StringComparison.Ordinal)) return text;
-        text = InlineBlock.Replace(text, m =>
+        if (!text.Contains(InlineKeyword, StringComparison.Ordinal)) return text;
+        var sb = new System.Text.StringBuilder(text.Length);
+        int i = 0, copied = 0;
+        while (i < text.Length)
         {
-            string? script = null;
-            var args = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (Match p in Param.Matches(m.Groups[1].Value))
+            var c = text[i];
+            if (c == '#') { i = LineEnd(text, i); continue; }
+            if (c == '"') { i = StringEnd(text, i); continue; }
+            if (c == 'i' && string.CompareOrdinal(text, i, InlineKeyword, 0, InlineKeyword.Length) == 0
+                && (i == 0 || !IsWordChar(text[i - 1])) && !(i + InlineKeyword.Length < text.Length && IsWordChar(text[i + InlineKeyword.Length])))
             {
-                var value = p.Groups[2].Success ? p.Groups[2].Value : p.Groups[3].Value;
-                if (p.Groups[1].Value == "script") script = value;
-                else args[p.Groups[1].Value] = value;
+                var j = SkipSpace(text, i + InlineKeyword.Length);
+                if (j < text.Length && text[j] == '=')
+                {
+                    j = SkipSpace(text, j + 1);
+                    string? replacement = null;
+                    int end;
+                    if (j < text.Length && text[j] == '{')
+                    {
+                        end = BlockEnd(text, j);
+                        if (end < 0) break; // unterminated: leave the rest as written
+                        var args = ReadArgs(text[(j + 1)..end]);
+                        args.Remove("script", out var script);
+                        replacement = Load(script, args);
+                        end++;
+                    }
+                    else
+                    {
+                        var (name, next) = ReadValue(text, j);
+                        end = next;
+                        if (name is not null) replacement = Load(name, null);
+                    }
+                    if (replacement is not null)
+                    {
+                        sb.Append(text, copied, i - copied).Append(replacement);
+                        i = copied = end;
+                        continue;
+                    }
+                }
             }
-            return Load(script, args);
-        });
-        return InlineName.Replace(text, m => Load(m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value, null));
+            i++;
+        }
+        return copied == 0 ? text : sb.Append(text, copied, text.Length - copied).ToString();
 
         string Load(string? script, Dictionary<string, string>? args)
         {
@@ -363,8 +416,126 @@ public sealed class ModifierCatalog
             if (body is null) return "";
             if (args is not null)
                 foreach (var (k, v) in args) body = body.Replace("$" + k + "$", v, StringComparison.Ordinal);
-            return ExpandInlineScripts(body, sources, depth + 1);
+            var expanded = ExpandInlineScripts(body, sources, depth + 1);
+            return Balanced(expanded) ? expanded : "";
         }
+    }
+
+    static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+
+    static int SkipSpace(string s, int i)
+    {
+        while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+        return i;
+    }
+
+    static int LineEnd(string s, int i)
+    {
+        while (i < s.Length && s[i] != (char)10) i++;
+        return i;
+    }
+
+    // Index just past the closing quote of the string starting at i (a backslash escapes the next character), or the text
+    // length when the string is not closed.
+    static int StringEnd(string s, int i) => ClosedStringEnd(s, i) ?? s.Length;
+
+    static int? ClosedStringEnd(string s, int i)
+    {
+        for (i++; i < s.Length; i++)
+        {
+            if (s[i] == Backslash) i++;
+            else if (s[i] == '"') return i + 1;
+        }
+        return null;
+    }
+
+    // Index of the '}' matching the '{' at i (comments and quoted strings skipped), or -1.
+    static int BlockEnd(string s, int i)
+    {
+        var depth = 0;
+        while (i < s.Length)
+        {
+            var c = s[i];
+            if (c == '#') { i = LineEnd(s, i); continue; }
+            if (c == '"') { i = StringEnd(s, i); continue; }
+            if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return i;
+            i++;
+        }
+        return -1;
+    }
+
+    static bool Balanced(string s)
+    {
+        var depth = 0;
+        var i = 0;
+        while (i < s.Length)
+        {
+            var c = s[i];
+            if (c == '#') { i = LineEnd(s, i); continue; }
+            if (c == '"')
+            {
+                if (ClosedStringEnd(s, i) is not { } end) return false;
+                i = end;
+                continue;
+            }
+            if (c == '{') depth++;
+            else if (c == '}' && --depth < 0) return false;
+            i++;
+        }
+        return depth == 0;
+    }
+
+    // "KEY = value" pairs of an inline_script block: quoted values (with \" unescaped), @[ expressions ], { blocks } (inner
+    // text) or bare words. Tokens not followed by '=' are skipped.
+    static Dictionary<string, string> ReadArgs(string s)
+    {
+        var args = new Dictionary<string, string>(StringComparer.Ordinal);
+        var i = 0;
+        while (i < s.Length)
+        {
+            i = SkipSpace(s, i);
+            if (i >= s.Length) break;
+            if (s[i] == '#') { i = LineEnd(s, i); continue; }
+            var start = i;
+            while (i < s.Length && IsWordChar(s[i])) i++;
+            if (i == start)
+            {
+                i = s[start] == '"' ? StringEnd(s, start) : s[start] == '{' && BlockEnd(s, start) is var e and >= 0 ? e + 1 : start + 1;
+                continue;
+            }
+            var key = s[start..i];
+            var j = SkipSpace(s, i);
+            if (j >= s.Length || s[j] != '=') continue;
+            var (value, next) = ReadValue(s, SkipSpace(s, j + 1));
+            if (value is not null) args[key] = value;
+            i = next;
+        }
+        return args;
+    }
+
+    static (string? Value, int Next) ReadValue(string s, int i)
+    {
+        if (i >= s.Length) return (null, i);
+        if (s[i] == '"')
+        {
+            var end = StringEnd(s, i);
+            var inner = s[(i + 1)..Math.Max(i + 1, end - 1)];
+            return (inner.Replace(Backslash.ToString() + '"', '"'.ToString(), StringComparison.Ordinal), end);
+        }
+        if (s[i] == '{')
+        {
+            var end = BlockEnd(s, i);
+            return end < 0 ? (null, s.Length) : (s[(i + 1)..end], end + 1);
+        }
+        if (s[i] == '@' && i + 1 < s.Length && s[i + 1] == '[')
+        {
+            var end = s.IndexOf(']', i);
+            return end < 0 ? (null, s.Length) : (s[i..(end + 1)], end + 1);
+        }
+        var start = i;
+        while (i < s.Length && !char.IsWhiteSpace(s[i]) && s[i] is not ('{' or '}' or '=' or '"' or '#')) i++;
+        return i == start ? (null, i + 1) : (s[start..i], i);
     }
 
     static bool TryParse(IReadOnlyList<ContentSource> sources, ContentSource source, string rel, out PdxBlock block, out Dictionary<string, string> locals)
@@ -372,10 +543,7 @@ public sealed class ModifierCatalog
         locals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var text = ExpandInlineScripts(source.ReadText(rel), sources, 0);
-            if (text.Contains("@[", StringComparison.Ordinal))
-                text = InlineExpression.Replace(text, m => '"' + "@[" + m.Groups[1].Value.Trim() + "]" + '"');
-            block = ParadoxScriptParser.Parse(text);
+            block = ParadoxScriptParser.Parse(QuoteExpressions(ExpandInlineScripts(source.ReadText(rel), sources, 0)));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {

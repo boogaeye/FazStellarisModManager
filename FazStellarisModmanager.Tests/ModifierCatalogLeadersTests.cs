@@ -69,12 +69,93 @@ public class ModifierCatalogLeadersTests
             ap_b = { modifier = { diplo_weight_mult = @[(1 - 0.5) * two / 4 + local] } }
             ap_c = { modifier = { diplo_weight_mult = @[ -0.1 * ( two - 1 ) ] } }
             ap_unknown = { modifier = { diplo_weight_mult = @[ 0.2 * not_defined ] } }
+            # a comment with @[ 1 ] in it
+            ap_quoted = { desc = "uses @[ 1 + 1 ] inside" modifier = { diplo_weight_mult = 0.4 } }
             """);
         var c = Load(t);
         Assert.Equal(0.2, c.Get(DiploSource.Perk, "ap_shared_destiny")!.Overall, 6);
         Assert.Equal(0.75, c.Get(DiploSource.Perk, "ap_b")!.Overall, 6);
         Assert.Equal(-0.1, c.Get(DiploSource.Perk, "ap_c")!.Overall, 6);
         Assert.Null(c.Get(DiploSource.Perk, "ap_unknown"));
+        Assert.Equal(0.4, c.Get(DiploSource.Perk, "ap_quoted")!.Overall, 6);
+    }
+
+    [Fact]
+    public void Inline_scripts_with_quoted_code_and_commented_examples_do_not_break_parsing()
+    {
+        // The shape of Sartek's toggled-code scripts: a parameter holding quoted code, and an example call in comments.
+        using var t = new TempDir();
+        t.Write("game/common/scripted_variables/00_v.txt", "@legacy = 1  @wreaths = 0");
+        t.Write("game/common/ascension_perks/00_p.txt", """
+            ap_before = {
+                possible = {
+                    inline_script = {
+                        script = sartek/sartek_toggled_code
+                        code = "
+                            custom_tooltip = {
+                                fail_text = \"must_know_about_fe\"
+                                OR = { any_country = { is_fallen_empire = yes } }
+                            }
+                            "
+
+                        toggle = @wreaths
+                    }
+                }
+                modifier = { diplo_weight_mult = 0.3 }
+            }
+            ap_shared_destiny = {
+                modifier = {
+                    diplo_weight_mult = @[ 0.2 * legacy ]
+                }
+                ai_weight = {
+                    factor = 5
+                    modifier = {
+                        factor = @[ 1 + ( 1 * wreaths ) ]
+                        inline_script = {
+                            script = sartek/sartek_toggled_code
+                            code = "
+                                has_valid_civic = civic_achaemenid_admin
+                                "
+                            toggle = @wreaths
+                        }
+                    }
+                }
+            }
+            ap_after = { modifier = { diplo_weight_mult = 0.1 } }
+            """);
+        t.Write("game/common/inline_scripts/sartek/sartek_toggled_code.txt", """
+            # Toggled code script
+            inline_script = {
+                script = sartek/parts/switch
+                file = sartek/parts/toggled_code_case_
+                # this is equal to ceil( x^2 / (x^2+1) )
+                value = @[ (-1 * ((-1 * (($toggle$*$toggle$) / (($toggle$*$toggle$)+1))) - ((((-1 * (($toggle$*$toggle$) / (($toggle$*$toggle$)+1))) % 1) + 1) % 1))) ]
+
+                params = "code = \"$code$\"" # this is fine don't worry about it :)
+            }
+
+            # example use:
+
+            # inline_script = {
+            #   script = sartek/sartek_toggled_code
+            #   code = "
+            #       # code here will only be included if the toggle value below is != 0
+            #   "
+            #   toggle = @some_mod_presence_scripted_variable
+            # }
+            """);
+        t.Write("game/common/inline_scripts/sartek/parts/switch.txt", """
+            inline_script = {
+                script = $file$$value$
+                $params$
+            }
+            """);
+        t.Write("game/common/inline_scripts/sartek/parts/toggled_code_case_1.txt", "$code$");
+        t.Write("game/common/inline_scripts/sartek/parts/toggled_code_case_0.txt", "# no-op");
+        var c = Load(t);
+        Assert.Equal(0.3, c.Get(DiploSource.Perk, "ap_before")!.Overall, 6);
+        Assert.Equal(0.2, c.Get(DiploSource.Perk, "ap_shared_destiny")!.Overall, 6);
+        Assert.Equal(0.1, c.Get(DiploSource.Perk, "ap_after")!.Overall, 6);
     }
 
     [Theory]
