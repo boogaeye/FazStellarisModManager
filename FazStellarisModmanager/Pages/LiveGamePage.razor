@@ -1,7 +1,7 @@
 @page "/live"
 @implements IAsyncDisposable
 @inject LiveFeed Feed
-@inject ModManagerService Manager
+@using FazStellarisModmanager.Core.Diplomacy
 @inject IJSRuntime JS
 
 <div class="live-page">
@@ -73,24 +73,46 @@
                 <div class="lstat"><span>Victory score</span><LiveStat Value="new StatValue(me.VictoryScore)" /></div>
                 <div class="lstat">
                     <span>Diplomatic weight</span>
-                    @if (me.CachedDiploWeight is double cached)
+                    @if (dw is null)
                     {
-                        <span title="Stored by the Galactic Market Overhaul mod">@cached.ToString("N0")</span>
+                        <span>—</span>
                     }
                     else
                     {
-                        <span title="Estimate before bonuses; see the breakdown">@Estimate.Min.ToString("N0")–@Estimate.Max.ToString("N0")</span>
+                        <span>@(dw.Approximate ? "≈ " : "")@dw.Real.ToString("N0")</span>
                     }
                 </div>
-                <details class="ldiplo">
-                    <summary>Diplomatic weight breakdown</summary>
-                    <div class="lstat"><span>Fleet power × @defines.Naval</span><span>@Estimate.Naval.ToString("N0")</span></div>
-                    <div class="lstat"><span>Economy power × @defines.Economy</span><span>@Estimate.Economy.ToString("N0")</span></div>
-                    <div class="lstat"><span>Tech power × @defines.Technology</span><span>@Estimate.Tech.ToString("N0")</span></div>
-                    <div class="lstat"><span>Pops (by happiness)</span><span>@Estimate.PopsMin.ToString("N0")–@Estimate.PopsMax.ToString("N0")</span></div>
-                    <div class="lstat"><span>Base before bonuses</span><span>@Estimate.Min.ToString("N0")–@Estimate.Max.ToString("N0")</span></div>
-                    <p class="muted">The game then multiplies this by bonuses (Galactic Community resolutions and other modifiers).@(me.CachedDiploWeight is not null ? " The total above comes from the Galactic Market Overhaul mod." : "")</p>
-                </details>
+                @if (dw is not null)
+                {
+                    @if (dw.Real < 0)
+                    {
+                        <div class="lstat"><span></span><span class="ovf">In game: 0 (negative weight is shown as 0)</span></div>
+                    }
+                    <details class="ldiplo">
+                        <summary>Breakdown</summary>
+                        <div class="lstat"><span>Total: @dw.Real.ToString("N0")</span></div>
+                        <div class="lines">
+                            @foreach (var b in dw.Overall)
+                            {
+                                <div class="@BonusClass(b)">@b.Name @Pct(b)</div>
+                            }
+                        </div>
+                        <div class="lstat"><span>Base: @dw.BaseTotal.ToString("N0")</span></div>
+                        @foreach (var (label, from, part) in Parts(dw))
+                        {
+                            <div class="lstat"><span>@label: @part.Total.ToString("N0")</span></div>
+                            <div class="lines">
+                                <div>From @from: @part.Base.ToString("N0") <span class="muted">(@part.Input.ToString("N0") × @part.Factor.ToString("0.###"))</span></div>
+                                @foreach (var b in part.Bonuses)
+                                {
+                                    <div class="@BonusClass(b)">@b.Name @Pct(b)</div>
+                                }
+                            </div>
+                        }
+                        <p class="muted">@DiploBreakdown.NotCalculated Some conditional mod resolutions are not counted either.</p>
+                        <p class="muted">Fleet power as stored in the save.</p>
+                    </details>
+                }
                 <div class="lstat"><span>Military power</span><LiveStat Value="new StatValue(me.MilitaryPower)" /></div>
                 <div class="lstat"><span>Economy power</span><LiveStat Value="new StatValue(me.EconomyPower)" /></div>
                 <div class="lstat"><span>Tech power</span><LiveStat Value="new StatValue(me.TechPower)" /></div>
@@ -127,14 +149,11 @@
     IJSObjectReference? module;
     int? viewer;
     SaveCountry? me;
+    DiploBreakdown? dw;
     IReadOnlyList<BoardRow> rows = [];
-    DiploDefines defines = DiploDefines.Vanilla;
-    bool definesLoaded;
     string? animatedFor;
     string? builtFor;
     Timer? clock;
-
-    DiploEstimate Estimate => me is null ? new DiploEstimate(0, 0, 0, 0, 0, 0) : DiploWeight.Estimate(me, defines);
 
     protected override void OnInitialized()
     {
@@ -142,7 +161,6 @@
         Feed.Start();
         Rebuild();
         clock = new Timer(_ => _ = InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
-        _ = LoadDefinesAsync();
     }
 
     void OnLiveChanged() => _ = InvokeAsync(() => { Rebuild(); StateHasChanged(); });
@@ -153,6 +171,7 @@
         if (Feed.Current is not { } s)
         {
             me = null;
+            dw = null;
             rows = [];
             builtFor = null;
             return;
@@ -160,6 +179,7 @@
         // Host data has only a file name, so the date is part of the key.
         builtFor = s.SavePath + "|" + s.Date + "|" + s.SavedUtc.Ticks;
         me = viewer is int v ? s.Countries.FirstOrDefault(c => c.Id == v) : null;
+        dw = me is null ? null : s.Diplo?.GetValueOrDefault(me.Id);
         rows = viewer is int id ? LiveBoard.Build(s, id) : [];
     }
 
@@ -169,44 +189,17 @@
         Rebuild();
     }
 
-    // Defines from the game and the applied mod list; vanilla values if anything goes wrong.
-    async Task LoadDefinesAsync()
-    {
-        if (definesLoaded) return;
-        definesLoaded = true;
-        try
-        {
-            if (Manager.Library.Count == 0) await Manager.RefreshLibraryAsync();
-            var loaded = await Task.Run(() =>
-            {
-                var sources = new List<FazStellarisModmanager.Core.Technology.ContentSource>();
-                try
-                {
-                    var resolved = Manager.Resolve();
-                    if (resolved.GameDir is { } g) sources.Add(FazStellarisModmanager.Core.Technology.ContentSource.FromPath("game", g, isBaseGame: true));
-                    var byRel = Manager.Library.GroupBy(m => m.DescriptorRel, StringComparer.OrdinalIgnoreCase).ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
-                    foreach (var e in Manager.ImportCurrent("live").Mods)
-                    {
-                        if (!byRel.TryGetValue(e.DescriptorRel, out var mod)) continue;
-                        try { sources.Add(FazStellarisModmanager.Core.Technology.ContentSource.FromPath(mod.Name, mod.ContentPath)); }
-                        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException) { }
-                    }
-                    return DiploDefines.Load(sources);
-                }
-                finally
-                {
-                    foreach (var s in sources) s.Dispose();
-                }
-            });
-            defines = loaded;
-            await InvokeAsync(StateHasChanged);
-        }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException
-                                   or System.Text.Json.JsonException or InvalidDataException)
-        {
-            defines = DiploDefines.Vanilla;
-        }
-    }
+    static IEnumerable<(string Label, string From, DiploPart Part)> Parts(DiploBreakdown d) =>
+    [
+        ("Fleet power", "fleet power", d.Fleet),
+        ("Pops", "pops", d.Pops),
+        ("Economy", "economy power", d.Economy),
+        ("Technology", "tech power", d.Tech),
+    ];
+
+    static string Pct(DiploBonus b) => (b.Percent * 100).ToString("+0.#;-0.#", System.Globalization.CultureInfo.InvariantCulture) + "%";
+
+    static string BonusClass(DiploBonus b) => b.Percent < 0 ? "neg-bonus" : "pos-bonus";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
