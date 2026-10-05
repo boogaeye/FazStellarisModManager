@@ -60,6 +60,21 @@ public class LiveBoardTests
     }
 
     [Fact]
+    public void Only_empire_types_are_listed()
+    {
+        var rows = LiveBoard.Build(S(C(0, 1, "Mine"), C(1, 181, "Primitives") with { Type = "primitive" },
+            C(2, 181, "Raiders") with { Type = "marauder_raiders" }, C(3, 5, "Fallen") with { Type = "fallen_empire" }), viewerId: 0);
+        Assert.Equal([0, 3], rows.Select(r => r.Id));
+    }
+
+    [Fact]
+    public void Display_drops_leftover_template_parts()
+    {
+        var c = C(3, 1, "%ADJECTIVE%", vars: new Dictionary<string, string> { ["adjective"] = "%ADJ%", ["1"] = "Commonwealth" });
+        Assert.Equal("Commonwealth", CountryNames.Display(c));
+    }
+
+    [Fact]
     public void Display_name_from_template_variables()
     {
         var c = C(3, 1, "%ADJECTIVE%", vars: new Dictionary<string, string> { ["adjective"] = "SPEC_EssJaggon", ["1"] = "Commonwealth" });

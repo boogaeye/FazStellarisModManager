@@ -18,6 +18,9 @@ public sealed record BoardRow(
 
 public static class LiveBoard
 {
+    /// <summary>Country types that are real empires; primitives, leviathans, marauders etc. share a placeholder rank.</summary>
+    static readonly HashSet<string> EmpireTypes = new(StringComparer.OrdinalIgnoreCase) { "default", "fallen_empire", "awakened_fallen_empire" };
+
     /// <summary>Countries with a victory rank, in rank order, as seen by <paramref name="viewerId"/>.</summary>
     public static IReadOnlyList<BoardRow> Build(GameSnapshot snapshot, int viewerId)
     {
@@ -27,7 +30,7 @@ public static class LiveBoard
         foreach (var p in snapshot.Players) players.TryAdd(p.CountryId, p.Name);
 
         return snapshot.Countries
-            .Where(c => c.VictoryRank > 0)
+            .Where(c => c.VictoryRank > 0 && EmpireTypes.Contains(c.Type ?? ""))
             .OrderBy(c => c.VictoryRank).ThenBy(c => c.Id)
             .Select(c =>
             {
@@ -53,7 +56,7 @@ public static class CountryNames
         if (string.IsNullOrWhiteSpace(key)) return $"Empire {c.Id}";
         if (key.Contains('%'))
         {
-            var parts = c.NameVariables.Values.Select(Pretty).Where(p => p.Length > 0).ToList();
+            var parts = c.NameVariables.Values.Select(Pretty).Where(p => p.Length > 0 && !p.Contains('%')).ToList();
             return parts.Count > 0 ? string.Join(" ", parts) : $"Empire {c.Id}";
         }
         if (!key.Contains('_')) return key;

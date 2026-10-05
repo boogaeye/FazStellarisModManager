@@ -124,12 +124,20 @@ public static class GamestateScanner
     }
 
     // { variables={ { key="adjective" value={ key="Fazbear" } } … } } → adjective → Fazbear (first wins).
-    static Dictionary<string, string> Variables(PdxBlock? block)
+    static Dictionary<string, string> Variables(PdxBlock? block, int depth = 0)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var v in block?.GetBlock("variables")?.Items.OfType<PdxBlock>() ?? [])
-            if (v.GetString("key") is { } k && v.GetBlock("value")?.GetString("key") is { } val)
-                result.TryAdd(k, val);
+        {
+            if (v.GetString("key") is not { } k || v.GetBlock("value") is not { } valueBlock || valueBlock.GetString("key") is not { } val) continue;
+            // A value can itself be a template: join its own variables instead of keeping the raw "%...%" key.
+            if (val.Contains('%') && depth < 4)
+            {
+                var inner = string.Join(" ", Variables(valueBlock, depth + 1).Values);
+                if (inner.Length > 0) val = inner;
+            }
+            result.TryAdd(k, val);
+        }
         return result;
     }
 

@@ -127,6 +127,15 @@ public class GamestateScannerTests
     }
 
     [Fact]
+    public void Resolves_nested_name_templates()
+    {
+        const string text = "country={ 0={ name={ key=\"%ADJECTIVE%\" variables={ { key=\"adjective\" value={ key=\"Mechazur\" } } { key=\"1\" value={ key=\"%ADJ%\" variables={ { key=\"1\" value={ key=\"Daroan\" } } } } } } } victory_rank=1 } }";
+        var c = Scan(text).Countries.Single();
+        Assert.Equal("Daroan", c.NameVariables["1"]);
+        Assert.Equal("Mechazur", c.NameVariables["adjective"]);
+    }
+
+    [Fact]
     public void Empty_or_broken_input_does_not_throw()
     {
         Assert.Empty(Scan("").Countries);
