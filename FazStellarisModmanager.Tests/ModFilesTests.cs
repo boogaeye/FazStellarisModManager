@@ -18,6 +18,17 @@ public class ModFilesTests
     }
 
     [Fact]
+    public void Icons_are_not_content()
+    {
+        using var t = new TempDir();
+        t.Write("m/gfx/interface/icons/resources/sr_a.dds", "x");
+        t.Write("m/GFX/Interface/Icons/b.dds", "x");
+        t.Write("m/gfx/models/portraits/x.dds", "x");
+        t.Write("m/common/a.txt", "x");
+        Assert.Equal(["common/a.txt", "gfx/models/portraits/x.dds"], ModFiles.List(Path.Combine(t.Path, "m")));
+    }
+
+    [Fact]
     public void Zip_lists_entries_normalized_and_deduplicated()
     {
         using var t = new TempDir();
