@@ -8,7 +8,8 @@ This builds on sub-project 9 (mod identity): `MatchPlan.NeedsWorkshopInstall`, `
 ## Facts
 - Stellaris Workshop items can only be fetched by a process talking to the running Steam client as the game (AppID 281990). SteamCMD needs a login, and there is no `steam://` URL for subscribing.
 - **Facepunch.Steamworks 2.3.3** (NuGet, 2020) bundles `steam_api64.dll` under `content/` and offers async `Steamworks.Ugc.Item` APIs. **Steamworks.NET 2024.8.0** ships without the native DLL.
-- While connected, Steam shows the user as "Playing Stellaris". The connection only lasts for the duration of a Workshop call.
+- While connected, Steam shows the user as "Playing Stellaris". The connection only lasts for the duration of an install.
+- Item titles and download sizes come from Steam's public Web API (`ISteamRemoteStorage/GetPublishedFileDetails/v1/`, no key), so looking items up never connects to the Steam client. Facepunch's `Item.SizeBytes` is the installed size (0 for items that aren't installed), so it can't size an install.
 - Steam downloads Workshop items to `<library>/steamapps/workshop/content/281990/<id>`. `ModManagerService.RefreshLibrary` → `ModLibrary.EnsureWorkshopDescriptors` already creates `mod/ugc_<id>.mod` for new folders.
 - `SessionService.MatchHostAsync` already does: diff → refresh library → `MatchPlan` → apply `dlc_load.json` → rescan → send snapshot.
 
@@ -17,9 +18,9 @@ This builds on sub-project 9 (mod identity): `MatchPlan.NeedsWorkshopInstall`, `
 ### Core contract (`Core/Workshop`)
 - **`IWorkshopService`:**
   - `bool IsActive`: true while connected to Steam.
-  - `Task<IReadOnlyList<WorkshopItemInfo>> GetInfoAsync(ids, ct)`: title and size (null when unknown).
+  - `Task<IReadOnlyList<WorkshopItemInfo>> GetInfoAsync(ids, ct)`: title and size (null when unknown), from the Web API through `WorkshopWebApi` (Core, 15 s limit, no Steam connection).
   - `Task<IReadOnlyList<WorkshopItemResult>> InstallAsync(ids, IProgress<WorkshopProgress>, ct)`.
-  - Implementations connect only inside a call and disconnect before returning. They throw `WorkshopUnavailableException` when Steam can't be reached.
+  - `InstallAsync` implementations connect only inside the call and disconnect before returning. They throw `WorkshopUnavailableException` when Steam can't be reached.
 - **Records and states:**
   - `WorkshopItemState`: Waiting, Subscribing, Downloading, Installed, Failed, Cancelled.
   - `WorkshopProgress(Id, State, Fraction, Message)`
@@ -37,7 +38,9 @@ This builds on sub-project 9 (mod identity): `MatchPlan.NeedsWorkshopInstall`, `
   1. Tells the host "Downloading Workshop mods…" (busy).
   2. Calls `InstallAsync` for the selected ids, if any. It skips this step when none are selected, which gives "match without installing".
   3. Runs the same match steps as Match host: refresh library (creates the new descriptors), plan, apply, rescan, send the snapshot.
-  4. Returns `WorkshopMatchResult(Items, Plan)`.
+  4. Returns `WorkshopMatchResult(Items, Plan, Note)`.
+
+  If the host disconnects during the downloads, the item results are kept and returned with a null `Plan` and the Note "The host disconnected; the downloads finished but the host's list was not applied."
 
   On an error or a cancel before applying, my last snapshot is sent back so the host doesn't stay "busy". Without a Workshop service the method throws `InvalidOperationException`.
 - **`MatchHostAsync`:** unchanged behaviour. It shares its core with the method above.
@@ -47,11 +50,13 @@ This builds on sub-project 9 (mod identity): `MatchPlan.NeedsWorkshopInstall`, `
 - **Setup:** `SteamWorkshopService : IWorkshopService` uses Facepunch.Steamworks 2.3.3. The project copies the package's `content/steam_api64.dll` to the output, so it reaches the app's output and the release zip.
 - **Connection:** `SteamClient.Init(281990, asyncCallbacks: true)` inside a call, and `SteamClient.Shutdown()` in `finally`. Calls are serialised.
 - **Per item, in sequence:**
-  1. Get the item. If it isn't found, the item fails with "not found or not visible to this account".
-  2. Subscribe if not subscribed.
-  3. Download at high priority with progress.
-  4. Re-query; it succeeds only when the item is installed and doesn't need an update.
-- **Stalls:** a download stalls when there is no progress for 2 minutes. The item then fails with "The download stalled", and the rest continue.
+  1. Get the item. If its `Result` isn't OK, the item fails with "not found or not visible to this account".
+  2. Subscribe if not subscribed. Getting and subscribing each have a 30 s limit ("Steam did not respond.").
+  3. If already installed and up to date, it succeeds at once. Otherwise `Download(highPriority)`, then poll every 250 ms.
+  4. Progress comes from Steam's live byte counters (`DownloadBytesDownloaded / DownloadBytesTotal`); `Item.DownloadAsync` reports nothing until a download completes. It succeeds when the item is not downloading, installed and doesn't need an update.
+  5. Any other exception fails only that item.
+- **Stalls:** a download stalls when the downloaded bytes don't grow for 2 minutes. The item then fails with "The download stalled", and the rest continue. A finished item is never reported as stalled.
+- **Init failure:** `SteamClient.Shutdown()` is still called, and the `SteamAppId`/`SteamGameId` variables are cleared after every connection so the game doesn't inherit them.
 - **Cancel:** the current item and the remaining ones become Cancelled.
 - **The API is checked first:** task 1 is a spike that connects, queries one known item without subscribing, and records the real member names. The adapter follows its findings.
 
