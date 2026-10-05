@@ -1,0 +1,67 @@
+@using System.Globalization
+@using FazStellarisModmanager.Core.Conditions
+
+<div class="evt-weight">
+    <div class="muted small">
+        Weighted pick: one of @Pick.Branches.Count is chosen by weight@(_chances is null ? "" : " (chances for your empire)")
+    </div>
+    @for (var i = 0; i < Pick.Branches.Count; i++)
+    {
+        var branch = Pick.Branches[i];
+        var index = i;
+        <div class="evt-branch @(i == Pick.Index ? "mine" : "")">
+            <div>
+                <span class="evt-w">weight @branch.WeightText</span>
+                @if (branch.EventId is not null) { <span class="muted small">→ @branch.EventId</span> }
+                @if (i == Pick.Index) { <span class="tag">this call</span> }
+                @if (_chances is { } chances) { <b class="evt-pct">@Percent(chances[index])</b> }
+            </div>
+            @for (var j = 0; j < branch.Modifiers.Count; j++)
+            {
+                var m = branch.Modifiers[j];
+                <div class="evt-mod">
+                    <span class="muted small">@ModifierText(m)</span>
+                    @if (_evaluated is { } evaluated)
+                    {
+                        var node = evaluated[index][j];
+                        <span class="@ConditionView.MarkClass(node.Result)" title="@ConditionView.MarkTitle(node.Result)">@ConditionView.MarkChar(node.Result)</span>
+                        @if (node.Children.Count > 0) { <ConditionView Root="node" /> }
+                    }
+                    else if (m.Text.Length > 0)
+                    {
+                        <div class="small">@m.Text</div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public WeightedPick Pick { get; set; } = default!;
+    [Parameter, EditorRequired] public ConditionEvaluator Evaluator { get; set; } = default!;
+    [Parameter] public EmpireFacts? Facts { get; set; }
+
+    IReadOnlyList<IReadOnlyList<ConditionNode>>? _evaluated;
+    IReadOnlyList<double>? _chances;
+    WeightedPick? _pick;
+    EmpireFacts? _facts;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_pick, Pick) && ReferenceEquals(_facts, Facts)) return;
+        (_pick, _facts) = (Pick, Facts);
+        _evaluated = Facts is null ? null : WeightedChance.Evaluate(Pick, Evaluator, Facts);
+        _chances = _evaluated is null ? null : WeightedChance.Chances(Pick, _evaluated);
+    }
+
+    static string Percent(double chance) => (chance * 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
+
+    static string ModifierText(WeightModifier m)
+    {
+        var parts = new List<string>();
+        if (m.Factor is { } f) parts.Add("× " + f.ToString(CultureInfo.InvariantCulture));
+        if (m.Add is { } a) parts.Add("+ " + a.ToString(CultureInfo.InvariantCulture));
+        return parts.Count == 0 ? "modifier" : string.Join(" ", parts);
+    }
+}

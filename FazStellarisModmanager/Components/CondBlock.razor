@@ -1,0 +1,44 @@
+@using FazStellarisModmanager.Core.Conditions
+@using FazStellarisModmanager.Core.Descriptors
+
+@if (Block is null)
+{
+    <p class="muted small">@(EmptyText)</p>
+}
+else if (_node is { } node)
+{
+    <div @key="@_version">
+        <div class="cv-head">
+            <span class="@ConditionView.MarkClass(node.Result)" title="@ConditionView.MarkTitle(node.Result)">@ConditionView.MarkChar(node.Result)</span>
+            <b>@(node.Result switch { Truth.True => "met", Truth.False => "not met", _ => "unknown" })</b>
+        </div>
+        <ConditionView Root="node" />
+    </div>
+}
+else
+{
+    <ScriptView Text="@PdxScriptPrinter.Print(Block)" />
+}
+
+@code {
+    [Parameter, EditorRequired] public ConditionEvaluator Evaluator { get; set; } = default!;
+    [Parameter] public PdxBlock? Block { get; set; }
+    /// <summary>The viewer's empire; null shows the script without marks.</summary>
+    [Parameter] public EmpireFacts? Facts { get; set; }
+    [Parameter] public string EmptyText { get; set; } = "None.";
+
+    ConditionNode? _node;
+    int _version;
+    PdxBlock? _block;
+    EmpireFacts? _facts;
+    ConditionEvaluator? _evaluator;
+
+    // Re-evaluated only when the block, the facts or the evaluator change; the version re-keys the view so the marks animate in again.
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_block, Block) && ReferenceEquals(_facts, Facts) && ReferenceEquals(_evaluator, Evaluator)) return;
+        (_block, _facts, _evaluator) = (Block, Facts, Evaluator);
+        _version++;
+        _node = Block is not null && Facts is not null ? Evaluator.Evaluate(Block, Facts) : null;
+    }
+}

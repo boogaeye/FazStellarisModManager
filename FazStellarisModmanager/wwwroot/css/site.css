@@ -342,3 +342,54 @@ table.ctable .why { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
     .cv-line, .cv-true, .cv-false, .cv-unknown { animation: none; }
 }
+
+/* Events tab */
+.evt-page { display: flex; flex-direction: column; gap: .6rem; height: 100%; }
+.evt-main { display: grid; grid-template-columns: 250px minmax(0, 1fr) 340px; gap: .8rem; flex: 1; min-height: 0; }
+@media (max-width: 1100px) { .evt-main { grid-template-columns: 200px minmax(0, 1fr) 280px; } }
+.evt-col { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .5rem; overflow: auto; min-height: 0; min-width: 0; }
+.evt-list input, .evt-list select { width: 100%; margin-bottom: .35rem; }
+.evt-item { padding: .3rem .4rem; border-radius: 5px; cursor: pointer; }
+.evt-item:hover { background: var(--panel-2); }
+.evt-item.on { background: #203247; outline: 1px solid var(--accent); }
+.evt-item-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.evt-id { color: var(--muted); font-size: .72rem; font-family: Consolas, monospace; }
+.evt-nav { margin-bottom: .4rem; }
+.evt-pic { display: block; width: 100%; max-width: 450px; aspect-ratio: 3 / 1; border: 1px solid #4c6a7d; border-radius: 6px; object-fit: cover; }
+.evt-pic.placeholder { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: .8rem; background: #0b1016; }
+.evt-title { margin: .5rem 0 .2rem; font-size: 1.1rem; }
+.evt-tags { display: flex; gap: .3rem; flex-wrap: wrap; }
+.evt-type { color: #9fd2ff; }
+.evt-desc { color: #b8c2cf; margin: .5rem 0 .7rem; white-space: pre-line; font-style: italic; }
+.evt-hint { margin-bottom: .3rem; }
+.evt-opt { display: flex; gap: .5rem; align-items: center; border: 1px solid var(--border); border-radius: 6px; padding: .35rem .5rem; margin-bottom: .3rem; cursor: pointer; background: #141a22; }
+.evt-opt:hover { border-color: var(--accent); }
+.evt-opt.on { border-color: var(--accent); background: #18273a; }
+.evt-opt .n { width: 1.2rem; height: 1.2rem; border-radius: 50%; background: var(--border); display: inline-flex; align-items: center; justify-content: center; font-size: .72rem; flex: none; }
+.evt-opt.on .n { background: var(--accent); color: #fff; }
+.evt-opt .grow { flex: 1; min-width: 0; }
+.evt-fires { margin-top: .6rem; border-left: 2px solid var(--accent); padding: .4rem .7rem; background: #141c27; border-radius: 0 6px 6px 0; }
+.evt-fires h4, .evt-side h4 { margin: 0 0 .4rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.evt-side h4:not(:first-child) { margin-top: .9rem; }
+.evt-section { margin: .5rem 0 .2rem; font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.evt-call, .evt-node { padding: .15rem 0; }
+.evt-row { display: flex; gap: .4rem; align-items: baseline; flex-wrap: wrap; }
+.evt-tog { width: 1rem; color: var(--muted); flex: none; text-align: center; }
+button.evt-tog { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; }
+button.evt-tog:hover:not(:disabled) { color: var(--accent); }
+.evt-delay { color: #f2c94c; font-size: .75rem; }
+.evt-via { color: var(--muted); font-size: .75rem; margin-left: 1.4rem; }
+.evt-nested { margin: .2rem 0 .2rem .5rem; padding-left: .6rem; border-left: 1px dashed var(--border); }
+.evt-cond { margin: .15rem 0 .15rem 1.4rem; font-size: .75rem; color: var(--muted); }
+.evt-cond summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; }
+.evt-kind { font-size: .66rem; padding: .02rem .35rem; border-radius: 4px; white-space: nowrap; }
+.evt-kind.k-ev { background: #203247; color: #9fd2ff; }
+.evt-kind.k-obj { background: #3a2e12; color: #f2c94c; }
+.evt-kind.k-root { background: #173a2a; color: #6fcf97; }
+.evt-weight { margin-top: .2rem; }
+.evt-branch { border: 1px solid var(--border); border-radius: 5px; padding: .2rem .4rem; margin: .2rem 0; }
+.evt-branch.mine { border-color: var(--accent); }
+.evt-w { font-family: Consolas, monospace; }
+.evt-pct { color: #6fcf97; margin-left: .3rem; }
+.evt-mod { margin-left: .5rem; }
+.evt-gap { margin-top: .5rem; }

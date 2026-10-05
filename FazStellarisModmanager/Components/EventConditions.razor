@@ -1,0 +1,29 @@
+@using FazStellarisModmanager.Core.Conditions
+
+<div>
+    <h4>Conditions</h4>
+    <div class="muted small">Event trigger</div>
+    <CondBlock Evaluator="Graph.Conditions" Block="Event.Trigger" Facts="Facts" EmptyText="No trigger: always allowed." />
+    @if (Event.MeanTimeToHappen is not null)
+    {
+        <div class="muted small">Mean time to happen</div>
+        <ScriptView Text="@(Event.MtthScript ?? string.Empty)" />
+    }
+    @if (Option is { } option)
+    {
+        <div class="muted small evt-gap">Option @(option.Index + 1): trigger</div>
+        <CondBlock Evaluator="Graph.Conditions" Block="option.Trigger" Facts="Facts" EmptyText="None." />
+        <div class="muted small evt-gap">Option @(option.Index + 1): allow</div>
+        <CondBlock Evaluator="Graph.Conditions" Block="option.Allow" Facts="Facts" EmptyText="None." />
+    }
+    @if (Facts is null) { <p class="muted small">Live game data needed for ✓/✗ marks.</p> }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EventGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public EventInfo Event { get; set; } = default!;
+    [Parameter] public int OptionIndex { get; set; }
+    [Parameter] public EmpireFacts? Facts { get; set; }
+
+    EventOptionInfo? Option => Event.Options.Count == 0 ? null : Event.Options[Math.Clamp(OptionIndex, 0, Event.Options.Count - 1)];
+}

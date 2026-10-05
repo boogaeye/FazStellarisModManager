@@ -1,0 +1,87 @@
+@using System.Globalization
+@using FazStellarisModmanager.Core.Conditions
+
+@foreach (var call in Calls)
+{
+    var c = call;
+    var target = Graph.Event(c.TargetId);
+    var cycle = Path.Contains(c.TargetId);
+    var expandable = target is not null && !cycle && target.AllCalls.Any();
+    var open = expandable && _open.Contains(c);
+    <div class="evt-call">
+        <div class="evt-row">
+            @if (expandable)
+            {
+                <button type="button" class="evt-tog" title="@(open ? "Hide what it fires" : "Show what it fires")" @onclick="() => Toggle(c)">@(open ? "▾" : "▸")</button>
+            }
+            else
+            {
+                <span class="evt-tog">•</span>
+            }
+            @if (target is not null)
+            {
+                <button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(c.TargetId)">@target.ListTitle</button>
+                <span class="muted small">@c.TargetId</span>
+            }
+            else
+            {
+                <span>@c.TargetId</span>
+                <span class="muted small">not defined in the loaded files</span>
+            }
+            <span class="evt-delay">@c.Delay</span>
+            @if (c.Chance is { } chance) { <span class="tag">@chance.ToString("0.##", CultureInfo.InvariantCulture)% chance</span> }
+            @if (cycle) { <span class="tag">↺ already above</span> }
+        </div>
+        @if (c.Via is not null || c.Scopes is not null)
+        {
+            <div class="evt-via">@(c.Via is null ? "" : $"via scripted effect {c.Via}")@(c.Scopes is null ? "" : $" scopes: {c.Scopes}")</div>
+        }
+        @if (c.Weight is { } pick)
+        {
+            <details class="evt-cond">
+                <summary>weighted pick@(EventText.PickSummary(pick, Graph, Facts))</summary>
+                <WeightView Pick="pick" Evaluator="Graph.Conditions" Facts="Facts" />
+            </details>
+        }
+        @if (c.Conditions.Any(x => x.Trigger is not null) || c.Conditions.Any(x => x.Trigger is null && c.Weight is null))
+        {
+            <details class="evt-cond">
+                <summary>@EventText.Shorten(c.Condition)</summary>
+                @if (c.ConditionBlock is not null)
+                {
+                    <CondBlock Evaluator="Graph.Conditions" Block="c.ConditionBlock" Facts="Facts" />
+                }
+                @foreach (var note in c.Conditions.Where(x => x.Trigger is null))
+                {
+                    <div class="small muted">@note.Text</div>
+                }
+            </details>
+        }
+        @if (open && target is not null)
+        {
+            <div class="evt-nested">
+                <EventFires Graph="Graph" Event="target" AllOptions="true" Facts="Facts" OnSelect="OnSelect" Path="PathWith(target.Id)" />
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public EventGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public IReadOnlyList<EventCall> Calls { get; set; } = [];
+    [Parameter] public EmpireFacts? Facts { get; set; }
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+    /// <summary>Events above this list (the selected event and the expanded ones); a call into one of them is a cycle.</summary>
+    [Parameter] public IReadOnlySet<string> Path { get; set; } = new HashSet<string>();
+
+    readonly HashSet<EventCall> _open = new(ReferenceEqualityComparer.Instance);
+
+    void Toggle(EventCall call)
+    {
+        if (!_open.Remove(call)) _open.Add(call);
+    }
+
+    IReadOnlySet<string> PathWith(string id) => new HashSet<string>(Path, StringComparer.OrdinalIgnoreCase) { id };
+
+
+}

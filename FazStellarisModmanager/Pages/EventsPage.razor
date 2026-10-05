@@ -1,0 +1,213 @@
+@page "/events"
+@using FazStellarisModmanager.Core.Conditions
+@implements IDisposable
+@inject EventGraphService Service
+@inject LiveFeed Feed
+
+<div class="evt-page">
+    @if (graph is null)
+    {
+        <div class="toolbar">
+            @if (Service.Error is { } err)
+            {
+                <span class="status error">Could not read the events: @err</span>
+                <button @onclick="Load">Retry</button>
+            }
+            else
+            {
+                <span class="status">@(Service.Progress ?? "Reading events…")</span>
+            }
+        </div>
+    }
+    else
+    {
+        if (graph.Warnings.Count > 0)
+        {
+            <details class="warnings">
+                <summary>@graph.Warnings.Count warning(s) while reading the events</summary>
+                <ul>@foreach (var w in graph.Warnings.Take(200)) { <li>@w</li> }</ul>
+            </details>
+        }
+        @if (Service.Progress is { } rebuilding)
+        {
+            <div class="status small">@rebuilding</div>
+        }
+        <div class="evt-main">
+            <div class="evt-col evt-list">
+                <input class="search" placeholder="Search title, id or text…" @bind="searchInput" @bind:event="oninput" @bind:after="SearchChanged" />
+                <select @bind="ns" @bind:after="Refilter">
+                    <option value="">All namespaces</option>
+                    @foreach (var n in graph.Namespaces) { <option value="@n">@n</option> }
+                </select>
+                <select @bind="source" @bind:after="Refilter">
+                    <option value="">Any source</option>
+                    @foreach (var s in graph.SourceNames) { <option value="@s">@s</option> }
+                </select>
+                <div class="status small">@total events@(total > MaxRows ? $" (showing the first {MaxRows}; narrow the search)" : "")</div>
+                @foreach (var e in results)
+                {
+                    var id = e.Id;
+                    <div @key="id" class="evt-item @(id == selectedId ? "on" : "")" @onclick="() => Select(id)">
+                        <div class="evt-item-title">@e.ListTitle</div>
+                        <div class="evt-id">@id</div>
+                    </div>
+                }
+            </div>
+
+            <div class="evt-col evt-middle">
+                @if (selectedId is not null && graph.Event(selectedId) is { } ev)
+                {
+                    <div class="evt-nav">
+                        <button type="button" disabled="@(history.Count == 0)" @onclick="Back">← Back</button>
+                    </div>
+                    <EventCard @key="ev.Id" Graph="graph" Event="ev" OptionIndex="optionIndex" OptionIndexChanged="i => optionIndex = i"
+                               Facts="facts" OnSelect="Select" />
+                }
+                else
+                {
+                    <p class="status">Pick an event on the left.</p>
+                }
+            </div>
+
+            <div class="evt-col evt-side">
+                @if (selectedId is not null && graph.Event(selectedId) is { } sel)
+                {
+                    <h4>How it's triggered</h4>
+                    <EventCallers @key="sel.Id" Graph="graph" EventId="@sel.Id" Facts="facts" OnSelect="Select" />
+                    <EventConditions Graph="graph" Event="sel" OptionIndex="optionIndex" Facts="facts" />
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    const int MaxRows = 300;
+
+    EventGraph? graph;
+    bool loading;
+    string searchInput = "", search = "", ns = "", source = "";
+    List<EventInfo> results = [];
+    int total;
+    string? selectedId;
+    int optionIndex;
+    readonly Stack<string> history = new();
+    CancellationTokenSource? searchCts;
+    CancellationTokenSource? loadCts;
+    volatile bool disposed;
+
+    // The viewer's empire for the ✓/✗ marks, rebuilt only when the snapshot or the viewer changed; null without live data.
+    EmpireFacts? facts;
+    GameSnapshot? factsSnapshot;
+    int? factsViewer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Service.Changed += OnServiceChanged;
+        Feed.Changed += OnFeedChanged;
+        Feed.Start();
+        UpdateFacts();
+        if (Service.IsUpToDate && Service.Current is { } current) Apply(current);
+        else await Load();
+    }
+
+    async Task Load()
+    {
+        if (loading) return;
+        loading = true;
+        loadCts?.Cancel();
+        var cts = loadCts = new CancellationTokenSource();
+        try
+        {
+            var built = await Service.EnsureAsync(cts.Token);
+            if (disposed) return;
+            if (built is not null) Apply(built);
+        }
+        catch (OperationCanceledException) { }
+        finally { loading = false; }
+    }
+
+    void Apply(EventGraph built)
+    {
+        graph = built;
+        if (ns.Length > 0 && !built.Namespaces.Contains(ns, StringComparer.OrdinalIgnoreCase)) ns = "";
+        if (source.Length > 0 && !built.SourceNames.Contains(source)) source = "";
+        if (selectedId is not null && built.Event(selectedId) is null) (selectedId, optionIndex) = (null, 0);
+        while (history.Count > 0 && built.Event(history.Peek()) is null) history.Pop();
+        Refilter();
+        if (selectedId is null && results.Count > 0) selectedId = results[0].Id;
+    }
+
+    // A rebuilt tech tree makes the graph stale: build again, unless the last build failed (the Retry button does that).
+    void OnServiceChanged() => _ = InvokeAsync(() =>
+    {
+        if (disposed) return;
+        if (!Service.IsBuilding && !loading && !Service.IsUpToDate && Service.Error is null) _ = Load();
+        StateHasChanged();
+    });
+
+    void OnFeedChanged() => _ = InvokeAsync(() =>
+    {
+        if (disposed) return;
+        UpdateFacts();
+        StateHasChanged();
+    });
+
+    void UpdateFacts()
+    {
+        var snap = Feed.Current;
+        var viewer = Feed.ViewerId;
+        if (ReferenceEquals(snap, factsSnapshot) && viewer == factsViewer) return;
+        (factsSnapshot, factsViewer) = (snap, viewer);
+        facts = snap is not null && viewer is int id && snap.Countries.FirstOrDefault(c => c.Id == id) is { Holdings: not null, Flags: not null } me
+                && snap.GlobalFlags is not null
+            ? EmpireFacts.From(me, snap, snap.Players.Any(p => p.CountryId == id))
+            : null;
+    }
+
+    void Refilter()
+    {
+        if (graph is null) return;
+        var all = graph.Search(search, ns.Length == 0 ? null : ns, source.Length == 0 ? null : source).ToList();
+        total = all.Count;
+        results = all.Take(MaxRows).ToList();
+    }
+
+    async Task SearchChanged()
+    {
+        searchCts?.Cancel();
+        searchCts?.Dispose();
+        var cts = searchCts = new CancellationTokenSource();
+        try { await Task.Delay(200, cts.Token); }
+        catch (OperationCanceledException) { return; }
+        search = searchInput;
+        Refilter();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    void Select(string id)
+    {
+        if (graph?.Event(id) is not { } target || string.Equals(target.Id, selectedId, StringComparison.OrdinalIgnoreCase)) return;
+        if (selectedId is not null) history.Push(selectedId);
+        selectedId = target.Id;
+        optionIndex = 0;
+    }
+
+    void Back()
+    {
+        if (history.Count == 0) return;
+        selectedId = history.Pop();
+        optionIndex = 0;
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        Service.Changed -= OnServiceChanged;
+        Feed.Changed -= OnFeedChanged;
+        searchCts?.Cancel();
+        searchCts?.Dispose();
+        loadCts?.Cancel();
+        loadCts?.Dispose();
+    }
+}

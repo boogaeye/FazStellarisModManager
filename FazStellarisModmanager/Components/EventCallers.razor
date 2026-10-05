@@ -1,0 +1,108 @@
+@using System.Globalization
+@using FazStellarisModmanager.Core.Conditions
+
+@{
+    var callers = Graph.CallersOf(EventId);
+}
+@if (callers.Count == 0)
+{
+    <div class="evt-via" style="margin-left:@(Level * 16 + 22)px">@OriginText()</div>
+}
+@foreach (var call in callers)
+{
+    var c = call;
+    var isEvent = c.CallerKind == CallerKind.Event;
+    var cycle = isEvent && PathSet.Contains(c.CallerId);
+    var expandable = isEvent && !cycle;
+    var open = expandable && _open.Contains(c);
+    <div class="evt-node" style="margin-left:@(Level * 16)px">
+        <div class="evt-row">
+            @if (expandable)
+            {
+                <button type="button" class="evt-tog" title="@(open ? "Hide its callers" : "Show what fires it")" @onclick="() => Toggle(c)">@(open ? "▾" : "▸")</button>
+            }
+            else
+            {
+                <span class="evt-tog">•</span>
+            }
+            <span class="evt-kind @(isEvent ? "k-ev" : "k-obj")">@KindLabel(c)</span>
+            @if (isEvent && Graph.Event(c.CallerId) is not null)
+            {
+                <button type="button" class="link" @onclick="() => OnSelect.InvokeAsync(c.CallerId)">@c.CallerName</button>
+                <span class="muted small">@c.CallerId</span>
+            }
+            else
+            {
+                <span>@c.CallerName</span>
+                @if (isEvent) { <span class="muted small">not defined in the loaded files</span> }
+            }
+            @if (c.IsRoot) { <span class="evt-kind k-root">root</span> }
+            @if (cycle) { <span class="tag">↺ already above</span> }
+        </div>
+        <div class="evt-via">@Via(c)</div>
+        @if (c.Weight is { } pick)
+        {
+            <details class="evt-cond">
+                <summary>weighted pick@(EventText.PickSummary(pick, Graph, Facts))</summary>
+                <WeightView Pick="pick" Evaluator="Graph.Conditions" Facts="Facts" />
+            </details>
+        }
+        @if (c.ConditionBlock is not null)
+        {
+            <details class="evt-cond">
+                <summary>@EventText.Shorten(c.Condition)</summary>
+                <CondBlock Evaluator="Graph.Conditions" Block="c.ConditionBlock" Facts="Facts" />
+            </details>
+        }
+        @if (open)
+        {
+            <EventCallers Graph="Graph" EventId="c.CallerId" Facts="Facts" OnSelect="OnSelect" Level="Level + 1" Path="PathWith(c.CallerId)" />
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public EventGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public string EventId { get; set; } = "";
+    [Parameter] public EmpireFacts? Facts { get; set; }
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+    [Parameter] public int Level { get; set; }
+    /// <summary>The selected event and the callers expanded above this level; a caller already in it shows "already above".</summary>
+    [Parameter] public IReadOnlySet<string>? Path { get; set; }
+
+    readonly HashSet<EventCall> _open = new(ReferenceEqualityComparer.Instance);
+
+    IReadOnlySet<string> PathSet => Path ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase) { EventId };
+
+    IReadOnlySet<string> PathWith(string id) => new HashSet<string>(PathSet, StringComparer.OrdinalIgnoreCase) { id };
+
+    void Toggle(EventCall call)
+    {
+        if (!_open.Remove(call)) _open.Add(call);
+    }
+
+    string OriginText() => Graph.Origin(EventId) switch
+    {
+        EventOrigin.FiresOnItsOwn => Graph.Event(EventId)?.HasMtth == true
+            ? "Fires on its own: the game checks its mean time to happen."
+            : "Fires on its own: the game checks its trigger on a pulse.",
+        _ => "No known caller in the loaded files (fired by game code, or by a mod that isn't loaded).",
+    };
+
+    static string KindLabel(EventCall c) => c.CallerKind switch
+    {
+        CallerKind.Event => "event",
+        CallerKind.OnAction => "on action",
+        _ => c.CallerKindName.ToLowerInvariant(),
+    };
+
+    static string Via(EventCall c)
+    {
+        var parts = new List<string> { c.Where, c.Delay };
+        if (c.Via is not null) parts.Add($"via scripted effect {c.Via}");
+        if (c.Chance is { } chance) parts.Add($"{chance.ToString("0.##", CultureInfo.InvariantCulture)}% chance");
+        return string.Join(" · ", parts);
+    }
+
+
+}
