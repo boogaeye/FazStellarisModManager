@@ -164,3 +164,44 @@ Unreadable or corrupt saves, a missing save folder, and a viewer that can't be f
 - **LiveGameService:** reads the newest save, picks up a newer one, keeps the old snapshot on a corrupt one. Uses a temporary folder and an explicit `Refresh()` instead of waiting on the watcher.
 - **Viewer resolution:** single player, name match, remembered choice.
 - **UI:** checked by hand against the user's save.
+
+## Part 2 design (approved): sharing through the session, and the Tech tab using live data
+- **Messages (protocol version 2):**
+  - `LiveUpdate(GameSnapshot Snapshot, int? ViewerId)`: host → client. The snapshot is already filtered for that client.
+  - `LiveViewAs(int CountryId)`: client → host.
+  - Older clients are rejected by the existing version check.
+- **Filtering on the host, `LiveFilter.For(snapshot, viewerId)`:**
+  - The viewer's own country is sent in full.
+  - Contacted countries are sent without their techs and contact lists.
+  - Uncontacted countries keep only Id, Type and VictoryRank. Everything else is blanked: no name, flag or stats.
+  - With a null viewer, only Players are sent, so the client can pick.
+  - `SavePath` is reduced to the file name.
+- **Host (`SessionHost`):**
+  - Keeps the latest snapshot. Each peer has a viewer country, auto-matched by session name against the save's players (ignoring case) unless the peer chose one.
+  - Sends each peer its filtered update in these cases:
+    - a new snapshot arrives (`UpdateLive`);
+    - a peer joins while a snapshot is loaded;
+    - a peer sends a valid `LiveViewAs`. The country must be one of the save's player countries; invalid choices are ignored.
+  - A chosen country that is not in a new save's players is reset.
+- **`SessionService`:**
+  - Takes the `LiveGameService`. While hosting, it pushes `live.Current` to the host on every change and once at start.
+  - As a client, it keeps the latest `LiveUpdate` and when it arrived (`HostLive`, `HostLiveReceivedUtc`), and keeps them after a disconnect.
+  - `ViewAsAsync(id)` sends the choice to the host.
+  - `ForgetHostLive()` clears the kept update. It does nothing while connected as a client.
+  - Joining clears the old data.
+  - These members form the interface `IHostLiveSource`.
+- **`LiveFeed` (Core, singleton):** one source for the app.
+  - `Source` is Local, Host (connected client with host data) or HostDisconnected (kept host data, no longer connected).
+  - `Current`, `ViewerId`, `ReceivedUtc`, `Status`, `Error`, `Reading`, `ResearchedTechs` (the viewer's techs), `Changed`, `Start()`.
+  - `SetViewerAsync(id)`: for a local source, the choice is remembered in `LiveViewerStore`; for a host source, it is sent to the host.
+  - `UseLocal()`.
+  - The local viewer is resolved with `LiveViewer.Resolve` whenever the local snapshot changes.
+- **Live Game tab:** uses `LiveFeed`. The status bar reads:
+  - "Live from host · game date · received N min ago" for the Host source;
+  - a warning "Host disconnected, showing … from N min ago" plus a **Use my own saves** button for HostDisconnected;
+  - the save information, as in part 1, for the Local source.
+- **Tech tab:**
+  - Manual "researched" marking is removed: the right-click toggle and the saved Researched list. Route targets stay.
+  - Researched techs = `LiveFeed.ResearchedTechs`. The tab shows the source line ("Researched: N techs from Live Game (<date>)") or "No live game data…".
+  - The research store keeps reading old files, but the Researched field is ignored and is written as empty.
+- **Assumption:** the app session host is also the Stellaris game host.
