@@ -70,7 +70,7 @@
                     <span class="spacer"></span>
                     <span class="lrank">#@me.VictoryRank</span>
                 </div>
-                <div class="lstat"><span>Victory score</span><LiveStat Value="new StatValue(me.VictoryScore)" /></div>
+                <div class="lstat"><span>Victory score</span><span><LiveStat Value="new StatValue(me.VictoryScore)" /> <span class="lr">#@me.VictoryRank</span></span></div>
                 <div class="lstat">
                     <span>Diplomatic weight</span>
                     @if (dw is null)
@@ -112,17 +112,20 @@
                         <p class="muted">@DiploBreakdown.NotCalculated Some conditional mod resolutions are not counted either.</p>
                     </details>
                 }
-                <div class="lstat"><span>Military power</span><LiveStat Value="new StatValue(me.MilitaryPower)" /></div>
-                <div class="lstat"><span>Economy power</span><LiveStat Value="new StatValue(me.EconomyPower)" /></div>
-                <div class="lstat"><span>Tech power</span><LiveStat Value="new StatValue(me.TechPower)" /></div>
-                <div class="lstat"><span>Fleet size</span><LiveStat Value="new StatValue(me.FleetSize)" /></div>
-                <div class="lstat"><span>Empire size</span><LiveStat Value="new StatValue(me.EmpireSize)" /></div>
-                <div class="lstat"><span>Pops</span><LiveStat Value="new StatValue(me.Pops)" /></div>
+                <div class="lstat"><span>Military power</span><span><LiveStat Value="new StatValue(me.MilitaryPower)" />@MyRank(BoardStat.Military)</span></div>
+                <div class="lstat"><span>Economy power</span><span><LiveStat Value="new StatValue(me.EconomyPower)" />@MyRank(BoardStat.Economy)</span></div>
+                <div class="lstat"><span>Tech power</span><span><LiveStat Value="new StatValue(me.TechPower)" />@MyRank(BoardStat.Tech)</span></div>
+                <div class="lstat"><span>Fleet size</span><span><LiveStat Value="new StatValue(me.FleetSize)" />@MyRank(BoardStat.Fleet)</span></div>
+                <div class="lstat"><span>Empire size</span><span><LiveStat Value="new StatValue(me.EmpireSize)" />@MyRank(BoardStat.EmpireSize)</span></div>
+                <div class="lstat"><span>Pops</span><span><LiveStat Value="new StatValue(me.Pops)" />@MyRank(BoardStat.Pops)</span></div>
                 <p class="muted">Known empires: @rows.Count(r => r.Known && !r.IsViewer) of @(rows.Count - 1)</p>
             </aside>
             <div class="live-board" @ref="boardEl">
-                <div class="lhdr"><span>#</span><span></span><span>Empire</span><span>Score</span><span>Military</span><span>Economy</span><span>Tech</span><span>Fleet</span></div>
-                @foreach (var r in rows)
+                <div class="lhdr"><span>#</span><span></span><span>Empire</span>@foreach (var (stat, label) in Columns)
+                    {
+                        <button class="lsort @(sort == stat ? "active" : "")" title="@SortTip(stat)" @onclick="() => SetSort(stat)">@label@(sort == stat ? (worstFirst ? " ▲" : " ▼") : "")</button>
+                    }</div>
+                @foreach (var r in sorted)
                 {
                     <div @key="r.Id" class="lrow @(r.IsViewer ? "me" : "") @(r.Known ? "" : "unknown")" data-id="@r.Id" data-rank="@r.Rank">
                         <span class="pos">@r.Rank</span>
@@ -131,11 +134,13 @@
                             @if (r.IsViewer) { <span class="pl">YOU</span> }
                             else if (r.PlayerName is { } player) { <span class="pl">@player</span> }
                         </span>
-                        <span class="num"><LiveStat Value="r.Score" /></span>
-                        <span class="num"><LiveStat Value="r.Military" /></span>
-                        <span class="num"><LiveStat Value="r.Economy" /></span>
-                        <span class="num"><LiveStat Value="r.Tech" /></span>
-                        <span class="num"><LiveStat Value="r.Fleet" /></span>
+                        <span class="num"><LiveStat Value="r.Score" />@RankOf(r, BoardStat.Score)</span>
+                        <span class="num"><LiveStat Value="r.Military" />@RankOf(r, BoardStat.Military)</span>
+                        <span class="num"><LiveStat Value="r.Economy" />@RankOf(r, BoardStat.Economy)</span>
+                        <span class="num"><LiveStat Value="r.Tech" />@RankOf(r, BoardStat.Tech)</span>
+                        <span class="num"><LiveStat Value="r.Fleet" />@RankOf(r, BoardStat.Fleet)</span>
+                        <span class="num"><LiveStat Value="r.EmpireSize" />@RankOf(r, BoardStat.EmpireSize)</span>
+                        <span class="num"><LiveStat Value="r.Pops" />@RankOf(r, BoardStat.Pops)</span>
                     </div>
                 }
             </div>
@@ -150,6 +155,16 @@
     SaveCountry? me;
     DiploBreakdown? dw;
     IReadOnlyList<BoardRow> rows = [];
+    IReadOnlyList<BoardRow> sorted = [];
+    IReadOnlyDictionary<int, IReadOnlyDictionary<BoardStat, int>> ranks = new Dictionary<int, IReadOnlyDictionary<BoardStat, int>>();
+    BoardStat sort = BoardStat.Score;
+    bool worstFirst;
+
+    static readonly (BoardStat Stat, string Label)[] Columns =
+    [
+        (BoardStat.Score, "Score"), (BoardStat.Military, "Military"), (BoardStat.Economy, "Economy"), (BoardStat.Tech, "Tech"),
+        (BoardStat.Fleet, "Fleet"), (BoardStat.EmpireSize, "Empire size"), (BoardStat.Pops, "Pops"),
+    ];
     string? animatedFor;
     string? builtFor;
     Timer? clock;
@@ -172,6 +187,8 @@
             me = null;
             dw = null;
             rows = [];
+            sorted = [];
+            ranks = new Dictionary<int, IReadOnlyDictionary<BoardStat, int>>();
             builtFor = null;
             return;
         }
@@ -180,7 +197,26 @@
         me = viewer is int v ? s.Countries.FirstOrDefault(c => c.Id == v) : null;
         dw = me is null ? null : s.Diplo?.GetValueOrDefault(me.Id);
         rows = viewer is int id ? LiveBoard.Build(s, id) : [];
+        ranks = LiveBoard.Ranks(rows);
+        sorted = LiveBoard.Sort(rows, sort, worstFirst);
     }
+
+    void SetSort(BoardStat stat)
+    {
+        if (sort == stat) worstFirst = !worstFirst;
+        else { sort = stat; worstFirst = false; }
+        sorted = LiveBoard.Sort(rows, sort, worstFirst);
+    }
+
+    static string SortTip(BoardStat stat) => "Click to sort; click again to flip best/worst" + (LiveBoard.LowerIsBetter(stat) ? " (smaller is better)" : "");
+
+    RenderFragment RankOf(BoardRow r, BoardStat stat) => ranks.TryGetValue(r.Id, out var m) && m.TryGetValue(stat, out var n)
+        ? @<text> <span class="lr">#@n</span></text>
+        : @<text></text>;
+
+    RenderFragment MyRank(BoardStat stat) => me is not null && ranks.TryGetValue(me.Id, out var m) && m.TryGetValue(stat, out var n)
+        ? @<text> <span class="lr">#@n of @rows.Count(x => x.Known)</span></text>
+        : @<text></text>;
 
     async Task PickViewer(ChangeEventArgs e)
     {
@@ -202,8 +238,8 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (rows.Count == 0 || builtFor is null || animatedFor == builtFor + "|" + viewer) return;
-        animatedFor = builtFor + "|" + viewer;
+        if (rows.Count == 0 || builtFor is null || animatedFor == builtFor + "|" + viewer + "|" + sort + "|" + worstFirst) return;
+        animatedFor = builtFor + "|" + viewer + "|" + sort + "|" + worstFirst;
         try
         {
             module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/livegame.js");
