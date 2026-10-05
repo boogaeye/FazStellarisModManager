@@ -15,6 +15,8 @@ namespace FazStellarisModmanager.Core.Session;
 [JsonDerivedType(typeof(ClientBusy), "busy")]
 [JsonDerivedType(typeof(Roster), "roster")]
 [JsonDerivedType(typeof(Bye), "bye")]
+[JsonDerivedType(typeof(LiveUpdate), "live")]
+[JsonDerivedType(typeof(LiveViewAs), "liveViewAs")]
 public abstract record SessionMessage;
 
 /// <summary>Client to host, first message.</summary>
@@ -40,6 +42,12 @@ public sealed record Roster(List<PlayerInfo> Players) : SessionMessage;
 
 /// <summary>Either side: closing the connection on purpose.</summary>
 public sealed record Bye(string? Reason) : SessionMessage;
+
+/// <summary>Host to client: the latest save as this client may see it (see LiveFilter). ViewerId null: the host doesn't know the client's country yet (only Players are filled).</summary>
+public sealed record LiveUpdate(FazStellarisModmanager.Core.Saves.GameSnapshot Snapshot, int? ViewerId) : SessionMessage;
+
+/// <summary>Client to host: I play this country in the save.</summary>
+public sealed record LiveViewAs(int CountryId) : SessionMessage;
 
 public enum PlayerStatus { Waiting, Busy, Ready, Mismatch, Unreliable }
 
