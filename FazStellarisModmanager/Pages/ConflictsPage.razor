@@ -1,0 +1,237 @@
+@page "/conflicts"
+@implements IDisposable
+@inject ModManagerService Manager
+@inject EditedModList List
+@inject DefinitionScanService Scanner
+
+<div class="conflicts-page">
+    <div class="mods-toolbar">
+        <b>@List.Name</b>
+        <span class="muted">@List.Mods.Count mods@(snap is null ? "" : $" · {snap.Definitions:N0} definitions in {snap.Took.TotalSeconds:0.0} s")</span>
+        <span class="spacer"></span>
+        <input class="search" placeholder="Search definition or file…" @bind="search" @bind:event="oninput" />
+        <select @bind="folderFilter">
+            <option value="">All types</option>
+            @foreach (var f in Folders())
+            {
+                <option value="@f">@f</option>
+            }
+        </select>
+        <button class="primary" @onclick="RescanAsync" disabled="@scanning">Rescan</button>
+    </div>
+
+    @if (scanning)
+    {
+        <p class="status">Scanning @done of @total mods…</p>
+    }
+    @if (status is not null)
+    {
+        <p class="status @(error ? "error" : "")">@status</p>
+    }
+    @if (snap is not null && snap.ListVersion != List.Version && !scanning)
+    {
+        <p class="status warn">The list changed since this scan. <button class="link" @onclick="RescanAsync">Rescan</button></p>
+    }
+    @if (snap is not null && snap.Errors.Count > 0)
+    {
+        <details class="library-errors">
+            <summary>@snap.Errors.Count files could not be read</summary>
+            <ul>
+                @foreach (var err in snap.Errors)
+                {
+                    <li>@err</li>
+                }
+            </ul>
+        </details>
+    }
+
+    @if (snap is not null)
+    {
+        var losing = LosingMods();
+        <div class="conflicts-grid">
+            <div class="clist">
+                <div class="muted chead">Mods that lose definitions</div>
+                @if (losing.Count == 0)
+                {
+                    <p class="muted">No mod loses definitions to another mod in this list.</p>
+                }
+                @foreach (var (mod, lost) in losing)
+                {
+                    var m = mod;
+                    <button class="cmod @(m == selected ? "on" : "")" @onclick="() => selected = m">
+                        <span class="n">#@(m + 1) @snap.Entries[m].Name</span>
+                        <span class="lost">loses @lost of @snap.Report.DefinitionCounts[m]</span>
+                    </button>
+                }
+            </div>
+            <div class="cdetail">
+                @if (selected is int sel && sel < snap.Entries.Count)
+                {
+                    var mine = snap.Report.Losses.Where(l => l.Mod == sel).ToList();
+                    var shown = mine.Where(Matches).ToList();
+                    var replacers = mine.Where(l => l.Reason == LossReason.FileReplaced).Select(l => l.OtherMod).Distinct().Order().ToList();
+                    <h3>#@(sel + 1) @snap.Entries[sel].Name</h3>
+                    <div class="muted">@mine.Select(l => (l.Folder, l.Name)).Distinct().Count() of its @snap.Report.DefinitionCounts[sel] definitions are affected.</div>
+                    @if (replacers.Count > 0)
+                    {
+                        <p class="muted">Whole files are replaced by @string.Join(", ", replacers.Select(r => "#" + (r + 1))). To keep this mod's versions, move it below those mods; they will then lose these files instead.</p>
+                    }
+                    @foreach (var folder in shown.GroupBy(l => l.Folder).OrderBy(g => g.Key))
+                    {
+                        <div class="cgroup">@folder.Key</div>
+                        <table class="ctable">
+                            <tr><th>Definitions</th><th>Used instead</th><th>Why</th></tr>
+                            @foreach (var g in folder.GroupBy(l => (l.OtherMod, l.OtherFile, l.Reason, l.File)).OrderBy(g => g.Key.OtherMod))
+                            {
+                                var names = g.Select(l => l.Name).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+                                var groupKey = folder.Key + "|" + g.Key.OtherMod + "|" + g.Key.OtherFile + "|" + g.Key.File + "|" + g.Key.Reason;
+                                var all = expanded.Contains(groupKey);
+                                <tr>
+                                    <td class="k">
+                                        @string.Join(", ", all ? names : names.Take(12))
+                                        @if (!all && names.Count > 12)
+                                        {
+                                            <button class="link" @onclick="() => expanded.Add(groupKey)"> +@(names.Count - 12) more</button>
+                                        }
+                                        <div class="sub">@g.Key.File</div>
+                                    </td>
+                                    <td>#@(g.Key.OtherMod + 1) @snap.Entries[g.Key.OtherMod].Name<div class="sub">@g.Key.OtherFile</div></td>
+                                    <td class="why">
+                                        @Why(g.Key.Reason, folder.Key, g.Key.File, g.Key.OtherFile)
+                                        @if (g.Key.Reason == LossReason.FileReplaced) { <span class="tag file">file</span> }
+                                        @if (g.Key.Reason == LossReason.Duplicate) { <span class="tag dup">duplicate</span> }
+                                    </td>
+                                </tr>
+                            }
+                        </table>
+                    }
+                    @if (shown.Count == 0 && mine.Count > 0)
+                    {
+                        <p class="muted">Nothing matches the search or type filter.</p>
+                    }
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    ConflictSnapshot? snap;
+    int? selected;
+    string search = "";
+    string folderFilter = "";
+    bool scanning;
+    int done;
+    int total;
+    string? status;
+    bool error;
+    readonly HashSet<string> expanded = [];
+    CancellationTokenSource? cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            if (Manager.Library.Count == 0) await Manager.RefreshLibraryAsync();
+            if (!List.Loaded) List.Set(Manager.ImportCurrent("Current"));
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException
+                                   or System.Text.Json.JsonException or InvalidDataException)
+        {
+            (status, error) = (ex.Message, true);
+            return;
+        }
+        if (Scanner.Last is { } last && last.ListVersion == List.Version) Show(last);
+        else await ScanAsync();
+    }
+
+    async Task RescanAsync()
+    {
+        try
+        {
+            await Manager.RefreshLibraryAsync();
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException)
+        {
+            (status, error) = (ex.Message, true);
+            return;
+        }
+        await ScanAsync();
+    }
+
+    async Task ScanAsync()
+    {
+        cts?.Cancel();
+        cts?.Dispose();
+        var run = cts = new CancellationTokenSource();
+        var version = List.Version;
+        var entries = List.Mods.ToList();
+        var byKey = new Dictionary<string, InstalledMod>(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in Manager.Library) byKey.TryAdd(m.Key, m);
+        var mods = entries.Select(e => byKey.GetValueOrDefault(e.Key)).ToList();
+
+        (scanning, done, total, status, error) = (true, 0, entries.Count, null, false);
+        long lastRender = 0;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var scan = await Task.Run(() => Scanner.ScanAsync(mods, n =>
+            {
+                done = n;
+                var now = Environment.TickCount64;
+                if (now - Interlocked.Read(ref lastRender) >= 250)
+                {
+                    Interlocked.Exchange(ref lastRender, now);
+                    _ = InvokeAsync(StateHasChanged);
+                }
+            }, run.Token), run.Token);
+            var report = await Task.Run(() => DefinitionAnalyzer.Analyze(scan.Mods), run.Token);
+            var result = new ConflictSnapshot(version, entries, scan.Errors, report, report.DefinitionCounts.Sum(), clock.Elapsed);
+            Scanner.Last = result;
+            Show(result);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (!run.IsCancellationRequested) scanning = false;
+        }
+    }
+
+    void Show(ConflictSnapshot result)
+    {
+        snap = result;
+        expanded.Clear();
+        selected = LosingMods().Select(x => (int?)x.Mod).FirstOrDefault();
+    }
+
+    List<(int Mod, int Lost)> LosingMods() =>
+        snap is null ? [] : snap.Report.Losses
+            .GroupBy(l => l.Mod)
+            .Select(g => (Mod: g.Key, Lost: g.Select(l => (l.Folder, l.Name)).Distinct().Count()))
+            .OrderByDescending(x => x.Lost).ThenBy(x => x.Mod)
+            .ToList();
+
+    IEnumerable<string> Folders() =>
+        snap is null ? [] : snap.Report.Losses.Select(l => l.Folder).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+
+    bool Matches(DefinitionLoss l) =>
+        (folderFilter.Length == 0 || string.Equals(l.Folder, folderFilter, StringComparison.OrdinalIgnoreCase))
+        && (search.Length == 0 || l.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+            || l.File.Contains(search, StringComparison.OrdinalIgnoreCase) || l.OtherFile.Contains(search, StringComparison.OrdinalIgnoreCase));
+
+    static string Why(LossReason reason, string folder, string file, string otherFile) => reason switch
+    {
+        LossReason.FileReplaced => $"same file {Path.GetFileName(file)}, later in the list",
+        LossReason.LoadsBeforeWinner => $"{Path.GetFileName(otherFile)} loads after {Path.GetFileName(file)}",
+        LossReason.LoadsAfterWinner => $"{Path.GetFileName(otherFile)} loads first (this type keeps the first definition)",
+        _ => folder == "events" ? "same event id: the game keeps only one" : "both load: duplicates in this type usually break",
+    };
+
+    public void Dispose()
+    {
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+}
