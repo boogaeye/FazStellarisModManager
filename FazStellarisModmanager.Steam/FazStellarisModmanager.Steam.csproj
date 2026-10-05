@@ -7,7 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Facepunch.Steamworks" Version="2.3.3" />
+    <PackageReference Include="Facepunch.Steamworks" Version="2.3.3" GeneratePathProperty="true" />
   </ItemGroup>
 
   <ItemGroup>
@@ -16,7 +16,7 @@
 
   <!-- PackageReference ignores a package's content/ folder, so copy Steam's native library to the output and publish folders. -->
   <ItemGroup>
-    <None Include="$(NuGetPackageRoot)facepunch.steamworks/2.3.3/content/steam_api64.dll" Link="steam_api64.dll"
+    <None Include="$(PkgFacepunch_Steamworks)\content\steam_api64.dll" Link="steam_api64.dll"
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
