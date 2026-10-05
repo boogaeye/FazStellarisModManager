@@ -40,4 +40,14 @@ public class WorkshopNeedsTests
         Assert.Empty(WorkshopNeeds.From(local).Items);
         Assert.False(WorkshopNeeds.From(none).NeedsPrompt);
     }
+
+    [Fact]
+    public void A_host_local_copy_paired_with_my_workshop_item_is_an_update_named_after_the_host_when_mine_has_no_name()
+    {
+        var plan = new MatchPlan(new ModList("H", [], []), [], [], [Changed("local:copy.mod", "ugc:9")], [], []);
+
+        var need = Assert.Single(WorkshopNeeds.From(plan).Items);
+
+        Assert.Equal((9UL, "local:copy.mod name", WorkshopNeedKind.Update), (need.Id, need.Name, need.Kind));
+    }
 }

@@ -12,8 +12,11 @@ public sealed record WorkshopItemInfo(ulong Id, string? Title, long? SizeBytes);
 
 public sealed record WorkshopItemResult(ulong Id, bool Success, string? InstallFolder, string? Error);
 
-/// <summary>Result of "install from the Workshop, then match the host".</summary>
-public sealed record WorkshopMatchResult(IReadOnlyList<WorkshopItemResult> Items, MatchPlan Plan);
+/// <summary>
+/// Result of "install from the Workshop, then match the host". <see cref="Plan"/> is null when the host's list was not
+/// applied (the host disconnected during the downloads); <see cref="Note"/> then says why.
+/// </summary>
+public sealed record WorkshopMatchResult(IReadOnlyList<WorkshopItemResult> Items, MatchPlan? Plan, string? Note = null);
 
 /// <summary>Steam could not be reached (not running, not logged in, or the account doesn't own the game).</summary>
 public sealed class WorkshopUnavailableException(string message, Exception? inner = null) : Exception(message, inner);

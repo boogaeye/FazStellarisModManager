@@ -223,7 +223,8 @@ public class SessionServiceTests
 
         Assert.Equal([222UL], workshop!.Requested);
         Assert.True(Assert.Single(result.Items).Success);
-        Assert.True(result.Plan.IsComplete);
+        Assert.True(result.Plan!.IsComplete);
+        Assert.Null(result.Note);
         Assert.Equal(["mod/ugc_222.mod", "mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
         Assert.True(client.Session.MyDiff!.IsMatch);
     }
@@ -242,7 +243,7 @@ public class SessionServiceTests
         var item = Assert.Single(result.Items);
         Assert.Equal((false, "Not available."), (item.Success, item.Error));
         Assert.Equal(["mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
-        Assert.Equal(["ugc:222"], result.Plan.NeedsWorkshopInstall.Select(e => e.Key));
+        Assert.Equal(["ugc:222"], result.Plan!.NeedsWorkshopInstall.Select(e => e.Key));
         Assert.False(client.Session.MyDiff!.IsMatch);
     }
 
@@ -258,6 +259,73 @@ public class SessionServiceTests
 
         Assert.Empty(result.Items);
         Assert.Equal(["mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.Session.InstallFromWorkshopAndMatchAsync([5UL], new NoProgress()));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.Session.InstallFromWorkshopAndMatchAsync([5UL], new NoProgress()));
+        Assert.Contains("not available", ex.Message);
+    }
+
+    [Fact]
+    public async Task Steam_being_unavailable_propagates_leaves_the_load_file_alone_and_the_host_not_busy()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/ugc_222.mod\",\"mod/local.mod\"]");
+        bool HostSeesBusy() => host.Session.Players.Any(p => p.Name == "Cli" && p.Status == PlayerStatus.Busy);
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]", _ => new FakeWorkshop(async (_, _) =>
+        {
+            await Wait.Until(HostSeesBusy, "host sees the client downloading");
+            throw new WorkshopUnavailableException("Steam is not running.");
+        }));
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+        await Wait.Until(() => host.Session.Players.Any(p => p.Name == "Cli" && p.Status != PlayerStatus.Busy), "host sees the client's snapshot");
+
+        await Assert.ThrowsAsync<WorkshopUnavailableException>(() => client.Session.InstallFromWorkshopAndMatchAsync([222UL], new NoProgress()));
+
+        Assert.Equal(["mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
+        await Wait.Until(() => host.Session.Players.Any(p => p.Name == "Cli" && p.Status != PlayerStatus.Busy), "host sees client not busy");
+    }
+
+    [Fact]
+    public async Task Cancelling_a_workshop_download_applies_nothing()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/ugc_222.mod\",\"mod/local.mod\"]");
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var never = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]", _ => new FakeWorkshop(async (_, ct) =>
+        {
+            started.TrySetResult();
+            return await never.Task.WaitAsync(ct);
+        }));
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+
+        var run = client.Session.InstallFromWorkshopAndMatchAsync([222UL], new NoProgress());
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        client.Session.CancelCurrent();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(["mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
+        Assert.Null(client.Session.LastPlan);
+    }
+
+    [Fact]
+    public async Task When_the_host_leaves_during_the_download_the_results_are_kept_and_nothing_is_applied()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/ugc_222.mod\",\"mod/local.mod\"]");
+        SessionService? clientSession = null;
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]", _ => new FakeWorkshop(async (_, _) =>
+        {
+            await host.Session.LeaveAsync();
+            await Wait.Until(() => clientSession!.Role == SessionRole.None, "client notices host stopped");
+            return true;
+        }));
+        clientSession = client.Session;
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+
+        var result = await client.Session.InstallFromWorkshopAndMatchAsync([222UL], new NoProgress());
+
+        Assert.True(Assert.Single(result.Items).Success);
+        Assert.Null(result.Plan);
+        Assert.Equal("The host disconnected; the downloads finished but the host's list was not applied.", result.Note);
+        Assert.Equal(["mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
     }
 }

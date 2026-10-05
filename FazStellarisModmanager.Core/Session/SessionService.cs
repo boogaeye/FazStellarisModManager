@@ -206,9 +206,12 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         return await Task.Run(() => MatchPlan.Create(target.HostList, ModDiffer.Diff(target.HostSnapshot, mine), manager.Library, mine), CancellationToken.None);
     }, ct);
 
+    public const string HostLeftNote = "The host disconnected; the downloads finished but the host's list was not applied.";
+
     /// <summary>
     /// Client only: downloads the given Workshop items (subscribing when needed), then matches the host like <see cref="MatchHostAsync"/>.
-    /// Per-item failures don't stop the match; Steam being unavailable or a cancel does (nothing is applied then).
+    /// Per-item failures don't stop the match; Steam being unavailable or a cancel does (nothing is applied then). When the host
+    /// disconnects during the downloads, the item results come back with a null plan and <see cref="HostLeftNote"/>.
     /// With no ids this is a plain match. Installing needs a Workshop service.
     /// </summary>
     public Task<WorkshopMatchResult> InstallFromWorkshopAndMatchAsync(IReadOnlyList<ulong> ids, IProgress<WorkshopProgress> progress,
@@ -236,6 +239,9 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
                 }
                 throw;
             }
+            // The downloads are done and on disk; keep their results even though there is no host list to apply.
+            if (!ReferenceEquals(_client, client) || !client.IsConnected)
+                return new WorkshopMatchResult(items, null, HostLeftNote);
         }
         var plan = await MatchCoreAsync(ct);
         return new WorkshopMatchResult(items, plan);
