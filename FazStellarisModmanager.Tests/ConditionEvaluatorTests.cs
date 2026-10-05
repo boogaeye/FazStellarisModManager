@@ -135,6 +135,8 @@ public class ConditionEvaluatorTests
         Assert.Equal(Truth.Unknown, R("some_unknown_trigger = yes"));
         Assert.Equal(Truth.Unknown, R("has_technology != tech_a"));
         Assert.Equal(Truth.Unknown, R("has_technology = yes"));
+        Assert.Equal(Truth.Unknown, R("has_global_flag = @some_variable"));
+        Assert.Equal(Truth.Unknown, R("has_country_flag = event_target:x"));
     }
 
     [Fact]

@@ -16,12 +16,13 @@ public class SaveFactsTests
         		type="default"
         		victory_rank=1
         		flags={ my_flag=2200.03.04 other_flag=12 }
-        		ethos={ ethic="ethic_militarist" ethic="ethic_fanatic_xenophile" }
+        		ethos={ ethics={ "ethic_militarist" "ethic_fanatic_xenophile" } }
         	}
         	1=
         	{
         		type="default"
         		victory_rank=2
+        		ethos={ ethic="ethic_pacifist" }
         	}
         }
         """;
@@ -34,7 +35,7 @@ public class SaveFactsTests
         Assert.Equal(["my_flag", "other_flag"], c.Flags);
         Assert.Equal(["ethic_militarist", "ethic_fanatic_xenophile"], c.Ethics);
         Assert.Empty(countries.Single(x => x.Id == 1).Flags!);
-        Assert.Empty(countries.Single(x => x.Id == 1).Ethics!);
+        Assert.Equal(["ethic_pacifist"], countries.Single(x => x.Id == 1).Ethics);
     }
 
     [Fact]

@@ -294,7 +294,10 @@ public static class GamestateScanner
 
         var government = b.GetValueOrDefault("government");
         var flags = b.GetValueOrDefault("flags")?.Entries.Select(e => e.Key).Distinct().ToList() ?? [];
-        var ethics = b.GetValueOrDefault("ethos")?.Entries.Where(e => e.Key == "ethic" && e.Value is string).Select(e => (string)e.Value).ToList() ?? [];
+        // ethos = { ethics = { "ethic_x" "ethic_y" } } in saves; ethic = "ethic_x" entries are read as well.
+        var ethos = b.GetValueOrDefault("ethos");
+        var ethics = (ethos?.GetBlock("ethics")?.StringItems ?? [])
+            .Concat(ethos?.Entries.Where(e => e.Key == "ethic" && e.Value is string).Select(e => (string)e.Value) ?? []).Distinct().ToList();
 
         var holdings = new CountryHoldings(
             government?.GetBlock("civics")?.StringItems.ToList() ?? [],

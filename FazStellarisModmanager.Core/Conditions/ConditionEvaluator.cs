@@ -98,7 +98,8 @@ public sealed class ConditionEvaluator(Func<string, PdxBlock?> scriptedTrigger)
         var no = value.Equals("no", StringComparison.OrdinalIgnoreCase);
 
         Truth Flag(bool state) => yes ? Of(state) : no ? Of(!state) : Truth.Unknown;
-        Truth Key(bool state) => yes || no ? Truth.Unknown : Of(state);
+        // A value that is a script variable (@x), a scope reference (event_target:x, root) or a parameter ($X$) can't be judged.
+        Truth Key(bool state) => yes || no || value.StartsWith('@') || value.Contains('$') || value.Contains(':') ? Truth.Unknown : Of(state);
         static bool Is(string? a, string b) => a is not null && a.Equals(b, StringComparison.OrdinalIgnoreCase);
 
         switch (key.ToLowerInvariant())
