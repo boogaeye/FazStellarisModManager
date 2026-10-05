@@ -2,6 +2,7 @@
 @using System.Globalization
 @implements IDisposable
 @inject TechTreeService Tree
+@inject LiveFeed Feed
 
 <div class="tech-page">
     <div class="toolbar">
@@ -84,10 +85,10 @@
                 @foreach (var t in results.Take(MaxRows))
                 {
                     var tech = t;
-                    <div @key="tech.Key" class="tech-row @(tech.Key == selectedKey ? "sel" : "")" @onclick="() => selectedKey = tech.Key">
+                    <div @key="tech.Key" class="tech-row @(tech.Key == selectedKey ? "sel" : "") @(researched.Contains(tech.Key) ? "done" : "")" @onclick="() => selectedKey = tech.Key">
                         <TechIcon Uri="@Tree.IconUri(tech)" Size="24" />
                         <div class="grow">
-                            <div class="name">@tech.Name</div>
+                            <div class="name">@if (researched.Contains(tech.Key)) { <span class="done-mark">✓</span> }@tech.Name</div>
                             <div class="src @(tech.ChangedByMods ? "mod" : "")">T@(TierText(tech)) · @tech.Source.SourceName</div>
                         </div>
                     </div>
@@ -106,7 +107,15 @@
                     </span>
                     @if (wholeTree)
                     {
-                        <span class="small">Drag to pan · wheel to zoom · right-click: researched · Shift+click: route target</span>
+                        <span class="small">Drag to pan · wheel to zoom · Researched techs come from Live Game · Shift+click: route target</span>
+                    }
+                    @if (Feed.Current is { } liveSnap && Feed.ViewerId is not null)
+                    {
+                        <span class="small">Researched: @(researched.Count(k => db.Techs.ContainsKey(k))) techs from Live Game (@liveSnap.Date)</span>
+                    }
+                    else
+                    {
+                        <span class="small">No live game data: open the Live Game tab with a save, or join a session.</span>
                     }
                 </div>
                 @if (researchMessage is not null)
@@ -116,8 +125,8 @@
                 @{ var researchedInTree = researched.Count(k => db.Techs.ContainsKey(k)); }
                 @if (wholeTree || targets.Count > 0 || researchedInTree > 0)
                 {
-                    <RouteBar Database="db" Targets="targets" Route="route" ResearchedCount="researchedInTree"
-                              OnSelect="key => selectedKey = key" OnRemoveTarget="RemoveTarget" OnClearRoute="ClearRoute" OnUnresearchAll="UnresearchAll" />
+                    <RouteBar Database="db" Targets="targets" Route="route"
+                              OnSelect="key => selectedKey = key" OnRemoveTarget="RemoveTarget" OnClearRoute="ClearRoute" />
                 }
                 @if (wholeTree)
                 {
@@ -125,7 +134,7 @@
                     <TechOverviewView Overview="OverviewFor(db)" Database="db" IconUri="Tree.IconUri"
                                       IconVersion="@(Tree.IconsReady.IsCompleted ? -1 : Tree.IconCount / 250)"
                                       SelectedKey="selectedKey" Route="route" Targets="targets" Researched="researched"
-                                      OnSelect="key => selectedKey = key" OnToggleResearched="ToggleResearched" OnToggleTarget="ToggleTarget" />
+                                      OnSelect="key => selectedKey = key" OnToggleTarget="ToggleTarget" />
                 }
                 else if (selectedKey is not null && db.Techs.TryGetValue(selectedKey, out var sel))
                 {
@@ -142,7 +151,7 @@
                         </label>
                     </div>
                     <div class="graph-scroll">
-                        <TechGraphView Graph="TechGraphLayout.Build(db, sel.Key, depth)" Database="db" IconUri="Tree.IconUri" OnSelect="key => selectedKey = key" />
+                        <TechGraphView Graph="TechGraphLayout.Build(db, sel.Key, depth)" Database="db" Researched="researched" IconUri="Tree.IconUri" OnSelect="key => selectedKey = key" />
                     </div>
                 }
                 else
@@ -156,7 +165,7 @@
                 {
                     <TechSidebar Tech="side" Database="db" Tree="Tree" OnSelect="key => selectedKey = key"
                                  Targets="targets" Researched="researched" Route="route"
-                                 OnToggleTarget="ToggleTarget" OnToggleResearched="ToggleResearched" />
+                                 OnToggleTarget="ToggleTarget" />
                 }
                 else
                 {
@@ -208,28 +217,34 @@
         {
             var warnings = new List<string>();
             var state = Tree.Research.Load(tree.Label, warnings);
-            researched = new HashSet<string>(state.Researched, StringComparer.OrdinalIgnoreCase);
             targets = new HashSet<string>(state.Targets, StringComparer.OrdinalIgnoreCase);
             researchMessage = warnings.Count > 0 ? warnings[0] : null;
         }
+        UpdateResearched();
+    }
+
+    // Researched techs come from the live game; the route is rebuilt only when that set changed.
+    void UpdateResearched()
+    {
+        var live = Feed.ResearchedTechs;
+        if (!live.SetEquals(researched)) researched = new HashSet<string>(live, StringComparer.OrdinalIgnoreCase);
         RecomputeRoute();
     }
 
     void RecomputeRoute() =>
         route = targets.Count == 0 || stateFor is null ? ResearchRoute.Empty : ResearchPlan.Build(stateFor.Database, targets, researched);
 
-    // New set instances on every change: the map compares them by reference to decide whether to redraw.
-    void ChangeResearch(Action<HashSet<string>, HashSet<string>> change)
+    // A new set instance on every change: the map compares them by reference to decide whether to redraw.
+    void ChangeTargets(Action<HashSet<string>> change)
     {
-        var r = new HashSet<string>(researched, StringComparer.OrdinalIgnoreCase);
         var t = new HashSet<string>(targets, StringComparer.OrdinalIgnoreCase);
-        change(r, t);
-        (researched, targets) = (r, t);
+        change(t);
+        targets = t;
         RecomputeRoute();
         if (stateFor is null) return;
         try
         {
-            Tree.Research.Save(stateFor.Label, new ResearchState([.. researched], [.. targets]));
+            Tree.Research.Save(stateFor.Label, new ResearchState([], [.. targets]));
             researchMessage = null;
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -238,12 +253,9 @@
         }
     }
 
-    void ToggleResearched(string key) => ChangeResearch((r, _) => { if (!r.Remove(key)) r.Add(key); });
-    void ToggleTarget(string key) => ChangeResearch((_, t) => { if (!t.Remove(key)) t.Add(key); });
-    void RemoveTarget(string key) => ChangeResearch((_, t) => t.Remove(key));
-    void ClearRoute() => ChangeResearch((_, t) => t.Clear());
-    // Only marks of techs in this tree: marks from mods that are currently off are kept (spec: unknown keys survive).
-    void UnresearchAll() => ChangeResearch((r, _) => r.RemoveWhere(k => stateFor?.Database.Techs.ContainsKey(k) ?? true));
+    void ToggleTarget(string key) => ChangeTargets(t => { if (!t.Remove(key)) t.Add(key); });
+    void RemoveTarget(string key) => ChangeTargets(t => t.Remove(key));
+    void ClearRoute() => ChangeTargets(t => t.Clear());
 
     TechFilter Filter => new(
         search,
@@ -256,6 +268,8 @@
     protected override async Task OnInitializedAsync()
     {
         Tree.Changed += OnTreeChanged;
+        Feed.Changed += OnFeedChanged;
+        Feed.Start();
         choices = Tree.Choices();
         if (Tree.Current is { } current)
         {
@@ -268,6 +282,8 @@
             await Build();
         }
     }
+
+    void OnFeedChanged() => _ = InvokeAsync(() => { UpdateResearched(); StateHasChanged(); });
 
     void OnTreeChanged() => _ = InvokeAsync(() =>
     {
@@ -314,6 +330,7 @@
     public void Dispose()
     {
         Tree.Changed -= OnTreeChanged;
+        Feed.Changed -= OnFeedChanged;
         searchCts?.Cancel();
         searchCts?.Dispose();
     }

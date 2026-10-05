@@ -13,12 +13,13 @@
         var (x, y) = pos[n.Key];
         var key = n.Key;
         var icon = IconUri(t);
+        var done = Researched.Contains(n.Key);
         <g class="tnode" @onclick="() => OnSelect.InvokeAsync(key)">
             <title>@t.Name (@t.Key)</title>
             <rect x="@F(x)" y="@F(y - NodeH / 2.0)" width="@NodeW" height="@NodeH" rx="5"
-                  fill="@(n.IsFocus ? "#203247" : "#1a2029")"
-                  stroke="@(n.IsFocus ? "#ffffff" : t.ChangedByMods ? "#e3a33b" : "#2d3744")"
-                  stroke-width="@(n.IsFocus || t.ChangedByMods ? "2" : "1")" />
+                  fill="@(n.IsFocus ? "#203247" : done ? "#18261f" : "#1a2029")"
+                  stroke="@(n.IsFocus ? "#ffffff" : t.ChangedByMods ? "#e3a33b" : done ? "#6fcf97" : "#2d3744")"
+                  stroke-width="@(n.IsFocus || t.ChangedByMods || done ? "2" : "1")" />
             <rect x="@F(x)" y="@F(y - NodeH / 2.0)" width="3" height="@NodeH" fill="@AreaColor(t.Area)" />
             @if (icon is not null)
             {
@@ -26,6 +27,13 @@
             }
             <text x="@F(x + 38)" y="@F(y - 2)" fill="#dbe2ea" font-size="11" font-weight="@(n.IsFocus ? "700" : "400")">@Trim(t.Name, 22)</text>
             <text x="@F(x + 38)" y="@F(y + 12)" fill="@(t.ChangedByMods ? "#e3a33b" : "#8a96a6")" font-size="9">T@(TierText(t)) · @Trim(t.Source.SourceName, 20)</text>
+            @if (done)
+            {
+                <g class="tdone">
+                    <circle cx="@F(x + NodeW - 2)" cy="@F(y - NodeH / 2.0 + 2)" r="8" fill="#6fcf97" stroke="#10151b" stroke-width="1.5" />
+                    <text x="@F(x + NodeW - 2)" y="@F(y - NodeH / 2.0 + 5.5)" text-anchor="middle" fill="#10151b" font-size="10" font-weight="700">✓</text>
+                </g>
+            }
         </g>
     }
     @foreach (var m in Graph.More)
@@ -38,6 +46,7 @@
     [Parameter, EditorRequired] public TechGraph Graph { get; set; } = default!;
     [Parameter, EditorRequired] public TechDatabase Database { get; set; } = default!;
     [Parameter, EditorRequired] public Func<Tech, string?> IconUri { get; set; } = default!;
+    [Parameter] public IReadOnlySet<string> Researched { get; set; } = new HashSet<string>();
     [Parameter] public EventCallback<string> OnSelect { get; set; }
 
     const int ColW = 200, NodeW = 172, NodeH = 40, RowGap = 50, Top = 10;

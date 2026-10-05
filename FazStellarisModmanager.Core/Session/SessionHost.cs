@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Threading.Channels;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Lists;
+using FazStellarisModmanager.Core.Saves;
 using FazStellarisModmanager.Core.Snapshots;
 
 namespace FazStellarisModmanager.Core.Session;
@@ -55,6 +56,8 @@ public sealed class SessionHost : IAsyncDisposable
         public MachineSnapshot? Snapshot { get; set; }
         public DiffResult? Diff { get; set; }
         public DiffSummary? Summary { get; set; }
+        public int? LiveCountry { get; set; }
+        public bool LiveChosen { get; set; }
     }
 
     readonly Lock _gate = new();
@@ -66,6 +69,7 @@ public sealed class SessionHost : IAsyncDisposable
     ModList _hostList;
     MachineSnapshot _hostSnapshot;
     int _pendingHandshakes;
+    GameSnapshot? _live;
     int _disposed;
 
     public SessionHost(string hostName, ModList hostList, MachineSnapshot hostSnapshot)
@@ -148,6 +152,27 @@ public sealed class SessionHost : IAsyncDisposable
         }
         await Task.WhenAll(peers.Select(p => Task.Run(() => Rediff(p))));
         BroadcastRoster();
+    }
+
+    /// <summary>The newest save (or null): every peer gets its own filtered view. Never waits on peers.</summary>
+    public void UpdateLive(GameSnapshot? snapshot)
+    {
+        lock (_gate)
+        {
+            _live = snapshot;
+            if (snapshot is null) return;
+            foreach (var p in _peers.Values) SendLive(p);
+        }
+    }
+
+    // Under _gate. Keeps a valid chosen country, otherwise matches the peer's name with the save's players.
+    void SendLive(Peer p)
+    {
+        if (_live is not { } live) return;
+        if (p.LiveChosen && !live.Players.Any(pl => pl.CountryId == p.LiveCountry)) p.LiveChosen = false;
+        if (!p.LiveChosen)
+            p.LiveCountry = live.Players.FirstOrDefault(pl => string.Equals(pl.Name, p.Name, StringComparison.OrdinalIgnoreCase))?.CountryId;
+        Enqueue(p, new LiveUpdate(LiveFilter.For(live, p.LiveCountry), p.LiveCountry));
     }
 
     /// <summary>Peers are untrusted: trim, turn control characters into spaces and cap the length. Null if nothing is left.</summary>
@@ -240,6 +265,7 @@ public sealed class SessionHost : IAsyncDisposable
                     // Queued in the same lock that publishes the peer, so Welcome is always first and any later
                     // target update (queued under this lock too) comes after it.
                     Enqueue(p, new Welcome(p.Id, _hostList, _hostSnapshot));
+                    SendLive(p);
                     joined = true;
                 }
             }
@@ -272,6 +298,17 @@ public sealed class SessionHost : IAsyncDisposable
                             peer.Activity = CleanText(b.Activity, MaxActivityLength);
                         }
                         break;
+                    case LiveViewAs v:
+                        lock (_gate)
+                        {
+                            if (_live is { } live && live.Players.Any(pl => pl.CountryId == v.CountryId))
+                            {
+                                peer.LiveCountry = v.CountryId;
+                                peer.LiveChosen = true;
+                                SendLive(peer);
+                            }
+                        }
+                        continue;
                     case Bye:
                         return;
                     default:

@@ -54,7 +54,12 @@ public static class AppServices
             });
         });
         services.AddSingleton(new LiveViewerStore(paths.LiveGame));
-        services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>()));
+        services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>(), sp.GetRequiredService<LiveGameService>()));
+        services.AddSingleton(sp => new LiveFeed(
+            sp.GetRequiredService<LiveGameService>(),
+            sp.GetRequiredService<SessionService>(),
+            sp.GetRequiredService<LiveViewerStore>(),
+            () => [sp.GetRequiredService<ModManagerService>().Settings.PlayerName, Environment.UserName]));
         services.AddSingleton(sp => new TechTreeService(sp.GetRequiredService<ModManagerService>()));
         services.AddSingleton(sp => new UpdateService(
             sp.GetRequiredService<ModManagerService>(),

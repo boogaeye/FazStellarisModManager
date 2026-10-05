@@ -27,46 +27,13 @@
         <span>@Route.Steps.Count techs · @Route.TotalCost.ToString("N0", CultureInfo.InvariantCulture) research points@(Route.UnknownCostCount > 0 ? $" + {Route.UnknownCostCount} unknown" : "")</span>
         <button @onclick="() => OnClearRoute.InvokeAsync()">Clear route</button>
     }
-    @if (_confirming)
-    {
-        <span>Unresearch @ResearchedCount techs?</span>
-        <button class="danger" @onclick="Confirm">Yes</button>
-        <button @onclick="() => _confirming = false">No</button>
-    }
-    else if (ResearchedCount > 0)
-    {
-        <button @onclick="Ask">Unresearch all (@ResearchedCount)</button>
-    }
 </div>
 
 @code {
     [Parameter, EditorRequired] public TechDatabase Database { get; set; } = default!;
     [Parameter] public IReadOnlySet<string> Targets { get; set; } = new HashSet<string>();
     [Parameter] public ResearchRoute Route { get; set; } = ResearchRoute.Empty;
-    [Parameter] public int ResearchedCount { get; set; }
     [Parameter] public EventCallback<string> OnSelect { get; set; }
     [Parameter] public EventCallback<string> OnRemoveTarget { get; set; }
     [Parameter] public EventCallback OnClearRoute { get; set; }
-    [Parameter] public EventCallback OnUnresearchAll { get; set; }
-
-    const int ConfirmAbove = 10;
-    bool _confirming;
-
-    protected override void OnParametersSet()
-    {
-        if (ResearchedCount == 0) _confirming = false;
-    }
-
-    Task Ask()
-    {
-        if (ResearchedCount <= ConfirmAbove) return OnUnresearchAll.InvokeAsync();
-        _confirming = true;
-        return Task.CompletedTask;
-    }
-
-    Task Confirm()
-    {
-        _confirming = false;
-        return OnUnresearchAll.InvokeAsync();
-    }
 }
