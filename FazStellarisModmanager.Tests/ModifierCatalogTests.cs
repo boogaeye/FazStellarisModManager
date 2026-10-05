@@ -53,4 +53,49 @@ public class ModifierCatalogTests
         Assert.Equal(0.25, c.Get(DiploSource.Edict, "diplomatic_grants")!.Overall, 6);
         Assert.Null(c.Get(DiploSource.Edict, "other"));
     }
+
+    [Fact]
+    public void Static_modifier_references_count_times_their_value()
+    {
+        using var t = new TempDir();
+        t.Write("game/common/static_modifiers/00_s.txt", "res_naval_weight = { diplo_weight_naval_mult = 0.25 }");
+        t.Write("game/common/resolutions/00_r.txt", "res_a = { modifier = { res_naval_weight = 4 } }");
+        using var game = ContentSource.FromPath("game", Path.Combine(t.Path, "game"), isBaseGame: true);
+        var c = ModifierCatalog.Load([game]);
+        Assert.Equal(1.0, c.Get(DiploSource.Resolution, "res_a")!.Naval, 6);
+    }
+
+    [Fact]
+    public void Inline_scripts_are_expanded_in_both_forms()
+    {
+        using var t = new TempDir();
+        t.Write("game/common/policies/00_p.txt", """
+            diplomatic_stance = { inline_script = "x/stances" }
+            other = { inline_script = { script = x/param_stance NAME = stance_b VALUE = 0.3 } }
+            """);
+        t.Write("game/common/inline_scripts/x/stances.txt", "option = { name = \"stance_a\" modifier = { diplo_weight_mult = 0.5 } }");
+        t.Write("game/common/inline_scripts/x/param_stance.txt", "option = { name = \"$NAME$\" modifier = { diplo_weight_mult = $VALUE$ } }");
+        using var game = ContentSource.FromPath("game", Path.Combine(t.Path, "game"), isBaseGame: true);
+        var c = ModifierCatalog.Load([game]);
+        Assert.Equal(0.5, c.Get(DiploSource.Policy, "stance_a")!.Overall, 6);
+        Assert.Equal(0.3, c.Get(DiploSource.Policy, "stance_b")!.Overall, 6);
+    }
+
+    [Fact]
+    public void Relic_triggered_country_modifier_counts_and_potential_is_ignored()
+    {
+        using var t = new TempDir();
+        t.Write("game/common/relics/00_r.txt", "r_x = { triggered_country_modifier = { potential = { diplo_weight_mult = 9 } diplo_weight_mult = 0.1 } }");
+        using var game = ContentSource.FromPath("game", Path.Combine(t.Path, "game"), isBaseGame: true);
+        Assert.Equal(0.1, ModifierCatalog.Load([game]).Get(DiploSource.Relic, "r_x")!.Overall, 6);
+    }
+
+    [Fact]
+    public void Council_weight_is_read()
+    {
+        using var t = new TempDir();
+        t.Write("game/common/static_modifiers/00_s.txt", "council_member = { diplo_weight_council_mult = 0.2 }");
+        using var game = ContentSource.FromPath("game", Path.Combine(t.Path, "game"), isBaseGame: true);
+        Assert.Equal(0.2, ModifierCatalog.Load([game]).Get(DiploSource.StaticModifier, "council_member")!.Council, 6);
+    }
 }

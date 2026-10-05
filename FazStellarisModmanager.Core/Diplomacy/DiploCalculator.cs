@@ -61,15 +61,16 @@ public static class DiploCalculator
             if (gc.Council.Contains(c.Id)) Add(DiploSource.StaticModifier, "council_member");
         }
 
+        var onCouncil = snapshot.Community is { } council && council.Council.Contains(c.Id);
         List<DiploBonus> Pick(Func<DiploMods, double> part) =>
             lines.Where(l => part(l.Mods) != 0).Select(l => new DiploBonus(l.Name, part(l.Mods))).ToList();
 
         return new DiploBreakdown(
             new DiploPart(c.MilitaryPower, defines.Naval, Pick(m => m.Naval)),
-            new DiploPart(c.Pops, defines.PopBase + defines.PopHappiness * 0.5, Pick(m => m.Pops)),
+            new DiploPart(c.Pops, defines.PopBase * (1 + defines.PopHappiness * 0.5), Pick(m => m.Pops)),
             new DiploPart(c.EconomyPower, defines.Economy, Pick(m => m.Economy)),
             new DiploPart(c.TechPower, defines.Technology, Pick(m => m.Tech)),
-            Pick(m => m.Overall),
+            Pick(m => m.Overall + (onCouncil ? m.Council : 0)),
             Approximate: true);
     }
 }

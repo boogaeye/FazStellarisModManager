@@ -39,7 +39,7 @@ public class DiploCalculatorTests
             .Add(DiploSource.Civic, "civic_galactic_sovereign", O(0.40))
             .Add(DiploSource.Tech, "tech_xeno_diplomacy", O(0.10))
             .Add(DiploSource.Megastructure, "interstellar_assembly_4", O(0.40))
-            .Add(DiploSource.StaticModifier, "council_member", O(0.20))
+            .Add(DiploSource.StaticModifier, "council_member", new DiploMods(0, 0, 0, 0, 0, 0.20))
             .Add(DiploSource.Relic, "r_ancient_sword", O(0.10))
             .Add(DiploSource.Relic, "r_other", O(0.05));
         var holdings = CountryHoldings.Empty with
@@ -77,7 +77,7 @@ public class DiploCalculatorTests
     {
         var catalog = new FakeCatalog()
             .Add(DiploSource.Resolution, "res_a", O(0.5))
-            .Add(DiploSource.StaticModifier, "council_member", O(0.2))
+            .Add(DiploSource.StaticModifier, "council_member", new DiploMods(0, 0, 0, 0, 0, 0.2))
             .Add(DiploSource.Civic, "civic_bad", new DiploMods(0, -3, 0, 0, 0));
         var me = Me(CountryHoldings.Empty with { Civics = ["civic_bad"] });
         var outsider = new GalacticCommunity([5], [5], ["res_a"]);
