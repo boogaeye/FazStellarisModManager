@@ -1,4 +1,6 @@
 @using System.Globalization
+@using FazStellarisModmanager.Core.Conditions
+@using FazStellarisModmanager.Core.Descriptors
 @implements IDisposable
 
 <div class="tech-sidebar-card">
@@ -215,7 +217,28 @@
     <details>
         <summary>Conditions</summary>
         <h4>Available when</h4>
-        @if (Details.PotentialScript is null) { <p class="muted small">Always.</p> } else { <ScriptView Text="@Details.PotentialScript" /> }
+        @if (Details.PotentialScript is null)
+        {
+            <p class="muted small">Always.</p>
+        }
+        else if (Facts is not null && _condition is { } cond)
+        {
+            <div @key="@($"{Tech.Key}|{_factsVersion}")">
+                <div class="cv-head">
+                    Available to you:
+                    <span class="@ConditionView.MarkClass(cond.Result)">@ConditionView.MarkChar(cond.Result)</span>
+                    <b>@(cond.Result switch { Truth.True => "yes", Truth.False => "no", _ => "unknown" })</b>
+                </div>
+                <ConditionView Root="cond" />
+            </div>
+            <label class="inline small"><input type="checkbox" @bind="_showScript" /> show script</label>
+            @if (_showScript) { <ScriptView Text="@Details.PotentialScript" /> }
+        }
+        else
+        {
+            <ScriptView Text="@Details.PotentialScript" />
+            <p class="muted small">Live game data needed for ✓/✗ marks.</p>
+        }
         <h4>Prerequisites</h4>
         @if (Tech.Prerequisites.Count == 0) { <p class="muted small">None.</p> }
         @foreach (var p in Tech.Prerequisites)
@@ -247,6 +270,8 @@
     [Parameter] public IReadOnlySet<string> Researched { get; set; } = new HashSet<string>();
     [Parameter] public ResearchRoute Route { get; set; } = ResearchRoute.Empty;
     [Parameter] public EventCallback<string> OnToggleTarget { get; set; }
+    /// <summary>The viewer's empire from the live game; null shows the script without ✓/✗ marks.</summary>
+    [Parameter] public EmpireFacts? Facts { get; set; }
 
     // A longer route starts collapsed so the rest of the sidebar stays in view.
     const int MaxOpenRoute = 30;
@@ -270,8 +295,28 @@
     TechDatabase? _shownDatabase;
     volatile bool _disposed;
 
+    ConditionNode? _condition;
+    bool _showScript;
+    int _factsVersion;
+    EmpireFacts? _evaluatedFacts;
+    string? _evaluatedTech;
+    TechDatabase? _evaluatedDatabase;
+
+    // Re-evaluated when the tech, the facts or the tree change; the version re-keys the view so the marks animate in again.
+    void EvaluateCondition()
+    {
+        if (ReferenceEquals(_evaluatedFacts, Facts) && _evaluatedTech == Tech.Key && ReferenceEquals(_evaluatedDatabase, Database)) return;
+        (_evaluatedFacts, _evaluatedTech, _evaluatedDatabase) = (Facts, Tech.Key, Database);
+        _factsVersion++;
+        _condition = Facts is not null && Details.PotentialScript is { } script
+            ? new ConditionEvaluator(n => Database.ScriptedTriggers.TryGetValue(n, out var body) ? body : null)
+                .Evaluate(ParadoxScriptParser.Parse(script), Facts)
+            : null;
+    }
+
     protected override void OnParametersSet()
     {
+        EvaluateCondition();
         // A newly selected tech starts on its first variant.
         if (_shownTech != Tech.Key)
         {

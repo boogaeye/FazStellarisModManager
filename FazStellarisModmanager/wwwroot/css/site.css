@@ -314,3 +314,30 @@ table.ctable .why { color: var(--muted); }
 .lrow.moved-down .pos::after { content: " ▼"; color: #ff8a80; font-size: .65rem; }
 @keyframes lglowup { 0% { box-shadow: 0 0 0 2px #6fcf97; } 100% { box-shadow: 0 0 0 0 transparent; } }
 @keyframes lglowdown { 0% { box-shadow: 0 0 0 2px #ff8a80; } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* Tech conditions: live ✓ / ✗ / ? marks */
+.cv { font-family: Consolas, monospace; font-size: .76rem; background: #0b0e13; border: 1px solid var(--border); border-radius: 5px; padding: .4rem .55rem; margin: .25rem 0; overflow-x: auto; }
+.cv-line { white-space: pre; display: flex; align-items: baseline; gap: .35rem; animation: cv-in .3s ease-out both; animation-delay: var(--d, 0ms); }
+.cv-text { white-space: pre; }
+.cv-head { display: flex; align-items: center; gap: .4rem; margin: .2rem 0; }
+.cv-mark { display: inline-block; width: 1.1em; text-align: center; font-weight: 700; flex: none; transform-origin: 50% 50%; }
+.cv-true { color: #6fcf97; animation: cv-pop .45s ease-out both; animation-delay: calc(var(--d, 0ms) + 120ms); }
+.cv-false { color: #ff8a80; animation: cv-shake-x .5s ease-in-out 1 both; animation-delay: calc(var(--d, 0ms) + 120ms); }
+.cv-unknown { color: #9fb3c8; transform-origin: 50% 80%; animation: cv-wonder 2.4s ease-in-out infinite both; animation-delay: calc(var(--d, 0ms) + 120ms); }
+.cv-head .cv-mark { --d: 0ms; }
+@keyframes cv-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+@keyframes cv-pop { 0% { transform: scale(0); } 60% { transform: scale(1.25); } 100% { transform: scale(1); } }
+@keyframes cv-shake-x { 0%, 100% { transform: translateX(0); } 12% { transform: translateX(-3px); } 37% { transform: translateX(3px); } 62% { transform: translateX(-3px); } 87% { transform: translateX(3px); } }
+@keyframes cv-wonder {
+    0% { transform: rotate(0deg) translateX(0) scale(1); }
+    10% { transform: rotate(-14deg) translateX(-2px) scale(1.1); }
+    20% { transform: rotate(14deg) translateX(2px) scale(1); }
+    30% { transform: rotate(-12deg) translateX(-2px) scale(1.1); }
+    40% { transform: rotate(12deg) translateX(2px) scale(1); }
+    50% { transform: rotate(-8deg) translateX(-1px) scale(1.08); }
+    60% { transform: rotate(0deg) translateX(0) scale(1); }
+    100% { transform: rotate(0deg) translateX(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .cv-line, .cv-true, .cv-false, .cv-unknown { animation: none; }
+}
