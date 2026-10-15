@@ -37,6 +37,38 @@ public class AppSettingsTests
     }
 
     [Fact]
+    public void Old_settings_without_session_fields_load_with_defaults()
+    {
+        using var tmp = new TempDir();
+        var file = tmp.Write("settings.json", """{ "GameDir": null, "UserDir": null, "PlayerName": "Faz", "CheckForUpdates": false }""");
+
+        var s = SettingsStore.Load(file);
+
+        Assert.Equal("Faz", s.PlayerName);
+        Assert.False(s.CheckForUpdates);
+        Assert.Null(s.RecentHosts);
+        Assert.Null(s.HostPort);
+        Assert.False(s.StreamLiveGame);
+        Assert.True(s.StreamTechnology);
+    }
+
+    [Fact]
+    public void Session_fields_round_trip()
+    {
+        using var tmp = new TempDir();
+        var file = Path.Combine(tmp.Path, "settings.json");
+        var s = new AppSettings(RecentHosts: ["1.2.3.4:27015", "friend:5000"], HostPort: 5000, StreamLiveGame: true, StreamTechnology: false);
+
+        SettingsStore.Save(file, s);
+        var back = SettingsStore.Load(file);
+
+        Assert.Equal(["1.2.3.4:27015", "friend:5000"], back.RecentHosts);
+        Assert.Equal(5000, back.HostPort);
+        Assert.True(back.StreamLiveGame);
+        Assert.False(back.StreamTechnology);
+    }
+
+    [Fact]
     public void Corrupt_settings_fall_back_to_defaults()
     {
         using var tmp = new TempDir();

@@ -106,6 +106,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             host.UpdateLive(live.Current);
         }
         _lastDisconnectReason = null;
+        SaveSettings(s => s with { HostPort = port });
         return true;
     }, ct);
 
@@ -151,6 +152,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             RecomputeDiff();
             client.Start();
             await client.SendSnapshotAsync(snapshot, ct);
+            SaveSettings(s => s with { RecentHosts = RecentHosts.Add(s.RecentHosts, SessionProtocol.FormatAddress(address, port)) });
             return true;
         }
         catch
@@ -303,6 +305,20 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         _hostLive = null;
         _hostLiveReceivedUtc = null;
         RaiseChanged();
+    }
+
+    /// <summary>Removes a remembered join address (the "✕" on a recent chip).</summary>
+    public void ForgetRecentHost(string address)
+    {
+        SaveSettings(s => s with { RecentHosts = RecentHosts.Remove(s.RecentHosts, address) });
+        RaiseChanged();
+    }
+
+    // Remembered inputs are a convenience: failing to write them must never fail the session.
+    void SaveSettings(Func<AppSettings, AppSettings> change)
+    {
+        try { manager.UpdateSettings(change(manager.Settings)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* only remembered inputs */ }
     }
 
     void PushLive()

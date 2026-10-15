@@ -26,6 +26,9 @@ public class SessionServiceTests
             Session = new SessionService(new ModManagerService(paths, _ => Fake.GameDir) { IsLauncherRunning = () => false }, workshop?.Invoke(Fake));
         }
 
+        /// <summary>The settings file as saved on disk.</summary>
+        public AppSettings SavedSettings => SettingsStore.Load(new AppPaths(Fake.DataDir).Settings);
+
         public async ValueTask DisposeAsync()
         {
             await Session.DisposeAsync();
@@ -195,8 +198,43 @@ public class SessionServiceTests
 
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => join.WaitAsync(TimeSpan.FromSeconds(5)));
             Assert.Equal(SessionRole.None, client.Session.Role);
+            Assert.Null(client.SavedSettings.RecentHosts); // a join that never finished is not remembered
         }
         finally { listener.Stop(); }
+    }
+
+    [Fact]
+    public async Task Joining_remembers_the_address_and_forgetting_removes_it()
+    {
+        await using var host = new Rig("Hosty", "[]");
+        await using var client = new Rig("Cli", "[]");
+        await host.Session.HostAsync(0);
+        var address = $"127.0.0.1:{host.Session.HostPort!.Value}";
+
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+
+        Assert.Equal([address], client.SavedSettings.RecentHosts);
+        Assert.Equal("Cli", client.SavedSettings.PlayerName); // the other settings are kept
+
+        await client.Session.LeaveAsync();
+        client.Session.ForgetRecentHost(address);
+
+        Assert.Empty(client.SavedSettings.RecentHosts!);
+    }
+
+    [Fact]
+    public async Task Hosting_remembers_the_port()
+    {
+        await using var host = new Rig("Hosty", "[]");
+        var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+
+        await host.Session.HostAsync(port);
+
+        Assert.Equal(port, host.SavedSettings.HostPort);
+        Assert.Equal("Hosty", host.SavedSettings.PlayerName);
     }
 
     [Theory]

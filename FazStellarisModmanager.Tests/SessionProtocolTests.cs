@@ -17,6 +17,16 @@ public class SessionProtocolTests
         Assert.Equal((host, port), SessionProtocol.ParseAddress(input));
 
     [Theory]
+    [InlineData("1.2.3.4", 27015, "1.2.3.4:27015")]
+    [InlineData(" myhost ", 5000, "myhost:5000")]
+    [InlineData("::1", 5000, "[::1]:5000")]
+    public void Formats_addresses_that_parse_back(string host, int port, string expected)
+    {
+        Assert.Equal(expected, SessionProtocol.FormatAddress(host, port));
+        Assert.Equal((host.Trim(), port), SessionProtocol.ParseAddress(expected));
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("   ")]
     [InlineData(":80")]

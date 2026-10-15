@@ -3,8 +3,13 @@ using FazStellarisModmanager.Core.IO;
 
 namespace FazStellarisModmanager.Core;
 
-/// <summary>User overrides. Null means auto-detect (game dir, user dir) or machine name (player name). CheckForUpdates defaults to on.</summary>
-public sealed record AppSettings(string? GameDir = null, string? UserDir = null, string? PlayerName = null, bool CheckForUpdates = true);
+/// <summary>
+/// User overrides. Null means auto-detect (game dir, user dir) or machine name (player name). CheckForUpdates defaults to on.
+/// The Session tab remembers its inputs here: recent join addresses (newest first, see <see cref="Session.RecentHosts"/>),
+/// the last host port, and what the host streams to players.
+/// </summary>
+public sealed record AppSettings(string? GameDir = null, string? UserDir = null, string? PlayerName = null, bool CheckForUpdates = true,
+    IReadOnlyList<string>? RecentHosts = null, int? HostPort = null, bool StreamLiveGame = false, bool StreamTechnology = true);
 
 public static class SettingsStore
 {

@@ -52,6 +52,13 @@ public static class SessionProtocol
         return (host, port);
     }
 
+    /// <summary>"host:port", or "[ipv6]:port" for an IPv6 address, so <see cref="ParseAddress"/> reads it back.</summary>
+    public static string FormatAddress(string host, int port)
+    {
+        var h = host.Trim();
+        return h.Contains(':') ? $"[{h}]:{port}" : $"{h}:{port}";
+    }
+
     /// <summary>Mismatch beats Unreliable: a known difference is real even if the scan had warnings.</summary>
     public static PlayerStatus StatusFor(DiffResult d) =>
         !d.IsMatch ? PlayerStatus.Mismatch : !d.IsReliable ? PlayerStatus.Unreliable : PlayerStatus.Ready;
