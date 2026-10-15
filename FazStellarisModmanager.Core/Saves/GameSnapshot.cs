@@ -85,7 +85,10 @@ public sealed record SaveCountry(
     IReadOnlyList<string>? Flags = null,
     IReadOnlyList<string>? Ethics = null);
 
-/// <summary>What the Live Game tab knows about one save.</summary>
+/// <summary>
+/// What the Live Game tab knows about one save. TechOnly snapshots (<see cref="SaveReader.ReadTechs"/>,
+/// <see cref="LiveFilter.TechOnly"/>) hold the players and their countries' techs only: no scores, names or flags.
+/// </summary>
 public sealed record GameSnapshot(
     string SaveName,
     string Date,
@@ -99,7 +102,8 @@ public sealed record GameSnapshot(
     IReadOnlyDictionary<int, FazStellarisModmanager.Core.Diplomacy.DiploBreakdown>? Diplo = null,
     IReadOnlyList<string>? GlobalFlags = null,
     IReadOnlyList<string>? Dlcs = null,
-    GalaxySettings? Galaxy = null);
+    GalaxySettings? Galaxy = null,
+    bool TechOnly = false);
 
 /// <summary>Galaxy setup values from the save's top-level galaxy block: when the mid and end game start, in years after the game start.</summary>
 public sealed record GalaxySettings(int? MidGameStart, int? EndGameStart, int? VictoryYear);

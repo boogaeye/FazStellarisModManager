@@ -11,6 +11,33 @@ public static class SaveReader
     /// <exception cref="IOException">The file can't be read (for example still being written).</exception>
     public static GameSnapshot Read(string path)
     {
+        var (meta, data) = Open(path);
+        var (players, countries, community, megastructures, globalFlags) = GamestateScanner.ScanWithGlobals(data, out var galaxy);
+        return FromMeta(path, meta, players, countries) with
+        {
+            Community = community,
+            Megastructures = megastructures,
+            GlobalFlags = globalFlags,
+            Galaxy = galaxy,
+        };
+    }
+
+    /// <summary>
+    /// Like <see cref="Read"/>, but only the players and their countries' techs (<see cref="GamestateScanner.ScanTechs"/>),
+    /// which is much faster on a large save. The snapshot is <see cref="GameSnapshot.TechOnly"/>, with no community,
+    /// megastructures, global flags or galaxy settings.
+    /// </summary>
+    /// <exception cref="InvalidDataException">Not a zip, or missing meta/gamestate.</exception>
+    /// <exception cref="IOException">The file can't be read (for example still being written).</exception>
+    public static GameSnapshot ReadTechs(string path)
+    {
+        var (meta, data) = Open(path);
+        var (players, countries) = GamestateScanner.ScanTechs(data);
+        return FromMeta(path, meta, players, countries) with { TechOnly = true };
+    }
+
+    static (PdxBlock Meta, byte[] Gamestate) Open(string path)
+    {
         using var zip = ZipFile.OpenRead(path);
         var metaEntry = zip.GetEntry("meta") ?? throw new InvalidDataException("Not a Stellaris save (no meta).");
         var stateEntry = zip.GetEntry("gamestate") ?? throw new InvalidDataException("Not a Stellaris save (no gamestate).");
@@ -22,20 +49,16 @@ public static class SaveReader
 
         var data = new byte[stateEntry.Length];
         using (var stream = stateEntry.Open()) stream.ReadExactly(data);
-        var (players, countries, community, megastructures, globalFlags) = GamestateScanner.ScanWithGlobals(data, out var galaxy);
-
-        return new GameSnapshot(
-            meta.GetString("name") ?? Path.GetFileNameWithoutExtension(path),
-            meta.GetString("date") ?? "",
-            meta.GetString("version") ?? "",
-            path,
-            File.GetLastWriteTimeUtc(path),
-            players,
-            countries,
-            community,
-            megastructures,
-            GlobalFlags: globalFlags,
-            Dlcs: meta.GetBlock("required_dlcs")?.StringItems.ToList() ?? [],
-            Galaxy: galaxy);
+        return (meta, data);
     }
+
+    static GameSnapshot FromMeta(string path, PdxBlock meta, List<SavePlayer> players, List<SaveCountry> countries) => new(
+        meta.GetString("name") ?? Path.GetFileNameWithoutExtension(path),
+        meta.GetString("date") ?? "",
+        meta.GetString("version") ?? "",
+        path,
+        File.GetLastWriteTimeUtc(path),
+        players,
+        countries,
+        Dlcs: meta.GetBlock("required_dlcs")?.StringItems.ToList() ?? []);
 }

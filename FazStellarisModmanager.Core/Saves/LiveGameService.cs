@@ -1,8 +1,9 @@
 namespace FazStellarisModmanager.Core.Saves;
 
 /// <summary>
-/// Watches the save games folder and keeps <see cref="Current"/> as the newest readable save. Reads run on the thread
-/// pool, one at a time; <c>enrich</c> (optional) runs on that same thread after each read. A failed read keeps the previous snapshot and is not retried until the file changes.
+/// Watches the save games folder and keeps <see cref="Current"/> as the newest readable save. Reads run one at a time on
+/// a dedicated background thread at below-normal priority, so a running game keeps priority over the app; <c>enrich</c>
+/// (optional) runs on that same thread after each read. A failed read keeps the previous snapshot and is not retried until the file changes.
 /// <see cref="Changed"/> fires on any thread.
 /// </summary>
 public sealed class LiveGameService(Func<string?> saveGamesDir, Func<string, GameSnapshot>? read = null, TimeSpan? stableDelay = null, Func<GameSnapshot, GameSnapshot>? enrich = null) : IDisposable
@@ -78,7 +79,7 @@ public sealed class LiveGameService(Func<string?> saveGamesDir, Func<string, Gam
             try
             {
                 string? enrichError = null;
-                Current = await Task.Run(() =>
+                Current = await RunLowPriority(() =>
                 {
                     var snap = _read(newest.FullName);
                     if (enrich is null) return snap;
@@ -110,6 +111,25 @@ public sealed class LiveGameService(Func<string?> saveGamesDir, Func<string, Gam
             _gate.Release();
             Changed?.Invoke();
         }
+    }
+
+    // Like Task.Run, but on a new background thread at below-normal priority. Exceptions reach the awaiting code as they
+    // would from Task.Run; continuations run on the thread pool, not on the read thread.
+    static Task<T> RunLowPriority<T>(Func<T> work)
+    {
+        var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try { done.SetResult(work()); }
+            catch (Exception ex) { done.SetException(ex); }
+        })
+        {
+            IsBackground = true,
+            Priority = ThreadPriority.BelowNormal,
+            Name = "Save read",
+        };
+        thread.Start();
+        return done.Task;
     }
 
     // A save is written in one go; wait until its size stops changing (up to a minute).

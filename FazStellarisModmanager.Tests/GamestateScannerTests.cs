@@ -142,6 +142,106 @@ public class GamestateScannerTests
         Assert.Empty(Scan("country={ 0={ name={ key=\"x\" ").Countries.Where(c => c.VictoryRank > 0));
     }
 
+    const string TechPlayers = """
+        player=
+        {
+        	{ name="Alice" country=0 }
+        	{ name="Bob" country=2 }
+        }
+        """;
+
+    const string TechCountries = """
+        country=
+        {
+        	0=
+        	{
+        		name={ key="Alice Empire" }
+        		flag={ colors={ "red" } }
+        		tech_status=
+        		{
+        			technology="tech_a" level=1
+        			technology="tech_b" level=1
+        			technology="tech_a" level=2
+        			potential={ tech_x="1" }
+        			physics_queue={ { progress=5 technology="tech_q" } }
+        		}
+        		victory_rank=1
+        		military_power=500
+        		type="default"
+        		relations_manager={ relation={ owner=0 country=2 contact=yes } }
+        		flags={ some_flag=1 }
+        	}
+        	1=
+        	{
+        		name={ key="AI } with a brace" } # a comment with { a brace
+        		tech_status={ technology="tech_ai" level=1 }
+        		type="default"
+        	}
+        	2=
+        	{
+        		type="fallen_empire"
+        		budget={ current_month={ income={ x={ energy=5 } } } }
+        		tech_status={ technology="tech_c" level=1 }
+        	}
+        	3=none
+        }
+        """;
+
+    [Fact]
+    public void ScanTechs_reads_player_countries_only_with_the_same_techs_as_a_full_scan()
+    {
+        var text = TechPlayers + (char)10 + TechCountries;
+        var data = Encoding.UTF8.GetBytes(text);
+
+        var (players, countries) = GamestateScanner.ScanTechs(data);
+
+        Assert.Equal([new SavePlayer("Alice", 0), new SavePlayer("Bob", 2)], players);
+        Assert.Equal([0, 2], countries.Select(c => c.Id));
+        var full = GamestateScanner.ScanWithGlobals(data).Countries;
+        foreach (var c in countries) Assert.Equal(full.Single(f => f.Id == c.Id).Techs, c.Techs);
+        Assert.Equal(["tech_a", "tech_b"], countries[0].Techs);
+        Assert.Equal(["default", "fallen_empire"], countries.Select(c => c.Type));
+    }
+
+    [Fact]
+    public void ScanTechs_leaves_everything_but_type_and_techs_empty()
+    {
+        var c = GamestateScanner.ScanTechs(Encoding.UTF8.GetBytes(TechPlayers + (char)10 + TechCountries)).Countries[0];
+
+        Assert.Null(c.NameKey);
+        Assert.Empty(c.NameVariables);
+        Assert.Null(c.Adjective);
+        Assert.Null(c.Flag);
+        Assert.Equal(0, c.VictoryRank);
+        Assert.Equal(0, c.MilitaryPower);
+        Assert.Null(c.CachedDiploWeight);
+        Assert.Empty(c.ContactedIds);
+        Assert.Null(c.Holdings);
+        Assert.Null(c.Roster);
+        Assert.Null(c.Flags);
+        Assert.Null(c.Ethics);
+    }
+
+    [Fact]
+    public void ScanTechs_handles_a_player_block_after_the_countries()
+    {
+        var (players, countries) = GamestateScanner.ScanTechs(Encoding.UTF8.GetBytes(TechCountries + (char)10 + TechPlayers));
+
+        Assert.Equal(2, players.Count);
+        Assert.Equal([0, 2], countries.Select(c => c.Id));
+        Assert.Equal(["tech_c"], countries[1].Techs);
+    }
+
+    [Fact]
+    public void ScanTechs_without_players_or_with_broken_input_gives_no_countries()
+    {
+        Assert.Empty(GamestateScanner.ScanTechs(Encoding.UTF8.GetBytes(TechCountries)).Countries);
+        Assert.Empty(GamestateScanner.ScanTechs([]).Players);
+        var broken = TechPlayers + (char)10 + "country={ 0={ type=" + '"' + "default" + '"' + " tech_status={ technology=" + '"' + "tech_a";
+        var (_, countries) = GamestateScanner.ScanTechs(Encoding.UTF8.GetBytes(broken));
+        Assert.Equal([0], countries.Select(c => c.Id));
+    }
+
     sealed class FlagComparer : IEqualityComparer<CountryFlag?>
     {
         public bool Equals(CountryFlag? a, CountryFlag? b) =>

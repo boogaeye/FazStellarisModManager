@@ -43,6 +43,39 @@ public class LiveGameServiceTests
     }
 
     [Fact]
+    public async Task Read_and_enrich_run_on_a_below_normal_priority_background_thread()
+    {
+        using var t = new TempDir();
+        t.Write("g/1.sav", "x");
+        static (ThreadPriority Priority, bool Background, bool Pool, int Id) Here() =>
+            (Thread.CurrentThread.Priority, Thread.CurrentThread.IsBackground, Thread.CurrentThread.IsThreadPoolThread, Environment.CurrentManagedThreadId);
+        (ThreadPriority Priority, bool Background, bool Pool, int Id)? readOn = null, enrichOn = null;
+        using var live = new LiveGameService(() => t.Path, p => { readOn = Here(); return Snap(p); }, TimeSpan.Zero, s => { enrichOn = Here(); return s; });
+
+        await live.RefreshAsync();
+
+        Assert.NotNull(live.Current);
+        Assert.Equal(ThreadPriority.BelowNormal, readOn!.Value.Priority);
+        Assert.True(readOn.Value.Background);
+        Assert.False(readOn.Value.Pool);
+        Assert.Equal(readOn, enrichOn);
+    }
+
+    [Fact]
+    public async Task A_read_that_cannot_open_the_file_sets_the_error()
+    {
+        using var t = new TempDir();
+        t.Write("g/1.sav", "x");
+        using var live = new LiveGameService(() => t.Path, _ => throw new IOException("in use"), TimeSpan.Zero);
+
+        await live.RefreshAsync();
+
+        Assert.Null(live.Current);
+        Assert.Contains("in use", live.Error);
+        Assert.False(live.Reading);
+    }
+
+    [Fact]
     public async Task No_folder_or_no_save_sets_status()
     {
         using var t = new TempDir();
