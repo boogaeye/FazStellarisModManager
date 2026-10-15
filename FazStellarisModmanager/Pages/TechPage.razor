@@ -297,11 +297,13 @@
         source.Length == 0 ? null : source,
         rare, dangerous, repeatable, starting, changed);
 
+    IDisposable? liveLease; // keeps this PC's saves read while the page is open
+
     protected override async Task OnInitializedAsync()
     {
         Tree.Changed += OnTreeChanged;
         Feed.Changed += OnFeedChanged;
-        Feed.Start();
+        liveLease = Feed.Acquire();
         choices = Tree.Choices();
         if (Tree.Current is { } current)
         {
@@ -363,6 +365,7 @@
     {
         Tree.Changed -= OnTreeChanged;
         Feed.Changed -= OnFeedChanged;
+        liveLease?.Dispose();
         searchCts?.Cancel();
         searchCts?.Dispose();
     }

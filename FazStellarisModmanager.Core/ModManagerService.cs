@@ -42,6 +42,13 @@ public sealed class ModManagerService
         return new ResolvedPaths(user, game, game is null ? null : GameLocator.WorkshopDirFor(game));
     }
 
+    /// <summary>The user folder's "save games" folder, or null when the paths can't be resolved.</summary>
+    public string? SaveGamesDir()
+    {
+        try { return Path.Combine(Resolve().UserDir, "save games"); }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException) { return null; }
+    }
+
     public void UpdateSettings(AppSettings settings)
     {
         lock (_gate)

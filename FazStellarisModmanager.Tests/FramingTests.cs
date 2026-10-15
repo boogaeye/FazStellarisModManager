@@ -40,6 +40,18 @@ public class FramingTests
         var p = Assert.Single(roster.Players);
         Assert.Equal(("Alice", PlayerStatus.Mismatch, 2), (p.Name, p.Status, p.Summary!.Missing));
         Assert.IsType<Bye>(await RoundTrip(new Bye(null)));
+        Assert.Equal(new StreamingState(false, true), await RoundTrip(new StreamingState(false, true)));
+    }
+
+    [Fact]
+    public async Task Measured_encoding_reads_back_and_reports_the_json_size()
+    {
+        SessionMessage message = new Bye("Host closed the session.");
+
+        var (frame, jsonBytes) = Framing.EncodeMeasured(message);
+
+        Assert.Equal(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(message, Framing.Json).Length, jsonBytes);
+        Assert.Equal(message, await Framing.ReadAsync(new MemoryStream(frame)));
     }
 
     [Fact]

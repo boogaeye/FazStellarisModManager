@@ -56,7 +56,8 @@ public sealed class LiveFeed : IDisposable
             ? me.Techs.ToHashSet(StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    public void Start() => _local.Start();
+    /// <summary>Keeps this PC's saves read while the lease is held (see <see cref="LiveGameService.Acquire"/>); pages hold one while open.</summary>
+    public IDisposable Acquire() => _local.Acquire();
 
     /// <summary>Local: remembered for this save. Host: sent to the host, which replies with a new view.</summary>
     public async Task SetViewerAsync(int? countryId)

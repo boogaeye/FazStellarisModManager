@@ -69,6 +69,102 @@ public class LiveFilterTests
         Assert.Equal(1, Assert.IsType<LiveViewAs>(await Framing.ReadAsync(stream)).CountryId);
     }
 
+    static GameSnapshot Rich()
+    {
+        var bd = new FazStellarisModmanager.Core.Diplomacy.DiploBreakdown(new(0, 0, []), new(0, 0, []), new(0, 0, []), new(0, 0, []), [], false);
+        return S() with
+        {
+            Countries = S().Countries.Select(c => c with
+            {
+                Holdings = CountryHoldings.Empty with { Origin = "o" },
+                Roster = CountryRoster.Empty,
+                Flags = ["f"],
+                Ethics = ["e"],
+            }).ToList(),
+            Community = new GalacticCommunity([0, 1], [0], ["r"]),
+            Megastructures = new Dictionary<int, IReadOnlyList<string>> { [1] = ["m"] },
+            Diplo = new Dictionary<int, FazStellarisModmanager.Core.Diplomacy.DiploBreakdown> { [0] = bd, [1] = bd },
+            GlobalFlags = ["g"],
+            Dlcs = ["Utopia"],
+        };
+    }
+
+    static void AssertTechOnlyView(GameSnapshot f)
+    {
+        Assert.True(f.TechOnly);
+        Assert.Equal("autosave.sav", f.SavePath);
+        Assert.Equal(2, f.Players.Count);
+        var mine = Assert.Single(f.Countries);
+        Assert.Equal(1, mine.Id);
+        Assert.Equal("default", mine.Type);
+        Assert.Equal(["t1", "t2"], mine.Techs);
+        Assert.Null(mine.NameKey);
+        Assert.Empty(mine.NameVariables);
+        Assert.Null(mine.Adjective);
+        Assert.Null(mine.Flag);
+        Assert.Equal(0, mine.VictoryRank);
+        Assert.Equal(0, mine.VictoryScore);
+        Assert.Equal(0, mine.MilitaryPower);
+        Assert.Equal(0, mine.EconomyPower);
+        Assert.Equal(0, mine.Pops);
+        Assert.Null(mine.CachedDiploWeight);
+        Assert.Empty(mine.ContactedIds);
+        Assert.Null(mine.Holdings);
+        Assert.Null(mine.Roster);
+        Assert.Null(mine.Flags);
+        Assert.Null(mine.Ethics);
+        Assert.Null(f.Community);
+        Assert.Null(f.Megastructures);
+        Assert.Null(f.Diplo);
+        Assert.Null(f.GlobalFlags);
+    }
+
+    [Fact]
+    public void TechOnly_keeps_only_the_viewers_techs()
+    {
+        var f = LiveFilter.TechOnly(Rich(), viewerId: 1);
+
+        AssertTechOnlyView(f);
+        Assert.Equal(["Utopia"], f.Dlcs);
+        Assert.Equal("Save", f.SaveName);
+    }
+
+    [Fact]
+    public void TechOnly_works_on_a_tech_only_snapshot()
+    {
+        var techOnly = Rich() with { TechOnly = true };
+        techOnly = techOnly with { Countries = [.. techOnly.Countries.Select(c => new SaveCountry(c.Id, c.Type, null, new Dictionary<string, string>(), null, null, 0, 0, 0, 0, 0, 0, 0, 0, null, [], c.Techs))] };
+
+        AssertTechOnlyView(LiveFilter.TechOnly(techOnly, viewerId: 1));
+    }
+
+    [Fact]
+    public void TechOnly_without_a_known_viewer_sends_players_only()
+    {
+        foreach (var viewer in new int?[] { null, 99 })
+        {
+            var f = LiveFilter.TechOnly(Rich(), viewer);
+            Assert.True(f.TechOnly);
+            Assert.Equal(2, f.Players.Count);
+            Assert.Empty(f.Countries);
+            Assert.Null(f.Diplo);
+            Assert.Null(f.GlobalFlags);
+        }
+    }
+
+    [Fact]
+    public async Task A_tech_only_view_survives_framing()
+    {
+        using var stream = new MemoryStream();
+        await Framing.WriteAsync(stream, new LiveUpdate(LiveFilter.TechOnly(Rich(), 1), 1));
+        stream.Position = 0;
+
+        var back = Assert.IsType<LiveUpdate>(await Framing.ReadAsync(stream));
+
+        Assert.True(back.Snapshot.TechOnly);
+        Assert.Equal(["t1", "t2"], Assert.Single(back.Snapshot.Countries).Techs);
+    }
+
     [Fact]
     public void Holdings_diplo_community_and_megastructures_only_for_viewer()
     {

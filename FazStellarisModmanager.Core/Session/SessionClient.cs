@@ -35,8 +35,11 @@ public sealed class SessionClient : IAsyncDisposable
     public IReadOnlyList<PlayerInfo> Roster { get; private set; } = [];
     public bool IsConnected { get; private set; } = true;
 
-    /// <summary>The latest live save view from the host (null until the host has one).</summary>
+    /// <summary>The latest live save view from the host (null until the host has one). Kept when the host stops streaming.</summary>
     public LiveUpdate? Live { get; private set; }
+
+    /// <summary>What the host streams (null until it says).</summary>
+    public StreamingState? Streaming { get; private set; }
 
     /// <summary>Why the connection ended; set before <see cref="Disconnected"/> fires, null while connected.</summary>
     public string? DisconnectReason { get; private set; }
@@ -44,7 +47,7 @@ public sealed class SessionClient : IAsyncDisposable
     /// <summary>A single send that takes longer than this closes the connection and throws TimeoutException.</summary>
     public TimeSpan WriteTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>Raised on a background thread when the roster or host target changes.</summary>
+    /// <summary>Raised on a background thread when the roster, host target, live view or streaming state changes.</summary>
     public event Action? Changed;
 
     /// <summary>Raised once, on a background thread, when the connection ends; the argument says why.</summary>
@@ -144,6 +147,9 @@ public sealed class SessionClient : IAsyncDisposable
                         break;
                     case LiveUpdate l:
                         Live = l;
+                        break;
+                    case StreamingState s:
+                        Streaming = s;
                         break;
                     case Bye bye:
                         reason = bye.Reason ?? "The host ended the session.";

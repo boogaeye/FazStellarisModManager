@@ -28,6 +28,24 @@ public static class Framing
         using var body = new MemoryStream();
         using (var gz = new GZipStream(body, CompressionLevel.Fastest, leaveOpen: true))
             JsonSerializer.Serialize(gz, message, Json);
+        return ToFrame(body);
+    }
+
+    /// <summary>
+    /// Like <see cref="Encode"/>, and also returns the size of the JSON before compression. The JSON is buffered whole,
+    /// so this suits messages of a few MB (live views), not big host targets.
+    /// </summary>
+    public static (byte[] Frame, int JsonBytes) EncodeMeasured(SessionMessage message)
+    {
+        var json = JsonSerializer.SerializeToUtf8Bytes(message, Json);
+        using var body = new MemoryStream();
+        using (var gz = new GZipStream(body, CompressionLevel.Fastest, leaveOpen: true))
+            gz.Write(json);
+        return (ToFrame(body), json.Length);
+    }
+
+    static byte[] ToFrame(MemoryStream body)
+    {
         if (body.Length > MaxFrameBytes) throw new InvalidDataException($"Message too large to send ({body.Length} bytes).");
         var payload = body.ToArray();
         var frame = new byte[4 + payload.Length];

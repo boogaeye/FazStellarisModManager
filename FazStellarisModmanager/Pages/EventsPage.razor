@@ -100,12 +100,13 @@
     EmpireFacts? facts;
     GameSnapshot? factsSnapshot;
     int? factsViewer;
+    IDisposable? liveLease; // keeps this PC's saves read while the page is open
 
     protected override async Task OnInitializedAsync()
     {
         Service.Changed += OnServiceChanged;
         Feed.Changed += OnFeedChanged;
-        Feed.Start();
+        liveLease = Feed.Acquire();
         UpdateFacts();
         if (Service.IsUpToDate && Service.Current is { } current) Apply(current);
         else await Load();
@@ -205,6 +206,7 @@
         disposed = true;
         Service.Changed -= OnServiceChanged;
         Feed.Changed -= OnFeedChanged;
+        liveLease?.Dispose();
         searchCts?.Cancel();
         searchCts?.Dispose();
         loadCts?.Cancel();

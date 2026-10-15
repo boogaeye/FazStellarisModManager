@@ -53,7 +53,11 @@
         <p class="status error">@Feed.Error</p>
     }
 
-    @if (Feed.Current is { } snap && viewer is null && snap.Players.Count > 1)
+    @if (Feed.Current is { TechOnly: true })
+    {
+        <p class="live-note">The host is streaming technology only. Ask the host to turn on Stream live game for the scoreboard.</p>
+    }
+    else if (Feed.Current is { } snap && viewer is null && snap.Players.Count > 1)
     {
         <p class="status">Choose who you are in this game ("Viewing as") to see the scoreboard from your empire's point of view.</p>
     }
@@ -168,11 +172,12 @@
     string? animatedFor;
     string? builtFor;
     Timer? clock;
+    IDisposable? liveLease; // keeps this PC's saves read while the page is open
 
     protected override void OnInitialized()
     {
         Feed.Changed += OnLiveChanged;
-        Feed.Start();
+        liveLease = Feed.Acquire();
         Rebuild();
         clock = new Timer(_ => _ = InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
@@ -182,7 +187,8 @@
     void Rebuild()
     {
         viewer = Feed.ViewerId;
-        if (Feed.Current is not { } s)
+        // A technology-only snapshot has no scores to show: the page shows a notice instead of the board.
+        if (Feed.Current is not { } s || s.TechOnly)
         {
             me = null;
             dw = null;
@@ -279,6 +285,7 @@
     public async ValueTask DisposeAsync()
     {
         Feed.Changed -= OnLiveChanged;
+        liveLease?.Dispose();
         clock?.Dispose();
         if (module is not null)
         {

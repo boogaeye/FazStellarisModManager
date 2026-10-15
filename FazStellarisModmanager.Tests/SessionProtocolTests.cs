@@ -17,6 +17,16 @@ public class SessionProtocolTests
         Assert.Equal((host, port), SessionProtocol.ParseAddress(input));
 
     [Theory]
+    [InlineData("1.2.3.4", 27015, "1.2.3.4:27015")]
+    [InlineData(" myhost ", 5000, "myhost:5000")]
+    [InlineData("::1", 5000, "[::1]:5000")]
+    public void Formats_addresses_that_parse_back(string host, int port, string expected)
+    {
+        Assert.Equal(expected, SessionProtocol.FormatAddress(host, port));
+        Assert.Equal((host.Trim(), port), SessionProtocol.ParseAddress(expected));
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("   ")]
     [InlineData(":80")]
@@ -48,6 +58,21 @@ public class SessionProtocolTests
         var mine = TestSnapshots.Machine("C", "ugc:1") with { Warnings = ["  [unreadable] x"] };
 
         Assert.Equal(PlayerStatus.Mismatch, SessionProtocol.StatusFor(ModDiffer.Diff(host, mine)));
+    }
+
+    [Fact]
+    public void Protocol_is_version_3() => Assert.Equal(3, SessionProtocol.Version);
+
+    [Theory]
+    [InlineData(false, false, StreamMode.Off, false, false)]
+    [InlineData(false, true, StreamMode.Technology, false, true)]
+    [InlineData(true, false, StreamMode.LiveGame, true, true)]
+    [InlineData(true, true, StreamMode.LiveGame, true, true)]
+    public void Live_game_wins_and_includes_the_techs(bool liveGame, bool technology, StreamMode mode, bool stateLive, bool stateTech)
+    {
+        Assert.Equal(mode, StreamModes.For(liveGame, technology));
+        Assert.Equal(mode, StreamModes.For(new FazStellarisModmanager.Core.AppSettings(StreamLiveGame: liveGame, StreamTechnology: technology)));
+        Assert.Equal(new StreamingState(stateLive, stateTech), StreamModes.StateFor(mode));
     }
 
     [Fact]

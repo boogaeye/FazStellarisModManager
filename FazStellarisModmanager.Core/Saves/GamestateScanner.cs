@@ -68,6 +68,90 @@ public static class GamestateScanner
             megas.ToDictionary(e => e.Key, e => (IReadOnlyList<string>)e.Value), globalFlags);
     }
 
+    /// <summary>
+    /// The players and, for player countries only, a country with Id, Type and Techs (everything else empty). Much cheaper
+    /// than <see cref="ScanWithGlobals(byte[])"/>: other countries are skipped by brace matching, and in a player country
+    /// only tech_status is parsed.
+    /// </summary>
+    public static (List<SavePlayer> Players, List<SaveCountry> Countries) ScanTechs(byte[] data)
+    {
+        if (ScanTechsFast(data) is { } fast) return fast;
+        var players = new List<SavePlayer>();
+        var countryBlocks = new List<(int Start, int End)>();
+        var r = new Reader(data, 0, data.Length);
+        while (r.NextEntry(out var key, out _, out var body))
+        {
+            if (body is not { } b) continue;
+            if (r.Is(key, "player")) players.AddRange(ReadPlayers(Parse(data, b)));
+            // Walked after the top level, when the player ids are known: real saves have player first, but don't rely on it.
+            // The top-level walk has skipped the block either way, so this costs nothing extra.
+            else if (r.Is(key, "country")) countryBlocks.Add(b);
+        }
+
+        var countries = new List<SaveCountry>();
+        var playerIds = players.Select(p => p.CountryId).ToHashSet();
+        if (playerIds.Count == 0) return (players, countries);
+        foreach (var range in countryBlocks)
+        {
+            var cr = new Reader(data, range.Start, range.End);
+            while (cr.NextEntry(out var key, out _, out var body))
+            {
+                if (body is not { } b || !int.TryParse(cr.Text(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
+                    || !playerIds.Contains(id)) continue;
+                countries.Add(ScanCountryTechs(data, id, b));
+            }
+        }
+        return (players, countries);
+    }
+
+    // Real saves start top-level keys at the beginning of a line and indent nested ones, so the player and country blocks
+    // are found by a plain search instead of walking the hundreds of MB before them. Player countries come first in the
+    // country block, so the walk usually stops early. Null when the layout isn't like that (the full walk runs).
+    static (List<SavePlayer> Players, List<SaveCountry> Countries)? ScanTechsFast(byte[] data)
+    {
+        var span = data.AsSpan();
+        var p = span.IndexOf("\nplayer="u8);
+        var c = span.IndexOf("\ncountry="u8);
+        if (p < 0 || c < 0) return null;
+
+        var pr = new Reader(data, p + 1, data.Length);
+        if (!pr.NextEntry(out var playerKey, out _, out var playerBody) || !pr.Is(playerKey, "player") || playerBody is not { } pb) return null;
+        var players = ReadPlayers(Parse(data, pb)).ToList();
+        var remaining = players.Select(x => x.CountryId).ToHashSet();
+        if (remaining.Count == 0) return (players, new List<SaveCountry>());
+
+        var open = span.Slice(c, Math.Min(32, data.Length - c)).IndexOf((byte)'{');
+        if (open < 0) return null;
+        var countries = new List<SaveCountry>();
+        var cr = new Reader(data, c + open + 1, data.Length);
+        while (remaining.Count > 0 && cr.NextEntry(out var key, out _, out var body))
+        {
+            if (body is not { } b || !int.TryParse(cr.Text(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)) continue;
+            if (remaining.Remove(id)) countries.Add(ScanCountryTechs(data, id, b));
+        }
+        // Not all found: the walk went on to the end of the file, which is what the full walk would see too (an observer's
+        // country, for example, doesn't exist). Nothing found means the search landed somewhere unexpected.
+        return countries.Count > 0 ? (players, countries) : null;
+    }
+
+    // A country's type and techs; its other entries are skipped unread.
+    static SaveCountry ScanCountryTechs(byte[] data, int id, (int Start, int End) range)
+    {
+        string? type = null;
+        PdxBlock? techStatus = null;
+        var r = new Reader(data, range.Start, range.End);
+        while (r.NextEntry(out var key, out var value, out var body))
+        {
+            if (body is { } b && r.Is(key, "tech_status")) techStatus = Parse(data, b);
+            else if (value is { } v && r.Is(key, "type")) type = r.Text(v);
+        }
+        return new SaveCountry(id, type, null, new Dictionary<string, string>(), null, null, 0, 0, 0, 0, 0, 0, 0, 0, null, [], Techs(techStatus));
+    }
+
+    // tech_status = { technology="tech_a" level=1 … }: the researched techs, in order, once each.
+    static List<string> Techs(PdxBlock? techStatus) =>
+        techStatus?.Entries.Where(e => e.Key == "technology" && e.Value is string).Select(e => (string)e.Value).Distinct().ToList() ?? [];
+
     static GalaxySettings ReadGalaxy(PdxBlock b)
     {
         int? Int(string k) => int.TryParse(b.GetString(k), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
@@ -301,8 +385,7 @@ public static class GamestateScanner
             }
         }
 
-        var techs = b.GetValueOrDefault("tech_status")?.Entries
-            .Where(e => e.Key == "technology" && e.Value is string).Select(e => (string)e.Value).Distinct().ToList() ?? [];
+        var techs = Techs(b.GetValueOrDefault("tech_status"));
 
         var government = b.GetValueOrDefault("government");
         var flags = b.GetValueOrDefault("flags")?.Entries.Select(e => e.Key).Distinct().ToList() ?? [];

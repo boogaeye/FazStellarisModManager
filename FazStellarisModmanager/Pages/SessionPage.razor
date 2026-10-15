@@ -1,151 +1,265 @@
 @page "/session"
-@implements IDisposable
+@implements IAsyncDisposable
+@using FazStellarisModmanager.Services
 @inject SessionService Session
 @inject IWorkshopService Workshop
+@inject ModManagerService Manager
+@inject PublicAddressLookup PublicAddress
+@inject IJSRuntime JS
 
-<h1>Multiplayer session</h1>
-
-@if (Session.Role == SessionRole.None)
-{
-    @if (Session.LastDisconnectReason is { } reason)
+<div class="session-page">
+    @if (Session.Role == SessionRole.None)
     {
-        <p class="status error">@reason</p>
-    }
-    <div class="session-forms">
-        <section class="panel pad">
-            <h2>Host a session</h2>
-            <p class="status">Public IP needed... Will be replaced with a code system later</p>
-            <label>Port <input type="number" min="1" max="65535" @bind="hostPort" /></label>
-            <div><button class="primary" @onclick="Host" disabled="@Session.IsBusy">Host</button></div>
-        </section>
-        <section class="panel pad">
-            <h2>Join a session</h2>
-            <label>Host address <input @bind="joinAddress" placeholder="IPADDRESS:PORT" /></label>
-            <div><button class="primary" @onclick="Join" disabled="@Session.IsBusy">Join</button></div>
-        </section>
-    </div>
-}
-else
-{
-    <div class="toolbar">
-        @if (Session.Role == SessionRole.Host)
+        <div class="session-intro">
+            <h1>Multiplayer session</h1>
+            <p class="muted">Compare mod lists with your friends before a game, and match the host's list in one click.</p>
+        </div>
+        @if (Session.LastDisconnectReason is { } reason)
         {
-            <span>Hosting on port <b>@Session.HostPort</b>. LAN addresses: @(addresses.Count == 0 ? "unknown" : string.Join(", ", addresses))</span>
+            <p class="status error session-msg">@reason</p>
         }
-        else
-        {
-            <span>Connected to <b>@Session.HostAddress</b></span>
-        }
-        <button @onclick="Rescan" disabled="@Session.IsBusy">Rescan my mods</button>
-        @if (Session.Role == SessionRole.Client)
-        {
-            <button class="primary" @onclick="OpenOrMatch" disabled="@(Session.IsBusy || Session.MyDiff is null || Session.MyDiff.IsMatch)">Match host</button>
-            <button @onclick="OpenWorkshop" disabled="@(Session.IsBusy || Session.MyDiff is null)">Workshop mods</button>
-        }
-        @if (Session.IsBusy)
-        {
-            <button @onclick="Session.CancelCurrent">Cancel</button>
-        }
-        <button class="danger" @onclick="Leave">@(Session.Role == SessionRole.Host ? "Stop hosting" : "Leave")</button>
-    </div>
-
-    <table class="roster">
-        <thead><tr><th>Player</th><th>Status</th><th>Compared with host</th></tr></thead>
-        <tbody>
-            @{ var players = Session.Players; var isHost = Session.Role == SessionRole.Host; }
-            @foreach (var p in players.Take(MaxRosterRows))
+        <div class="session-card">
+            <div class="seg">
+                <button class="@(joinTab ? "" : "on")" @onclick="() => joinTab = false">Host</button>
+                <button class="@(joinTab ? "on" : "")" @onclick="() => joinTab = true">Join</button>
+            </div>
+            @if (joinTab)
             {
-                var player = p;
-                var you = isHost ? player.IsHost : player.Id == Session.MyPlayerId;
-                <tr class="@(player.Id == selectedId ? "selected" : "")" @onclick="() => { if (isHost) selectedId = player.Id; }" style="@(isHost ? "cursor:pointer" : null)">
-                    <td>@Trunc(player.Name)@(player.IsHost ? " (host)" : "")@(you ? " (you)" : "")</td>
-                    <td><span class="badge @StatusClass(player.Status)">@StatusText(player)</span></td>
-                    <td>@(player.IsHost ? "" : player.Summary?.ToString() ?? "")</td>
-                </tr>
+                <label class="lbl" for="join-address">Host address</label>
+                <input id="join-address" class="in" @bind="joinAddress" @bind:event="oninput" @onkeydown="JoinOnEnter" placeholder="IP address:port" spellcheck="false" />
+                @if (Manager.Settings.RecentHosts is { Count: > 0 } recent)
+                {
+                    <div class="lbl">Recent</div>
+                    <div class="chips">
+                        @foreach (var r in recent)
+                        {
+                            var address = r;
+                            <span class="chip @(string.Equals(address, joinAddress.Trim(), StringComparison.OrdinalIgnoreCase) ? "on" : "")">
+                                <button class="fill" title="Use this address" @onclick="() => joinAddress = address">@address</button>
+                                <button class="x" title="Forget this address" @onclick="() => Session.ForgetRecentHost(address)">✕</button>
+                            </span>
+                        }
+                    </div>
+                }
+                <div class="card-foot">
+                    <span class="muted small" title="Change it in Settings">Playing as <b>@Trunc(Session.PlayerName)</b></span>
+                    <button class="primary" @onclick="Join" disabled="@Session.IsBusy">Join session</button>
+                </div>
             }
-            @if (players.Count > MaxRosterRows)
+            else
             {
-                <tr><td colspan="3">… and @(players.Count - MaxRosterRows) more</td></tr>
+                <label class="lbl" for="host-port">Port</label>
+                <input id="host-port" class="in" type="number" min="1" max="65535" @bind="hostPort" />
+                <p class="muted small hint">Players join with your public IP address and this port. If they can't connect, forward the port (TCP) on your router.</p>
+                <div class="card-foot">
+                    <span class="muted small" title="Change it in Settings">Playing as <b>@Trunc(Session.PlayerName)</b></span>
+                    <button class="primary" @onclick="Host" disabled="@Session.IsBusy">Start hosting</button>
+                </div>
             }
-        </tbody>
-    </table>
-
-    @if (Session.Role == SessionRole.Client && Session.MyDiff is { } mine)
-    {
-        <h2>Your mods compared with the host</h2>
-        <DiffView Diff="mine" Who="you" />
+        </div>
+        <div class="session-msgs center">@Messages()</div>
     }
-    else if (Session.Role == SessionRole.Host && selectedId is not null && Session.DiffFor(selectedId) is { } theirs)
+    else
     {
-        <h2>@Trunc(Session.Players.FirstOrDefault(p => p.Id == selectedId)?.Name ?? "Player") compared with you</h2>
-        <DiffView Diff="theirs" Who="they" />
-    }
-    else if (Session.Role == SessionRole.Host)
-    {
-        <p class="status">Click a player to see how their mods differ from yours.</p>
-    }
+        var players = Session.Players;
+        var isHost = Session.Role == SessionRole.Host;
+        var counts = SessionView.Count(players);
+        var port = Session.HostPort ?? hostPort;
 
-    @if (Session.LastPlan is { } plan)
-    {
-        <section class="panel pad">
-            <h2>Match host result</h2>
-            <p>Wrote the host's list (@plan.ToApply.Mods.Count installed mods, in the host's order) to dlc_load.json.@(Session.LastBackupPath is { } backup ? " Backup: " + System.IO.Path.GetFileName(backup) : "")</p>
-            @if (Session.LastDupeRenames > 0)
-            {
-                <p class="status">Renamed @Session.LastDupeRenames duplicate-named @(Session.LastDupeRenames == 1 ? "mod" : "mods") so Stellaris loads them.</p>
-            }
-            @if (Session.LastLauncherWarning is { } launcherWarning)
-            {
-                <p class="status error">@launcherWarning</p>
-            }
-            @if (plan.NeedsWorkshopInstall.Count > 0)
-            {
-                <p class="status error">Not installed. Subscribe to these on the Steam Workshop, then click Rescan my mods:</p>
-                <ul>@foreach (var e in plan.NeedsWorkshopInstall) { <li>@e.Name (Workshop id @ModMatcher.WorkshopIdOf(e.Key, e.RemoteId))</li> }</ul>
-            }
-            @if (plan.NeedsWorkshopUpdate.Count > 0)
-            {
-                <p class="status error">Out of date. Let Steam update these (or unsubscribe and resubscribe):</p>
-                <ul>
-                    @foreach (var u in plan.NeedsWorkshopUpdate)
+        <div class="session-head">
+            <div class="ring" style="background:@SessionView.RingGradient(counts)" title="@RingTip(counts)">
+                <div><b>@counts.Ready/@counts.Total</b><span>ready</span></div>
+            </div>
+            <div class="head-main">
+                @if (isHost)
+                {
+                    <div class="head-title">Hosting on port @port</div>
+                    <div class="share">
+                        <span class="muted small">Share:</span>
+                        @if (publicAddress is { } pub)
+                        {
+                            @ShareChip(SessionProtocol.FormatAddress(pub, port), null)
+                        }
+                        @foreach (var a in addresses)
+                        {
+                            @ShareChip(SessionProtocol.FormatAddress(a, port), "LAN")
+                        }
+                        @if (publicAddress is null && addresses.Count == 0)
+                        {
+                            <span class="muted small">no address found</span>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="head-title">Connected to @Session.HostAddress</div>
+                    <div class="muted small">Host: @Trunc(Session.HostName ?? "…") · @ClientLine()</div>
+                    @if (Session.HostStreaming is { } streams)
                     {
-                        <li>
-                            @UnitName(u)
-                            @if (u.LocalCopyOfWorkshop)
-                            {
-                                <span class="status">the host uses a local copy; a Steam update may not match it</span>
-                            }
-                        </li>
+                        <div class="small streams">
+                            <span class="muted">Host streams:</span>
+                            <span class="pill @(streams.LiveGame ? "" : "off")">@(streams.LiveGame ? "live game ✓" : "live game off")</span>
+                            <span class="pill @(streams.Technology ? "" : "off")">@(streams.Technology ? "technology ✓" : "technology off")</span>
+                        </div>
                     }
-                </ul>
-            }
-            @if (plan.NeedsManualInstall.Count > 0)
-            {
-                <p class="status error">Local mods you don't have. Ask the host to share them:</p>
-                <ul>@foreach (var e in plan.NeedsManualInstall) { <li>@e.Name</li> }</ul>
-            }
-            @if (plan.DiffersLocally.Count > 0)
-            {
-                <p class="status error">Local mods whose files differ from the host's:</p>
-                <ul>@foreach (var u in plan.DiffersLocally) { <li>@UnitName(u)</li> }</ul>
-            }
-            @if (plan.NeedsDlc.Count > 0)
-            {
-                <p class="status error">DLC the host uses that you don't have enabled or own:</p>
-                <ul>@foreach (var u in plan.NeedsDlc) { <li>@u.Name</li> }</ul>
-            }
-        </section>
-    }
-}
+                }
+            </div>
+            <div class="head-actions">
+                @if (isHost)
+                {
+                    <button @onclick="Rescan" disabled="@Session.IsBusy">Rescan my mods</button>
+                }
+                else
+                {
+                    <button class="primary" @onclick="OpenOrMatch" disabled="@(Session.IsBusy || Session.MyDiff is null || Session.MyDiff.IsMatch)">Match host</button>
+                    <button @onclick="OpenWorkshop" disabled="@(Session.IsBusy || Session.MyDiff is null)">Workshop mods</button>
+                    <button @onclick="Rescan" disabled="@Session.IsBusy" title="Scan your mods again and share the result">Rescan</button>
+                }
+                @if (Session.IsBusy)
+                {
+                    <button @onclick="Session.CancelCurrent">Cancel</button>
+                }
+                <button class="danger" @onclick="Leave">@(isHost ? "Stop hosting" : "Leave")</button>
+            </div>
+        </div>
 
-@if (Session.Activity is { } activity)
-{
-    <p class="status">@activity</p>
-}
-@if (status is not null)
-{
-    <p class="status @(error ? "error" : "")">@status</p>
-}
+        <div class="session-msgs">@Messages()</div>
+
+        <div class="session-grid">
+            <div class="session-side">
+                <div class="players-panel">
+                    <div class="panel-cap">Players · @players.Count</div>
+                    @foreach (var p in players.Take(MaxRosterRows))
+                    {
+                        var player = p;
+                        var you = isHost ? player.IsHost : player.Id == Session.MyPlayerId;
+                        var pickable = isHost && !player.IsHost;
+                        var on = isHost ? player.Id == selectedId : you;
+                        <div class="prow @(on ? "sel" : "") @(pickable ? "pick" : "")" title="@(player.Summary?.ToString() ?? StatusText(player))" @onclick="() => Select(player)">
+                            <span class="pav" style="background:hsl(@SessionView.AvatarHue(player.Name) 45% 45%)">@SessionView.Initial(player.Name)</span>
+                            <div class="pmain">
+                                <div class="pname">@Trunc(player.Name)</div>
+                                <div class="psub">@SessionView.SubLine(player, you)</div>
+                            </div>
+                            <span class="dot @StatusClass(player.Status)"></span>
+                        </div>
+                    }
+                    @if (players.Count > MaxRosterRows)
+                    {
+                        <div class="muted small more">… and @(players.Count - MaxRosterRows) more</div>
+                    }
+                </div>
+
+                @if (isHost)
+                {
+                    <div class="stream-panel">
+                        <div class="panel-cap">Streaming to players</div>
+                        <button class="tog @(streamLive ? "on" : "")" role="switch" aria-checked="@(streamLive ? "true" : "false")" @onclick="ToggleLive">
+                            <span class="sw"></span>
+                            <span class="tog-body">
+                                <b>Live game</b>
+                                <span class="d">Scoreboard, ranks and the Live Game tab. Reads the whole autosave; can make the game stutter on big saves.</span>
+                                <span class="st @(streamLive ? "ok" : "")">@SessionView.StreamStatus(streamLive, false, Session.LastLiveSentDate, Session.LastLiveSentBytes)</span>
+                            </span>
+                        </button>
+                        <button class="tog @(streamLive || streamTech ? "on" : "") @(streamLive ? "included" : "")" role="switch" aria-checked="@(streamLive || streamTech ? "true" : "false")"
+                                disabled="@streamLive" @onclick="ToggleTech">
+                            <span class="sw"></span>
+                            <span class="tog-body">
+                                <b>Technology</b>
+                                <span class="d">Only researched techs, so Tech tab ✓ marks stay live. Light.</span>
+                                <span class="st @(streamLive || streamTech ? "ok" : "")">@SessionView.StreamStatus(streamTech, streamLive, Session.LastLiveSentDate, Session.LastLiveSentBytes)</span>
+                            </span>
+                        </button>
+                    </div>
+                }
+            </div>
+
+            <div class="session-main">
+                @if (isHost)
+                {
+                    var selected = selectedId is null ? null : players.FirstOrDefault(p => p.Id == selectedId);
+                    @if (selected is not null && Session.DiffFor(selected.Id) is { } theirs)
+                    {
+                        @Comparison(theirs, Trunc(selected.Name), "compared with you", selected.Status, StatusText(selected), "they")
+                    }
+                    else if (selected is not null)
+                    {
+                        <div class="cmp-card empty"><b>@Trunc(selected.Name)</b>: @StatusText(selected)</div>
+                    }
+                    else
+                    {
+                        <div class="cmp-card empty">@(players.Count > 1 ? "Click a player to see how their mods differ from yours." : "No players yet. Share an address above so your friends can join.")</div>
+                    }
+                }
+                else if (Session.MyDiff is { } mine)
+                {
+                    var mineStatus = SessionProtocol.StatusFor(mine);
+                    @Comparison(mine, "Your mods compared with the host", null, mineStatus, StatusText(mineStatus, null), "you")
+                }
+                else
+                {
+                    <div class="cmp-card empty">Comparing your mods with the host's…</div>
+                }
+
+                @if (Session.LastPlan is { } plan)
+                {
+                    <div class="cmp-card result-card">
+                        <div class="cmp-head">
+                            <b>Match host result</b>
+                            <span class="pstat @(plan.IsComplete ? "ready" : "busy")">@(plan.IsComplete ? "✔ Matches the host" : "⚠ Needs attention")</span>
+                        </div>
+                        <p>Wrote the host's list (@plan.ToApply.Mods.Count installed mods, in the host's order) to dlc_load.json.@(Session.LastBackupPath is { } backup ? " Backup: " + System.IO.Path.GetFileName(backup) : "")</p>
+                        @if (Session.LastDupeRenames > 0)
+                        {
+                            <p class="status">Renamed @Session.LastDupeRenames duplicate-named @(Session.LastDupeRenames == 1 ? "mod" : "mods") so Stellaris loads them.</p>
+                        }
+                        @if (Session.LastLauncherWarning is { } launcherWarning)
+                        {
+                            <p class="status error">@launcherWarning</p>
+                        }
+                        @if (plan.NeedsWorkshopInstall.Count > 0)
+                        {
+                            <p class="status error">Not installed. Subscribe to these on the Steam Workshop, then click Rescan:</p>
+                            <ul>@foreach (var e in plan.NeedsWorkshopInstall) { <li>@e.Name (Workshop id @ModMatcher.WorkshopIdOf(e.Key, e.RemoteId))</li> }</ul>
+                        }
+                        @if (plan.NeedsWorkshopUpdate.Count > 0)
+                        {
+                            <p class="status error">Out of date. Let Steam update these (or unsubscribe and resubscribe):</p>
+                            <ul>
+                                @foreach (var u in plan.NeedsWorkshopUpdate)
+                                {
+                                    <li>
+                                        @UnitName(u)
+                                        @if (u.LocalCopyOfWorkshop)
+                                        {
+                                            <span class="status">the host uses a local copy; a Steam update may not match it</span>
+                                        }
+                                    </li>
+                                }
+                            </ul>
+                        }
+                        @if (plan.NeedsManualInstall.Count > 0)
+                        {
+                            <p class="status error">Local mods you don't have. Ask the host to share them:</p>
+                            <ul>@foreach (var e in plan.NeedsManualInstall) { <li>@e.Name</li> }</ul>
+                        }
+                        @if (plan.DiffersLocally.Count > 0)
+                        {
+                            <p class="status error">Local mods whose files differ from the host's:</p>
+                            <ul>@foreach (var u in plan.DiffersLocally) { <li>@UnitName(u)</li> }</ul>
+                        }
+                        @if (plan.NeedsDlc.Count > 0)
+                        {
+                            <p class="status error">DLC the host uses that you don't have enabled or own:</p>
+                            <ul>@foreach (var u in plan.NeedsDlc) { <li>@u.Name</li> }</ul>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
 
 @if (workshopNeeds is { } needs && (Session.Role == SessionRole.Client || promptRunning))
 {
@@ -219,16 +333,30 @@ else
 
     int hostPort = SessionProtocol.DefaultPort;
     string joinAddress = "";
+    bool joinTab; // the not-connected card shows Join (true) or Host
     string? selectedId;
+    string? kind; // the comparison tile shown on its own: "missing", "different", "extra", "order" or "dlc"; null shows all
     string? status;
     SessionRole prevRole;
     bool error;
     IReadOnlyList<string> addresses = [];
+    string? publicAddress;
+    string? copied; // the share address just copied, marked "Copied" for a moment
+    bool streamLive, streamTech, streamBusy; // the host's streaming toggles as stored; busy while a change is applied
+    IJSObjectReference? module;
+    readonly CancellationTokenSource lifetime = new();
 
     protected override void OnInitialized()
     {
         Session.Changed += OnSessionChanged;
         addresses = SessionProtocol.LocalAddresses();
+        var settings = Manager.Settings;
+        hostPort = settings.HostPort ?? SessionProtocol.DefaultPort;
+        joinAddress = settings.RecentHosts is { Count: > 0 } recent ? recent[0] : "";
+        joinTab = settings.RecentHosts is { Count: > 0 };
+        (streamLive, streamTech) = (settings.StreamLiveGame, settings.StreamTechnology);
+        prevRole = Session.Role;
+        if (prevRole == SessionRole.Host) _ = LookUpPublicAddress();
     }
 
     void OnSessionChanged() => _ = InvokeAsync(() =>
@@ -242,11 +370,102 @@ else
         // Not a client any more: drop the pop-up, so it can't come back by itself after a rejoin. A pop-up that is
         // running or showing its result stays, so the result (and the "host left" note) can still be read.
         if (Session.Role != SessionRole.Client && !promptRunning) workshopNeeds = null;
+        // Hosting started: look up the addresses to share.
+        if (Session.Role == SessionRole.Host && prevRole != SessionRole.Host)
+        {
+            addresses = SessionProtocol.LocalAddresses();
+            _ = LookUpPublicAddress();
+        }
+        if (Session.Role != prevRole) kind = null;
         prevRole = Session.Role;
         StateHasChanged();
     });
 
-    public void Dispose() => Session.Changed -= OnSessionChanged;
+    public async ValueTask DisposeAsync()
+    {
+        Session.Changed -= OnSessionChanged;
+        lifetime.Cancel();
+        if (module is not null)
+        {
+            try { await module.DisposeAsync(); }
+            catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+        }
+    }
+
+    // The public address chip appears once the lookup answers; without an answer only the LAN chips show.
+    async Task LookUpPublicAddress()
+    {
+        publicAddress = PublicAddress.Known;
+        if (publicAddress is not null) return;
+        var found = await PublicAddress.GetAsync(lifetime.Token);
+        if (found is null || lifetime.IsCancellationRequested) return;
+        await InvokeAsync(() =>
+        {
+            publicAddress = found;
+            StateHasChanged();
+        });
+    }
+
+    async Task Copy(string text)
+    {
+        bool ok;
+        try
+        {
+            module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/session.js");
+            ok = await module.InvokeAsync<bool>("copyText", text);
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException or ObjectDisposedException)
+        {
+            ok = false;
+        }
+        if (!ok)
+        {
+            (status, error) = ($"Couldn't copy to the clipboard. The address is {text}.", true);
+            return;
+        }
+        copied = text;
+        StateHasChanged();
+        await Task.Delay(1500);
+        if (copied == text) copied = null;
+    }
+
+    void Select(PlayerInfo p)
+    {
+        if (Session.Role != SessionRole.Host || p.IsHost || p.Id == selectedId) return;
+        selectedId = p.Id;
+        kind = null;
+    }
+
+    void ToggleKind(string k) => kind = kind == k ? null : k;
+
+    // Technology stays as stored while the live game (which includes it) is toggled.
+    Task ToggleLive() => SetStreaming(!streamLive, streamTech);
+
+    Task ToggleTech() => streamLive ? Task.CompletedTask : SetStreaming(streamLive, !streamTech);
+
+    async Task SetStreaming(bool liveGame, bool technology)
+    {
+        if (streamBusy) return;
+        streamBusy = true;
+        (streamLive, streamTech) = (liveGame, technology);
+        try
+        {
+            await Session.SetStreamingAsync(liveGame, technology);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or ObjectDisposedException)
+        {
+            (status, error) = (ex.Message, true);
+        }
+        finally
+        {
+            streamBusy = false;
+        }
+    }
+
+    async Task JoinOnEnter(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !Session.IsBusy) await Join();
+    }
 
     Task Host() => RunAsync(async () =>
     {
@@ -277,6 +496,7 @@ else
     {
         await Session.LeaveAsync();
         selectedId = null;
+        kind = null;
         return "Left the session.";
     });
 
@@ -299,6 +519,72 @@ else
         }
     }
 
+    RenderFragment Messages() =>
+        @<text>
+            @if (Session.Activity is { } activity)
+            {
+                <p class="status">@activity</p>
+            }
+            @if (status is not null)
+            {
+                <p class="status @(error ? "error" : "")">@status</p>
+            }
+        </text>;
+
+    RenderFragment ShareChip(string address, string? label) =>
+        @<button class="chip share-chip @(copied == address ? "copied" : "")" title="Copy @address" @onclick="() => Copy(address)">
+            @if (label is not null)
+            {
+                <span class="k">@label</span>
+            }
+            <span>@address</span>
+            <span class="cp">@(copied == address ? "✓ Copied" : "⧉")</span>
+        </button>;
+
+    // One player's mods against the host's: the title row, the five count tiles (each filters the list) and the list.
+    RenderFragment Comparison(DiffResult diff, string name, string? note, PlayerStatus st, string stText, string who)
+    {
+        var sum = DiffSummary.From(diff);
+        return @<div class="cmp-card">
+            <div class="cmp-head">
+                <div class="cmp-title">
+                    <b>@name</b>
+                    @if (note is not null)
+                    {
+                        <span class="muted small">@note</span>
+                    }
+                </div>
+                <span class="pstat @StatusClass(st)">@stText</span>
+            </div>
+            <div class="tiles">
+                @Tile("missing", "missing", sum.Missing, "bad")
+                @Tile("different", "different", sum.Different, "warn")
+                @Tile("extra", "extra", sum.Extra, "")
+                @Tile("order", "order", sum.OutOfOrder, "")
+                @Tile("dlc", "DLC", sum.DlcDiffs, "warn")
+            </div>
+            <DiffView Diff="diff" Who="@who" Kind="@kind" />
+        </div>;
+    }
+
+    RenderFragment Tile(string key, string label, int count, string tone) =>
+        @<button class="tile @(kind == key ? "on" : "")" disabled="@(count == 0 && kind != key)"
+                 title="@(kind == key ? "Show every difference" : "Show only these")" @onclick="() => ToggleKind(key)">
+            <b class="@(count > 0 ? tone : "")">@count</b>
+            <span>@label</span>
+        </button>;
+
+    string ClientLine() => Session.MyDiff switch
+    {
+        null => "comparing your mods with the host's…",
+        { IsMatch: true, IsReliable: true } => "your mods match the host's",
+        { IsMatch: true } => "your mods match, but some files could not be read",
+        _ => "your mods differ from the host's",
+    };
+
+    static string RingTip(SessionView.ReadyCounts c) =>
+        $"{c.Ready} ready · {c.Problem} differ or need checking · {c.Pending} waiting or busy";
+
     const int MaxRosterRows = 64;
     const int MaxText = 60;
 
@@ -312,12 +598,14 @@ else
         _ => "busy",
     };
 
-    static string StatusText(PlayerInfo p) => p.Status switch
+    static string StatusText(PlayerInfo p) => StatusText(p.Status, p.Activity);
+
+    static string StatusText(PlayerStatus s, string? activity) => s switch
     {
         PlayerStatus.Ready => "✔ Ready",
         PlayerStatus.Mismatch => "✖ Differs",
         PlayerStatus.Unreliable => "⚠ Check warnings",
-        PlayerStatus.Busy => p.Activity is { } a ? Trunc(a) : "Busy…",
+        PlayerStatus.Busy => activity is { } a ? Trunc(a) : "Busy…",
         _ => "Waiting for scan…",
     };
 }

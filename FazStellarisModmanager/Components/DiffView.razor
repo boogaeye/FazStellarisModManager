@@ -1,36 +1,58 @@
-@* Shows one DiffResult grouped by kind. "Who" names the compared machine: "you" or a player's name. *@
+@* Shows one DiffResult grouped by kind. "Who" names the compared machine: "you" or a player's name.
+   Kind shows one group only ("missing", "different", "extra", "order" or "dlc"); null shows everything. *@
 
-@if (!Diff.IsReliable)
+@if (Kind is null)
 {
-    <p class="status warn">Some files could not be read, so some differences below may not be real. Close programs that lock mod files and rescan.</p>
-    <details>
-        <summary>Scan warnings (@(Diff.TargetWarnings.Count + Diff.MineWarnings.Count))</summary>
-        <ul>
-            @foreach (var w in Diff.TargetWarnings) { <li>Host: @w</li> }
-            @foreach (var w in Diff.MineWarnings) { <li>@Who: @w</li> }
-        </ul>
-    </details>
-}
-@if (Diff.IsMatch)
-{
-    <p class="status ok">Everything matches the host.</p>
-}
-@if (!Diff.GameVersionMatches)
-{
-    <p class="status error">Game version differs: host @Diff.TargetGameVersion, @Who @Diff.MineGameVersion.</p>
-}
-@if (!Diff.BaseFiles.IsEmpty)
-{
-    <p class="status error">@BaseCount base game file(s) differ. Use "Verify integrity of game files" in Steam.</p>
+    @if (!Diff.IsReliable)
+    {
+        <p class="status warn">Some files could not be read, so some differences below may not be real. Close programs that lock mod files and rescan.</p>
+        <details>
+            <summary>Scan warnings (@(Diff.TargetWarnings.Count + Diff.MineWarnings.Count))</summary>
+            <ul>
+                @foreach (var w in Diff.TargetWarnings) { <li>Host: @w</li> }
+                @foreach (var w in Diff.MineWarnings) { <li>@Who: @w</li> }
+            </ul>
+        </details>
+    }
+    @if (Diff.IsMatch)
+    {
+        <p class="status ok">Everything matches the host.</p>
+    }
+    @if (!Diff.GameVersionMatches)
+    {
+        <p class="status error">Game version differs: host @Diff.TargetGameVersion, @Who @Diff.MineGameVersion.</p>
+    }
+    @if (!Diff.BaseFiles.IsEmpty)
+    {
+        <p class="status error">@BaseCount base game file(s) differ. Use "Verify integrity of game files" in Steam.</p>
+    }
 }
 
-@Section($"Missing (the host has these, {Who} don't)", Diff.Mods.Where(m => m.Status == UnitStatus.Missing).ToList())
-@Section("Different files", Diff.Mods.Where(m => m.Status == UnitStatus.ContentMismatch).ToList())
-@* Informational: these pair fine, only through a local copy or under a different name. *@
-@Section("Matched through a local copy or different name", Diff.Mods.Where(m => m.Status == UnitStatus.Ok && m.Match != MatchKind.Key).ToList())
-@Section($"Extra ({Who} have these, the host doesn't)", Diff.Mods.Where(m => m.Status == UnitStatus.Extra).ToList())
-@Section("Load order differs", Diff.Mods.Where(m => m.OutOfOrder).ToList())
-@Section("DLC differences", Diff.Dlcs.Where(d => d.Status != UnitStatus.Ok).ToList())
+@if (Kind is null or "missing")
+{
+    @Section($"Missing (the host has these, {Who} don't)", "k-missing", Diff.Mods.Where(m => m.Status == UnitStatus.Missing).ToList())
+}
+@if (Kind is null or "different")
+{
+    @Section("Different files", "k-different", Diff.Mods.Where(m => m.Status == UnitStatus.ContentMismatch).ToList())
+}
+@if (Kind is null)
+{
+    @* Informational: these pair fine, only through a local copy or under a different name. *@
+    @Section("Matched through a local copy or different name", "k-matched", Diff.Mods.Where(m => m.Status == UnitStatus.Ok && m.Match != MatchKind.Key).ToList())
+}
+@if (Kind is null or "extra")
+{
+    @Section($"Extra ({Who} have these, the host doesn't)", "k-extra", Diff.Mods.Where(m => m.Status == UnitStatus.Extra).ToList())
+}
+@if (Kind is null or "order")
+{
+    @Section("Load order differs", "k-order", Diff.Mods.Where(m => m.OutOfOrder).ToList())
+}
+@if (Kind is null or "dlc")
+{
+    @Section("DLC differences", "k-dlc", Diff.Dlcs.Where(d => d.Status != UnitStatus.Ok).ToList())
+}
 
 @code {
     static string MatchText(MatchKind kind) => kind switch
@@ -43,26 +65,34 @@
 
     [Parameter, EditorRequired] public DiffResult Diff { get; set; } = default!;
     [Parameter] public string Who { get; set; } = "you";
+    [Parameter] public string? Kind { get; set; }
 
     const int MaxUnits = 200;
     const int MaxFiles = 50;
 
     DiffResult? _renderedDiff;
     string? _renderedWho;
+    string? _renderedKind;
 
     // Parameters usually arrive as the same references; skip the (large) re-render unless they changed.
     protected override bool ShouldRender()
     {
-        if (ReferenceEquals(_renderedDiff, Diff) && ReferenceEquals(_renderedWho, Who)) return false;
+        if (ReferenceEquals(_renderedDiff, Diff) && ReferenceEquals(_renderedWho, Who) && _renderedKind == Kind) return false;
         _renderedDiff = Diff;
         _renderedWho = Who;
+        _renderedKind = Kind;
         return true;
     }
 
     int BaseCount => Diff.BaseFiles.Changed.Count + Diff.BaseFiles.OnlyInTarget.Count + Diff.BaseFiles.OnlyInMine.Count;
 
-    RenderFragment Section(string title, List<UnitDiff> units) =>
-        @<div class="diff-group">
+    // cls tints the group's heading by kind. A group shown on its own (Kind set) says so when it is empty.
+    RenderFragment Section(string title, string cls, List<UnitDiff> units) =>
+        @<div class="diff-group @cls">
+            @if (units.Count == 0 && Kind is not null)
+            {
+                <p class="status">@title: none.</p>
+            }
             @if (units.Count > 0)
             {
                 <h3>@title (@units.Count)</h3>

@@ -9,7 +9,8 @@ using FazStellarisModmanager.Core.Snapshots;
 namespace FazStellarisModmanager.Core.Session;
 
 /// <summary>
-/// TCP host: accepts clients, diffs each against the host's snapshot and broadcasts the roster.
+/// TCP host: accepts clients, diffs each against the host's snapshot and broadcasts the roster. Streams each client its
+/// own view of the newest save in the current <see cref="StreamMode"/>.
 /// Peers are untrusted. Each peer has a bounded outbox drained by a single writer task with a write timeout,
 /// so a peer that stops reading only ever drops itself and never stalls the host or other peers.
 /// </summary>
@@ -35,6 +36,9 @@ public sealed class SessionHost : IAsyncDisposable
     {
         public static readonly RosterDirty Instance = new();
     }
+
+    /// <summary>A peer's live view: the writer encodes it and records its size for <see cref="LastLiveSentBytes"/>.</summary>
+    sealed record LiveSend(LiveUpdate Update, int Generation);
 
     sealed class Peer(string id, TcpClient tcp, string name)
     {
@@ -70,13 +74,20 @@ public sealed class SessionHost : IAsyncDisposable
     MachineSnapshot _hostSnapshot;
     int _pendingHandshakes;
     GameSnapshot? _live;
+    StreamMode _mode;
+    int _liveGeneration; // bumped when the save or the mode changes
+    int _sentGeneration; // the generation the last-sent figures describe
+    string? _lastLiveSentDate;
+    int _lastLiveSentBytes;
     int _disposed;
 
-    public SessionHost(string hostName, ModList hostList, MachineSnapshot hostSnapshot)
+    /// <param name="mode">What peers get from <see cref="UpdateLive"/> until <see cref="SetMode"/> changes it.</param>
+    public SessionHost(string hostName, ModList hostList, MachineSnapshot hostSnapshot, StreamMode mode = StreamMode.LiveGame)
     {
         _hostName = hostName;
         _hostList = hostList;
         _hostSnapshot = hostSnapshot;
+        _mode = mode;
     }
 
     /// <summary>The port actually listened on (useful when started with port 0).</summary>
@@ -90,6 +101,26 @@ public sealed class SessionHost : IAsyncDisposable
 
     /// <summary>Raised on a background thread whenever the roster changes.</summary>
     public event Action? RosterChanged;
+
+    /// <summary>Raised on a background thread when <see cref="LastLiveSentDate"/> or <see cref="LastLiveSentBytes"/> changes.</summary>
+    public event Action? LiveSent;
+
+    public StreamMode Mode
+    {
+        get { lock (_gate) return _mode; }
+    }
+
+    /// <summary>The date of the save last sent to a peer in the current mode (null when nothing has been sent since the mode was set).</summary>
+    public string? LastLiveSentDate
+    {
+        get { lock (_gate) return _lastLiveSentDate; }
+    }
+
+    /// <summary>The JSON size, before compression, of the largest view of that save sent to one peer (0 when nothing was sent).</summary>
+    public int LastLiveSentBytes
+    {
+        get { lock (_gate) return _lastLiveSentBytes; }
+    }
 
     bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
@@ -154,25 +185,77 @@ public sealed class SessionHost : IAsyncDisposable
         BroadcastRoster();
     }
 
-    /// <summary>The newest save (or null): every peer gets its own filtered view. Never waits on peers.</summary>
+    /// <summary>
+    /// The newest save (or null): every peer gets its own view in the current mode. The same instance again is ignored
+    /// (the save sources report every refresh). Never waits on peers.
+    /// </summary>
     public void UpdateLive(GameSnapshot? snapshot)
     {
         lock (_gate)
         {
+            if (ReferenceEquals(snapshot, _live)) return;
             _live = snapshot;
             if (snapshot is null) return;
+            _liveGeneration++;
             foreach (var p in _peers.Values) SendLive(p);
+        }
+    }
+
+    /// <summary>
+    /// Changes what peers get: everyone is told the new <see cref="StreamingState"/>, then gets the current save again
+    /// in the new mode (nothing when Off). The last-sent figures start over. Never waits on peers.
+    /// </summary>
+    public void SetMode(StreamMode mode)
+    {
+        lock (_gate)
+        {
+            if (mode == _mode) return;
+            _mode = mode;
+            _liveGeneration++;
+            _sentGeneration = _liveGeneration;
+            _lastLiveSentDate = null;
+            _lastLiveSentBytes = 0;
+            var state = StreamModes.StateFor(mode);
+            foreach (var p in _peers.Values)
+            {
+                Enqueue(p, state);
+                SendLive(p);
+            }
         }
     }
 
     // Under _gate. Keeps a valid chosen country, otherwise matches the peer's name with the save's players.
     void SendLive(Peer p)
     {
-        if (_live is not { } live) return;
+        if (_mode == StreamMode.Off || _live is not { } live) return;
         if (p.LiveChosen && !live.Players.Any(pl => pl.CountryId == p.LiveCountry)) p.LiveChosen = false;
         if (!p.LiveChosen)
             p.LiveCountry = live.Players.FirstOrDefault(pl => string.Equals(pl.Name, p.Name, StringComparison.OrdinalIgnoreCase))?.CountryId;
-        Enqueue(p, new LiveUpdate(LiveFilter.For(live, p.LiveCountry), p.LiveCountry));
+        var view = _mode == StreamMode.Technology ? LiveFilter.TechOnly(live, p.LiveCountry) : LiveFilter.For(live, p.LiveCountry);
+        Enqueue(p, new LiveSend(new LiveUpdate(view, p.LiveCountry), _liveGeneration));
+    }
+
+    // Called by a peer's writer once a live view is written. Views of an older save or mode, written late, don't count.
+    void RecordLiveSent(LiveSend sent, int jsonBytes)
+    {
+        bool changed;
+        lock (_gate)
+        {
+            if (sent.Generation < _sentGeneration) return;
+            if (sent.Generation > _sentGeneration)
+            {
+                _sentGeneration = sent.Generation;
+                _lastLiveSentBytes = 0;
+            }
+            var date = sent.Update.Snapshot.Date;
+            var bytes = Math.Max(_lastLiveSentBytes, jsonBytes);
+            changed = date != _lastLiveSentDate || bytes != _lastLiveSentBytes;
+            _lastLiveSentDate = date;
+            _lastLiveSentBytes = bytes;
+        }
+        if (!changed) return;
+        try { LiveSent?.Invoke(); }
+        catch (Exception) { /* a faulty subscriber must not take a peer down with it */ }
     }
 
     /// <summary>Peers are untrusted: trim, turn control characters into spaces and cap the length. Null if nothing is left.</summary>
@@ -263,8 +346,9 @@ public sealed class SessionHost : IAsyncDisposable
                     _peers[p.Id] = p;
                     p.Writer = Task.Run(() => WriteLoopAsync(p), CancellationToken.None);
                     // Queued in the same lock that publishes the peer, so Welcome is always first and any later
-                    // target update (queued under this lock too) comes after it.
+                    // target update (queued under this lock too) comes after it. The streaming state precedes any live data.
                     Enqueue(p, new Welcome(p.Id, _hostList, _hostSnapshot));
+                    Enqueue(p, StreamModes.StateFor(_mode));
                     SendLive(p);
                     joined = true;
                 }
@@ -354,6 +438,8 @@ public sealed class SessionHost : IAsyncDisposable
                 while (reader.TryRead(out var item))
                 {
                     byte[] frame;
+                    LiveSend? live = null;
+                    var jsonBytes = 0;
                     switch (item)
                     {
                         case RosterDirty:
@@ -366,6 +452,10 @@ public sealed class SessionHost : IAsyncDisposable
                         case byte[] encoded:
                             frame = encoded;
                             break;
+                        case LiveSend send:
+                            live = send;
+                            (frame, jsonBytes) = Framing.EncodeMeasured(send.Update);
+                            break;
                         case SessionMessage message:
                             frame = Framing.Encode(message);
                             break;
@@ -375,6 +465,7 @@ public sealed class SessionHost : IAsyncDisposable
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
                     timeout.CancelAfter(WriteTimeout);
                     await p.Stream.WriteAsync(frame, timeout.Token);
+                    if (live is not null) RecordLiveSent(live, jsonBytes);
                 }
             }
         }

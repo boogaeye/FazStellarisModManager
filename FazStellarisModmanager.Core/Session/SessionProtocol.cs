@@ -8,7 +8,7 @@ namespace FazStellarisModmanager.Core.Session;
 public static class SessionProtocol
 {
     /// <summary>Bump when messages change incompatibly; hosts reject clients with a different version.</summary>
-    public const int Version = 2;
+    public const int Version = 3;
     public const int DefaultPort = 27015;
 
     public static string AppVersion => typeof(SessionProtocol).Assembly.GetName().Version?.ToString() ?? "0";
@@ -50,6 +50,13 @@ public static class SessionProtocol
         if (portText is null) return (host, DefaultPort);
         if (!int.TryParse(portText, NumberStyles.None, CultureInfo.InvariantCulture, out var port) || port is < 1 or > 65535) throw bad;
         return (host, port);
+    }
+
+    /// <summary>"host:port", or "[ipv6]:port" for an IPv6 address, so <see cref="ParseAddress"/> reads it back.</summary>
+    public static string FormatAddress(string host, int port)
+    {
+        var h = host.Trim();
+        return h.Contains(':') ? $"[{h}]:{port}" : $"{h}:{port}";
     }
 
     /// <summary>Mismatch beats Unreliable: a known difference is real even if the scan had warnings.</summary>
