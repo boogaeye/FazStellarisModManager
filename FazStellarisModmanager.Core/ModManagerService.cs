@@ -114,10 +114,14 @@ public sealed class ModManagerService
     public DupeResolution ResolveDupes(IReadOnlyList<DupeChoice> choices)
     {
         if (IsLauncherRunning()) throw new InvalidOperationException("Close the Paradox launcher first, or it will overwrite your mod list.");
-        DupeResolution result;
-        lock (_gate) result = DupeResolver.Resolve(Resolve().UserDir, choices, _paths.Backups, DateTimeOffset.UtcNow);
-        RefreshLibrary();
-        return result;
+        try
+        {
+            lock (_gate) return DupeResolver.Resolve(Resolve().UserDir, choices, _paths.Backups, DateTimeOffset.UtcNow);
+        }
+        finally
+        {
+            RefreshLibrary(); // also after a failure part-way, so the shown names match the files
+        }
     }
 
     /// <summary><see cref="ResolveDupes"/> for every group touching the list, keeping each group's default copy.</summary>
