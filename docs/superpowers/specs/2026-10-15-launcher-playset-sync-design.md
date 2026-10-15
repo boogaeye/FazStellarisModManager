@@ -52,7 +52,7 @@ On every `ModManagerService.Apply(list)`, which covers the Mods tab's Apply and 
   - `public sealed record LauncherSyncResult(bool Written, string? BackupPath, string? Warning, IReadOnlyList<string> Skipped)`
 - `ModManagerService`:
   - `public Func<bool> IsLauncherRunning { get; set; } = LauncherPlaysetFile.IsLauncherRunning;`
-  - `Apply` returns `ApplyResult(string? BackupPath, string? LauncherWarning)`. LauncherWarning combines the result's Warning and its Skipped list.
+  - `Apply` returns `ApplyResult(string? BackupPath, bool LauncherPlaysetSet, string? LauncherWarning)`. LauncherWarning combines the result's Warning and its Skipped list.
 - **UI:**
   - **Mods tab:** the Apply message adds "Set as the active Paradox launcher playset." when Written. A warning is appended in the error style.
   - **Session tab:** the "Match host result" paragraph shows the launcher warning when there is one.
