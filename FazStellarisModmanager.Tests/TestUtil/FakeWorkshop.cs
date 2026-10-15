@@ -2,10 +2,21 @@ using FazStellarisModmanager.Core.Workshop;
 
 namespace FazStellarisModmanager.Tests.TestUtil;
 
-/// <summary>"Downloads" by calling the install function (true = installed) and records what was requested.</summary>
-public sealed class FakeWorkshop(Func<ulong, CancellationToken, Task<bool>> install) : IWorkshopService
+/// <summary>"Downloads" by calling the install function and records what was requested.</summary>
+public sealed class FakeWorkshop : IWorkshopService
 {
+    readonly Func<ulong, CancellationToken, Task<WorkshopItemResult>> _install;
+
+    /// <summary>true = installed (into "folder"), false = failed with "Not available.".</summary>
+    public FakeWorkshop(Func<ulong, CancellationToken, Task<bool>> install) =>
+        _install = async (id, ct) => await install(id, ct)
+            ? new WorkshopItemResult(id, true, "folder", null)
+            : new WorkshopItemResult(id, false, null, "Not available.");
+
     public FakeWorkshop(Func<ulong, bool> install) : this((id, _) => Task.FromResult(install(id))) { }
+
+    /// <summary>Each item's result as given; an error of "Cancelled." reports the item as cancelled.</summary>
+    public FakeWorkshop(Func<ulong, WorkshopItemResult> install) => _install = (id, _) => Task.FromResult(install(id));
 
     public List<ulong> Requested { get; } = [];
     public bool IsActive { get; private set; }
@@ -23,9 +34,12 @@ public sealed class FakeWorkshop(Func<ulong, CancellationToken, Task<bool>> inst
             {
                 ct.ThrowIfCancellationRequested();
                 Requested.Add(id);
-                var ok = await install(id, ct);
-                progress.Report(new WorkshopProgress(id, ok ? WorkshopItemState.Installed : WorkshopItemState.Failed, ok ? 1 : 0));
-                results.Add(new WorkshopItemResult(id, ok, ok ? "folder" : null, ok ? null : "Not available."));
+                var result = await _install(id, ct);
+                var state = result.Success ? WorkshopItemState.Installed
+                    : result.Error == "Cancelled." ? WorkshopItemState.Cancelled
+                    : WorkshopItemState.Failed;
+                progress.Report(new WorkshopProgress(id, state, result.Success ? 1 : 0));
+                results.Add(result);
             }
             return results;
         }
