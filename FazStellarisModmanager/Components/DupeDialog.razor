@@ -1,0 +1,80 @@
+<div class="modal-backdrop" @onmousedown="() => downOnBackdrop = true" @onclick="BackdropClick">
+    <div class="modal dupe-modal" tabindex="-1" @ref="dialog" @onclick:stopPropagation @onmousedown:stopPropagation @onmousedown="() => downOnBackdrop = false" @onkeydown="Key">
+        <div class="modal-head">
+            <h2>@Title</h2>
+            <button class="small" title="Close" @onclick="Close">✕</button>
+        </div>
+        <p class="muted">Stellaris skips every mod whose name is shared with another .mod file. Pick the copy that keeps the name; the others are renamed to "&lt;name&gt; (duplicate: &lt;file&gt;)". Nothing is deleted.</p>
+        <div class="dupe-list">
+            @for (var i = 0; i < Groups.Count; i++)
+            {
+                var index = i;
+                var g = Groups[i];
+                <div class="dupe-group">
+                    <h3>@g.Name</h3>
+                    @foreach (var m in g.Mods)
+                    {
+                        var mod = m;
+                        <label class="dupe-row">
+                            <input type="radio" name="dupe-@index" checked="@ReferenceEquals(keep.GetValueOrDefault(g), mod)" @onchange="() => Pick(g, mod)" />
+                            <span class="dfile">@Path.GetFileName(mod.DescriptorRel)</span>
+                            <span class="badge @(mod.Source == ModSource.Workshop ? "workshop" : "local")">@(mod.Source == ModSource.Workshop ? "Workshop" : "Local")</span>
+                            <span class="muted">v@(mod.Version ?? "?")</span>
+                            @if (InListRels.Contains(mod.DescriptorRel))
+                            {
+                                <span class="badge">in your list</span>
+                            }
+                            <div class="sub">@mod.ContentPath</div>
+                        </label>
+                    }
+                </div>
+            }
+        </div>
+        <div class="modal-actions">
+            <button @onclick="Close">Cancel</button>
+            <button class="primary" @onclick="Confirm">@ConfirmText</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    bool downOnBackdrop;
+
+    async Task BackdropClick()
+    {
+        if (downOnBackdrop) await Close();
+        downOnBackdrop = false;
+    }
+
+    [Parameter, EditorRequired] public IReadOnlyList<DupeGroup> Groups { get; set; } = [];
+    /// <summary>Descriptor paths in the current list (case-insensitive set); these get the "in your list" tag and drive the default choice.</summary>
+    [Parameter, EditorRequired] public IReadOnlySet<string> InListRels { get; set; } = default!;
+    [Parameter] public string Title { get; set; } = "Mods with the same name";
+    [Parameter] public string ConfirmText { get; set; } = "Keep selected";
+    [Parameter] public EventCallback<IReadOnlyList<DupeChoice>> OnConfirm { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    ElementReference dialog;
+
+    // The copy that keeps the name, per group (by reference); starts at the default and follows the radio buttons.
+    readonly Dictionary<DupeGroup, InstalledMod> keep = new(ReferenceEqualityComparer.Instance);
+
+    protected override void OnParametersSet()
+    {
+        foreach (var g in Groups)
+            if (!keep.ContainsKey(g)) keep[g] = DupeConflicts.DefaultKeep(g, InListRels);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await dialog.FocusAsync(); // so Escape closes it
+    }
+
+    void Pick(DupeGroup g, InstalledMod m) => keep[g] = m;
+
+    Task Confirm() => OnConfirm.InvokeAsync(Groups.Select(g => new DupeChoice(g, keep[g])).ToList());
+
+    Task Close() => OnClose.InvokeAsync();
+
+    Task Key(KeyboardEventArgs e) => e.Key == "Escape" ? Close() : Task.CompletedTask;
+}

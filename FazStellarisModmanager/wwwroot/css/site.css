@@ -247,6 +247,17 @@ a.button.small { padding: .1rem .45rem; font-size: .85rem; }
 /* File conflicts */
 button.warnbadge { color: #f2c94c; background: #3a2e12; border: 1px solid #6b5520; border-radius: 5px; padding: .05rem .45rem; font-size: .78rem; white-space: nowrap; }
 button.warnbadge:hover:not(:disabled) { border-color: #f2c94c; }
+
+/* Dupe conflicts (mods sharing a descriptor name) */
+.badge.dupe { color: #f2c94c; background: #3a2e12; border: 1px solid #6b5520; white-space: nowrap; }
+.modal.dupe-modal { width: min(720px, 94vw); max-height: 86vh; }
+.modal.dupe-modal p { margin: 0; }
+.dupe-list { overflow: auto; display: flex; flex-direction: column; gap: .5rem; }
+.dupe-group { border: 1px solid var(--border); border-radius: 8px; padding: .5rem .7rem; }
+.dupe-group h3 { margin: 0 0 .35rem; font-size: .95rem; }
+.dupe-row { display: grid; grid-template-columns: auto auto auto auto 1fr; gap: .45rem; align-items: center; padding: .2rem 0; cursor: pointer; }
+.dupe-row .badge { justify-self: start; }
+.dupe-row .sub { grid-column: 2 / -1; font-size: .72rem; color: var(--muted); word-break: break-all; }
 .conflict-panel { list-style: none; background: var(--panel); border: 1px solid #3a4a5c; border-radius: 8px; padding: .6rem .8rem; margin: -1px 0 6px 2.5rem; cursor: default; user-select: text; }
 .conflict-panel h4 { margin: 0 0 .35rem; font-size: .85rem; }
 .conflict-panel .cgroup { margin: .45rem 0 .15rem; color: #9fd2ff; font-size: .82rem; }

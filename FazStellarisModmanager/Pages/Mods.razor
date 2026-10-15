@@ -80,6 +80,11 @@
                     <button class="warnbadge" title="@heavy.Percent% of this mod's files are overwritten by mods later in the list"
                             @onclick="() => ToggleConflicts(e)">⚠ @heavy.Percent% overwritten</button>
                 }
+                @if (dupeByRel.GetValueOrDefault(e.DescriptorRel) is { } dupe)
+                {
+                    <button class="warnbadge" title="Another mod in your mod folder has the same name; Stellaris skips mods that share a name."
+                            @onclick="() => OpenDupes([dupe], null)">⚠ Dupe conflict</button>
+                }
                 @if (workshopId is not null)
                 {
                     <a class="button small" href="steam://url/CommunityFilePage/@workshopId" target="_blank" title="Open on the Steam Workshop">Workshop ↗</a>
@@ -120,6 +125,11 @@
     <AddModsDialog Library="Manager.Library" InList="InListKeys()" Icons="Icons" ListName="@listName"
                    OnAdd="AddMods" OnClose="() => adding = false" />
 }
+@if (dupeGroups is not null)
+{
+    <DupeDialog Groups="dupeGroups" InListRels="ListRels()" ConfirmText="@(afterDupes is null ? "Keep selected" : "Fix and apply")"
+                OnConfirm="ConfirmDupes" OnClose="() => { dupeGroups = null; afterDupes = null; }" />
+}
 
 @code {
     List<ModListEntry> current => State.Mods;
@@ -142,6 +152,11 @@
     bool adding;
     Dictionary<string, InstalledMod> byKey = new(StringComparer.OrdinalIgnoreCase);
     CancellationTokenSource? iconRun;
+
+    // Installed mods whose descriptor name another mod/*.mod shares (Stellaris skips them all), by descriptor path.
+    Dictionary<string, DupeGroup> dupeByRel = new(StringComparer.OrdinalIgnoreCase);
+    IReadOnlyList<DupeGroup>? dupeGroups;  // the dupe dialog is open with these groups
+    Func<string?>? afterDupes;             // what runs after the renames (Apply); null when opened from a badge
 
     // File-conflict results for the list as it was when last analyzed (by entry reference); shown until a newer run finishes.
     Dictionary<ModListEntry, ModConflicts> conflicts = new(ReferenceEqualityComparer.Instance);
@@ -225,11 +240,14 @@
         });
     }
 
-    // Rebuilds the key lookup and loads icons in the background: mods in the list first, 3 at a time.
+    // Rebuilds the key and dupe lookups and loads icons in the background: mods in the list first, 3 at a time.
     void LibraryChanged()
     {
         byKey = new(StringComparer.OrdinalIgnoreCase);
         foreach (var m in Manager.Library) byKey.TryAdd(m.Key, m);
+        dupeByRel = new(StringComparer.OrdinalIgnoreCase);
+        foreach (var g in DupeConflicts.Find(Manager.Library))
+            foreach (var m in g.Mods) dupeByRel.TryAdd(m.DescriptorRel, g);
 
         iconRun?.Cancel();
         iconRun?.Dispose();
@@ -260,6 +278,8 @@
     }
 
     HashSet<string> InListKeys() => new(current.Select(e => e.Key), StringComparer.OrdinalIgnoreCase);
+
+    HashSet<string> ListRels() => new(current.Select(e => e.DescriptorRel), StringComparer.OrdinalIgnoreCase);
 
     int IndexOf(ModListEntry e) => current.FindIndex(x => ReferenceEquals(x, e));
 
@@ -390,7 +410,47 @@
         return $"Loaded list '{name}'.";
     });
 
-    void Apply() => Run(() =>
+    void Apply() => ApplyFixingDupes(DoApply);
+
+    void ApplyAndLaunch() => ApplyFixingDupes(DoApplyAndLaunch);
+
+    // When mods in the list share their name with another descriptor, Stellaris would skip them: ask which copies keep
+    // the name and rename the others first (the dialog then runs the apply).
+    void ApplyFixingDupes(Func<string?> apply)
+    {
+        var groups = Manager.DupesIn(Build());
+        if (groups.Count > 0) OpenDupes(groups, apply);
+        else Run(apply);
+    }
+
+    void OpenDupes(IReadOnlyList<DupeGroup> groups, Func<string?>? after) => (dupeGroups, afterDupes) = (groups, after);
+
+    // Renames the unkept copies, then runs the apply that opened the dialog (if any); the status starts with the renames.
+    void ConfirmDupes(IReadOnlyList<DupeChoice> choices)
+    {
+        var after = afterDupes;
+        (dupeGroups, afterDupes) = (null, null);
+        string? note = null;
+        var warned = false;
+        Run(() =>
+        {
+            var r = Manager.ResolveDupes(choices);
+            LibraryChanged(); // the names changed: rebuild the badges
+            note = $"Renamed {r.Renamed.Count} duplicate-named {(r.Renamed.Count == 1 ? "mod" : "mods")} so Stellaris loads them.";
+            if (r.LauncherWarning is { } w) (note, warned) = (note + " " + w, true);
+            return note;
+        });
+        if (note is null) return; // refused (e.g. the launcher is open) or failed: Run put the error in the status; nothing was applied
+        if (after is not null)
+        {
+            status = null;
+            Run(after);
+            status = status is null ? note : note + " " + status;
+        }
+        if (warned) error = true;
+    }
+
+    string? DoApply()
     {
         if (current.Count == 0 && !confirmEmpty)
         {
@@ -407,9 +467,9 @@
             return null;
         }
         return message;
-    });
+    }
 
-    void ApplyAndLaunch() => Run(() =>
+    string? DoApplyAndLaunch()
     {
         if (Manager.Resolve().GameDir is null)
         {
@@ -439,7 +499,7 @@
             return null;
         }
         return "Applied and launched Stellaris." + steamWarning;
-    });
+    }
 
     async Task RunAsync(Func<Task<string?>> action)
     {
