@@ -75,6 +75,7 @@ public static class GamestateScanner
     /// </summary>
     public static (List<SavePlayer> Players, List<SaveCountry> Countries) ScanTechs(byte[] data)
     {
+        if (ScanTechsFast(data) is { } fast) return fast;
         var players = new List<SavePlayer>();
         var countryBlocks = new List<(int Start, int End)>();
         var r = new Reader(data, 0, data.Length);
@@ -101,6 +102,36 @@ public static class GamestateScanner
             }
         }
         return (players, countries);
+    }
+
+    // Real saves start top-level keys at the beginning of a line and indent nested ones, so the player and country blocks
+    // are found by a plain search instead of walking the hundreds of MB before them. Player countries come first in the
+    // country block, so the walk usually stops early. Null when the layout isn't like that (the full walk runs).
+    static (List<SavePlayer> Players, List<SaveCountry> Countries)? ScanTechsFast(byte[] data)
+    {
+        var span = data.AsSpan();
+        var p = span.IndexOf("\nplayer="u8);
+        var c = span.IndexOf("\ncountry="u8);
+        if (p < 0 || c < 0) return null;
+
+        var pr = new Reader(data, p + 1, data.Length);
+        if (!pr.NextEntry(out var playerKey, out _, out var playerBody) || !pr.Is(playerKey, "player") || playerBody is not { } pb) return null;
+        var players = ReadPlayers(Parse(data, pb)).ToList();
+        var remaining = players.Select(x => x.CountryId).ToHashSet();
+        if (remaining.Count == 0) return (players, new List<SaveCountry>());
+
+        var open = span.Slice(c, Math.Min(32, data.Length - c)).IndexOf((byte)'{');
+        if (open < 0) return null;
+        var countries = new List<SaveCountry>();
+        var cr = new Reader(data, c + open + 1, data.Length);
+        while (remaining.Count > 0 && cr.NextEntry(out var key, out _, out var body))
+        {
+            if (body is not { } b || !int.TryParse(cr.Text(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)) continue;
+            if (remaining.Remove(id)) countries.Add(ScanCountryTechs(data, id, b));
+        }
+        // Not all found: the walk went on to the end of the file, which is what the full walk would see too (an observer's
+        // country, for example, doesn't exist). Nothing found means the search landed somewhere unexpected.
+        return countries.Count > 0 ? (players, countries) : null;
     }
 
     // A country's type and techs; its other entries are skipped unread.

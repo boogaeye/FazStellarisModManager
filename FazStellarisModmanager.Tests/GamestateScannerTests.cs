@@ -222,6 +222,27 @@ public class GamestateScannerTests
         Assert.Null(c.Ethics);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ScanTechs_finds_the_blocks_by_search_in_a_save_shaped_file(bool playersLast)
+    {
+        // Real saves: top-level keys after other lines, so the blocks are found by searching "\nplayer=" / "\ncountry=".
+        var nl = (char)10 + "";
+        var before = "version=" + '"' + "4.5.2" + '"' + nl + "planets={ 1={ name=" + '"' + "country=" + '"' + " } }" + nl;
+        var text = playersLast
+            ? before + TechCountries + nl + TechPlayers + nl + "fleet={ 0={ } }"
+            : before + TechPlayers + nl + TechCountries + nl + "fleet={ 0={ } }";
+        var data = Encoding.UTF8.GetBytes(text);
+
+        var (players, countries) = GamestateScanner.ScanTechs(data);
+
+        Assert.Equal(2, players.Count);
+        Assert.Equal([0, 2], countries.Select(c => c.Id));
+        var full = GamestateScanner.ScanWithGlobals(data).Countries;
+        foreach (var c in countries) Assert.Equal(full.Single(f => f.Id == c.Id).Techs, c.Techs);
+    }
+
     [Fact]
     public void ScanTechs_handles_a_player_block_after_the_countries()
     {
