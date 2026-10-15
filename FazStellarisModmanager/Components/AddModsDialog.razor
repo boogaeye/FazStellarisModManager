@@ -21,6 +21,10 @@
                     <ModIcon Uri="@Icons.TryPeek(m)" Name="@m.Name" Size="32" />
                     <span class="pname" title="@m.DescriptorRel">@m.Name</span>
                     <span class="badge @(m.Source == ModSource.Workshop ? "workshop" : "local")">@(m.Source == ModSource.Workshop ? "Workshop" : "Local")</span>
+                    @if (dupeRels.Contains(m.DescriptorRel))
+                    {
+                        <span class="badge dupe" title="Another mod in your mod folder has the same name; Stellaris skips mods that share a name.">⚠ Dupe conflict</span>
+                    }
                 </label>
             }
             @if (matches.Count > MaxShown)
@@ -62,6 +66,17 @@
     string search = "";
     string source = "all";
     readonly HashSet<InstalledMod> picked = [];
+
+    // Descriptor paths of mods whose name another installed mod shares, for the library they were found in.
+    HashSet<string> dupeRels = new(StringComparer.OrdinalIgnoreCase);
+    IReadOnlyList<InstalledMod>? dupesFor;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(dupesFor, Library)) return;
+        dupesFor = Library;
+        dupeRels = DupeConflicts.Find(Library).SelectMany(g => g.Mods).Select(m => m.DescriptorRel).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
 
     IEnumerable<InstalledMod> Candidates() =>
         Library.Where(m => !InList.Contains(m.Key)).OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase);

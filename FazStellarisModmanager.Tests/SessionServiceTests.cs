@@ -23,7 +23,7 @@ public class SessionServiceTests
             var paths = new AppPaths(Fake.DataDir);
             SettingsStore.Save(paths.Settings, new AppSettings(UserDir: Fake.UserDir, PlayerName: playerName));
             Fake.Write("user/dlc_load.json", "{\"disabled_dlcs\":[],\"enabled_mods\":" + enabledModsJson + "}");
-            Session = new SessionService(new ModManagerService(paths, _ => Fake.GameDir), workshop?.Invoke(Fake));
+            Session = new SessionService(new ModManagerService(paths, _ => Fake.GameDir) { IsLauncherRunning = () => false }, workshop?.Invoke(Fake));
         }
 
         public async ValueTask DisposeAsync()
@@ -52,6 +52,24 @@ public class SessionServiceTests
         Assert.Equal(new[] { "mod/ugc_111.mod", "mod/local.mod" }, DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
         Assert.True(client.Session.MyDiff!.IsMatch);
         await Wait.Until(() => host.Session.Players.Any(p => p.Name == "Cli" && p.Status == PlayerStatus.Ready), "host sees ready");
+    }
+
+    [Fact]
+    public async Task Match_host_renames_a_clashing_copy_of_a_listed_mod()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/ugc_111.mod\",\"mod/local.mod\"]");
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]");
+        client.Fake.Write("user/mod/copy.mod", "name=" + '"' + "Local Mod" + '"' + (char)10 + "path=" + '"' + "mod/local" + '"' + (char)10);
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+
+        await client.Session.MatchHostAsync();
+
+        Assert.Equal(1, client.Session.LastDupeRenames);
+        Assert.Null(client.Session.LastLauncherWarning);
+        Assert.Contains("Local Mod (duplicate: copy)", File.ReadAllText(Path.Combine(client.Fake.UserDir, "mod", "copy.mod")));
+        Assert.DoesNotContain("duplicate", File.ReadAllText(Path.Combine(client.Fake.UserDir, "mod", "local.mod")));
+        Assert.Equal(new[] { "mod/ugc_111.mod", "mod/local.mod" }, DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
     }
 
     [Fact]

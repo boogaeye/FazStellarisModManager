@@ -1,5 +1,6 @@
 using FazStellarisModmanager.Core;
 using FazStellarisModmanager.Core.Game;
+using FazStellarisModmanager.Core.Library;
 using FazStellarisModmanager.Core.Lists;
 using FazStellarisModmanager.Tests.TestUtil;
 
@@ -11,7 +12,7 @@ public class ModManagerServiceTests
     {
         var paths = new AppPaths(fake.DataDir);
         SettingsStore.Save(paths.Settings, new AppSettings(UserDir: fake.UserDir));
-        return new ModManagerService(paths, _ => fake.GameDir);
+        return new ModManagerService(paths, _ => fake.GameDir) { IsLauncherRunning = () => false };
     }
 
     [Fact]
@@ -76,11 +77,43 @@ public class ModManagerServiceTests
         svc.RefreshLibrary();
         var list = new ModList("L", [new("ugc:111", "Workshop One", "mod/ugc_111.mod", "111"), new("local:local.mod", "Local Mod", "mod/local.mod", null)], []);
 
-        var backup = svc.Apply(list);
+        var result = svc.Apply(list);
 
         Assert.Equal(new[] { "mod/ugc_111.mod", "mod/local.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
-        Assert.NotNull(backup);
-        Assert.StartsWith(Path.Combine(fake.DataDir, "backups"), backup);
+        Assert.NotNull(result.BackupPath);
+        Assert.StartsWith(Path.Combine(fake.DataDir, "backups"), result.BackupPath);
+        Assert.False(result.LauncherPlaysetSet);
+        Assert.Null(result.LauncherWarning);
+    }
+
+    [Fact]
+    public void Apply_refuses_while_the_launcher_runs_and_writes_nothing()
+    {
+        using var fake = new FakeInstall();
+        var svc = Create(fake);
+        svc.IsLauncherRunning = () => true;
+        var before = File.ReadAllText(Path.Combine(fake.UserDir, "dlc_load.json"));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => svc.Apply(new ModList("L", [new("local:local.mod", "Local Mod", "mod/local.mod", null)], [])));
+
+        Assert.Contains("Paradox launcher", ex.Message);
+        Assert.Equal(before, File.ReadAllText(Path.Combine(fake.UserDir, "dlc_load.json")));
+    }
+
+    [Fact]
+    public void Apply_sets_the_launcher_playset_when_the_launcher_database_exists()
+    {
+        using var fake = new FakeInstall();
+        var svc = Create(fake);
+        var db = Path.Combine(fake.UserDir, LauncherPlaysetFile.FileName);
+        LauncherDb.Create(db);
+        LauncherDb.AddMod(db, "m1", "mod/local.mod");
+
+        var result = svc.Apply(new ModList("L", [new("local:local.mod", "Local Mod", "mod/local.mod", null)], []));
+
+        Assert.True(result.LauncherPlaysetSet);
+        Assert.Null(result.LauncherWarning);
+        Assert.Equal("m1", LauncherDb.Query(db, "select modId from playsets_mods").Single()[0]);
     }
 
     [Fact]
@@ -125,6 +158,88 @@ public class ModManagerServiceTests
         fake.Write("user/dlc_load.json", "{not json");
 
         Assert.Throws<InvalidDataException>(() => svc.ImportCurrent("Current"));
+    }
+
+    // A second descriptor named "Local Mod", so mod/local.mod and mod/copy.mod clash.
+    static ModManagerService WithDupe(FakeInstall fake)
+    {
+        fake.Write("user/mod/copy.mod", "name=" + '"' + "Local Mod" + '"' + (char)10 + "path=" + '"' + "mod/local" + '"' + (char)10);
+        var svc = Create(fake);
+        svc.RefreshLibrary();
+        return svc;
+    }
+
+    static ModList LocalList() => new("L", [new("local:local.mod", "Local Mod", "mod/local.mod", null)], []);
+
+    [Fact]
+    public void DupesIn_returns_groups_touching_the_list()
+    {
+        using var fake = new FakeInstall();
+        var svc = WithDupe(fake);
+
+        var group = Assert.Single(svc.DupesIn(LocalList()));
+
+        Assert.Equal(new[] { "mod/copy.mod", "mod/local.mod" }, group.Mods.Select(m => m.DescriptorRel));
+    }
+
+    [Fact]
+    public void DupesIn_ignores_groups_with_no_member_in_the_list()
+    {
+        using var fake = new FakeInstall();
+        var svc = WithDupe(fake);
+
+        Assert.Empty(svc.DupesIn(new ModList("L", [new("ugc:111", "Workshop One", "mod/ugc_111.mod", "111")], [])));
+    }
+
+    [Fact]
+    public void ResolveDupesWithDefaults_keeps_the_listed_copy_and_rescans()
+    {
+        using var fake = new FakeInstall();
+        var svc = WithDupe(fake);
+        var list = LocalList();
+
+        var result = svc.ResolveDupesWithDefaults(list);
+
+        var rename = Assert.Single(result.Renamed);
+        Assert.Equal(("mod/copy.mod", "Local Mod (duplicate: copy)"), (rename.DescriptorRel, rename.NewName));
+        Assert.Null(result.LauncherWarning);
+        Assert.Contains("Local Mod (duplicate: copy)", File.ReadAllText(Path.Combine(fake.UserDir, "mod", "copy.mod")));
+        Assert.Contains("Local Mod", File.ReadAllText(Path.Combine(fake.UserDir, "mod", "local.mod")));
+        Assert.DoesNotContain("duplicate", File.ReadAllText(Path.Combine(fake.UserDir, "mod", "local.mod")));
+        Assert.Equal("Local Mod (duplicate: copy)", svc.Library.Single(m => m.DescriptorRel == "mod/copy.mod").Name);
+        Assert.Equal("Local Mod", svc.Library.Single(m => m.DescriptorRel == "mod/local.mod").Name);
+        Assert.Empty(svc.DupesIn(list));
+    }
+
+    [Fact]
+    public void ResolveDupesWithDefaults_does_nothing_without_dupes()
+    {
+        using var fake = new FakeInstall();
+        var svc = Create(fake);
+        svc.RefreshLibrary();
+
+        var result = svc.ResolveDupesWithDefaults(LocalList());
+
+        Assert.Empty(result.Renamed);
+        Assert.Null(result.BackupDir);
+        Assert.Null(result.LauncherWarning);
+    }
+
+    [Fact]
+    public void ResolveDupes_refuses_while_the_launcher_runs_and_renames_nothing()
+    {
+        using var fake = new FakeInstall();
+        var svc = WithDupe(fake);
+        var group = Assert.Single(svc.DupesIn(LocalList()));
+        var copy = Path.Combine(fake.UserDir, "mod", "copy.mod");
+        var before = File.ReadAllBytes(copy);
+        svc.IsLauncherRunning = () => true;
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            svc.ResolveDupes([new DupeChoice(group, group.Mods.Single(m => m.DescriptorRel == "mod/local.mod"))]));
+
+        Assert.Contains("Paradox launcher", ex.Message);
+        Assert.Equal(before, File.ReadAllBytes(copy));
     }
 
     [Fact]
