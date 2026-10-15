@@ -5,7 +5,7 @@ namespace FazStellarisModmanager.Core.Saves;
 /// <summary>Live data received from a session host (implemented by SessionService).</summary>
 public interface IHostLiveSource
 {
-    /// <summary>The last update from the host; kept after the connection ends, until ForgetHostLive or a new join.</summary>
+    /// <summary>The last update from the host; kept after the connection ends, until ForgetHostLive or a new join. Dropped when the host stops streaming.</summary>
     LiveUpdate? HostLive { get; }
     DateTime? HostLiveReceivedUtc { get; }
     /// <summary>True while connected to a host as a client.</summary>

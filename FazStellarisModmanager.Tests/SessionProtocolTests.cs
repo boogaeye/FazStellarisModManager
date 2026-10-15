@@ -61,6 +61,21 @@ public class SessionProtocolTests
     }
 
     [Fact]
+    public void Protocol_is_version_3() => Assert.Equal(3, SessionProtocol.Version);
+
+    [Theory]
+    [InlineData(false, false, StreamMode.Off, false, false)]
+    [InlineData(false, true, StreamMode.Technology, false, true)]
+    [InlineData(true, false, StreamMode.LiveGame, true, true)]
+    [InlineData(true, true, StreamMode.LiveGame, true, true)]
+    public void Live_game_wins_and_includes_the_techs(bool liveGame, bool technology, StreamMode mode, bool stateLive, bool stateTech)
+    {
+        Assert.Equal(mode, StreamModes.For(liveGame, technology));
+        Assert.Equal(mode, StreamModes.For(new FazStellarisModmanager.Core.AppSettings(StreamLiveGame: liveGame, StreamTechnology: technology)));
+        Assert.Equal(new StreamingState(stateLive, stateTech), StreamModes.StateFor(mode));
+    }
+
+    [Fact]
     public void Summary_counts_and_describes_differences()
     {
         var host = TestSnapshots.Machine("H", "ugc:1", "ugc:2", "ugc:3");

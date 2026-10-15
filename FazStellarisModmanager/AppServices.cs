@@ -50,11 +50,7 @@ public static class AppServices
         {
             var manager = sp.GetRequiredService<ModManagerService>();
             var enricher = sp.GetRequiredService<DiploEnricher>();
-            return new LiveGameService(() =>
-            {
-                try { return Path.Combine(manager.Resolve().UserDir, "save games"); }
-                catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException) { return null; }
-            }, enrich: enricher.Enrich);
+            return new LiveGameService(manager.SaveGamesDir, enrich: enricher.Enrich);
         });
         services.AddSingleton(new LiveViewerStore(paths.LiveGame));
         services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>(), sp.GetRequiredService<LiveGameService>()));

@@ -13,9 +13,15 @@ public enum SessionRole { None, Host, Client }
 /// UI-facing multiplayer state. One operation (host, join, rescan, match, leave) runs at a time;
 /// <see cref="Changed"/> may fire on any thread.
 /// </summary>
-public sealed class SessionService(ModManagerService manager, IWorkshopService? workshop = null, LiveGameService? live = null) : IAsyncDisposable, IHostLiveSource
+/// <param name="live">The shared full save reader (also the host's own Live Game tab); streams the live game while hosting.</param>
+/// <param name="readTechs">Reads a save for technology-only streaming; defaults to <see cref="SaveReader.ReadTechs"/>.</param>
+/// <param name="saveGamesDir">Where technology-only streaming looks for saves; defaults to <see cref="ModManagerService.SaveGamesDir"/>.</param>
+public sealed class SessionService(ModManagerService manager, IWorkshopService? workshop = null, LiveGameService? live = null,
+    Func<string, GameSnapshot>? readTechs = null, Func<string?>? saveGamesDir = null) : IAsyncDisposable, IHostLiveSource
 {
     readonly IWorkshopService? _workshop = workshop;
+    readonly Func<string, GameSnapshot> _readTechs = readTechs ?? SaveReader.ReadTechs;
+    readonly Func<string?> _saveGamesDir = saveGamesDir ?? manager.SaveGamesDir;
     readonly SemaphoreSlim _op = new(1, 1);
     volatile SessionHost? _host;
     volatile SessionClient? _client;
@@ -34,6 +40,11 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     volatile LiveUpdate? _hostLive;
     DateTime? _hostLiveReceivedUtc;
     LiveUpdate? _seenLive;
+    StreamingState? _seenStreaming;
+    // The save readers feeding the host. Guarded by _streamGate, which also orders their pushes against mode switches.
+    readonly Lock _streamGate = new();
+    bool _fullSubscribed;
+    LiveGameService? _techLive;
     int _busyCount;
     long _lastProgressRaise;
     HashCache? _cache;
@@ -47,6 +58,15 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     public string? HostName => _client?.Roster.FirstOrDefault(p => p.IsHost)?.Name;
     public LiveUpdate? HostLive => _hostLive;
     public DateTime? HostLiveReceivedUtc => _hostLiveReceivedUtc;
+
+    /// <summary>What the host streams: as host, this host's effective toggles; as client, what the host said (null until it does).</summary>
+    public StreamingState? HostStreaming => _host is { } h ? StreamModes.StateFor(h.Mode) : _client?.Streaming;
+
+    /// <summary>Host only: the date of the save last sent to players in the current mode (null when none was sent yet).</summary>
+    public string? LastLiveSentDate => _host?.LastLiveSentDate;
+
+    /// <summary>Host only: the JSON size, before compression, of the largest view of that save sent to one player (0 when none).</summary>
+    public int LastLiveSentBytes => _host?.LastLiveSentBytes ?? 0;
 
     /// <summary>Client only: this machine compared with the host.</summary>
     public DiffResult? MyDiff => _myDiff;
@@ -90,8 +110,9 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         await manager.RefreshLibraryAsync();
         var list = manager.ImportCurrent("Host list");
         var snapshot = await ScanAsync(ct);
-        var host = new SessionHost(PlayerName, list, snapshot);
+        var host = new SessionHost(PlayerName, list, snapshot, StreamModes.For(manager.Settings));
         host.RosterChanged += RaiseChanged;
+        host.LiveSent += RaiseChanged;
         try { host.Start(port); }
         catch
         {
@@ -99,12 +120,8 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             throw;
         }
         _host = host;
-        if (live is not null)
-        {
-            live.Start();
-            live.Changed += PushLive;
-            host.UpdateLive(live.Current);
-        }
+        // Read again under the gate: a SetStreamingAsync meanwhile saved its toggles before it looked for a host.
+        lock (_streamGate) ConfigureStreaming(host, StreamModes.For(manager.Settings));
         _lastDisconnectReason = null;
         SaveSettings(s => s with { HostPort = port });
         return true;
@@ -120,6 +137,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         _hostLive = null;
         _hostLiveReceivedUtc = null;
         _seenLive = null;
+        _seenStreaming = null;
         var client = await SessionClient.ConnectAsync(address, port, PlayerName, ct);
         try
         {
@@ -141,6 +159,16 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
                     _seenLive = l;
                     _hostLive = l;
                     _hostLiveReceivedUtc = DateTime.UtcNow;
+                }
+                if (client.Streaming is { } streaming && !ReferenceEquals(streaming, _seenStreaming))
+                {
+                    _seenStreaming = streaming;
+                    if (streaming is { LiveGame: false, Technology: false })
+                    {
+                        // The host stopped streaming: drop its data so the tabs fall back to this PC's saves.
+                        _hostLive = null;
+                        _hostLiveReceivedUtc = null;
+                    }
                 }
                 RecomputeDiff(onlyIfInputsChanged: true); // most messages are roster updates: same target, same diff
                 RaiseChanged();
@@ -321,9 +349,88 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* only remembered inputs */ }
     }
 
-    void PushLive()
+    /// <summary>
+    /// Saves the host's streaming toggles. While hosting, starts the save reader the new mode needs, stops the other,
+    /// and switches the host, which tells the players and resends what it has in the new mode.
+    /// </summary>
+    public Task SetStreamingAsync(bool liveGame, bool technology) => Task.Run(() =>
     {
-        if (_host is { } h && live is not null) h.UpdateLive(live.Current);
+        lock (_streamGate)
+        {
+            SaveSettings(s => s with { StreamLiveGame = liveGame, StreamTechnology = technology });
+            if (_host is { } host) ConfigureStreaming(host, StreamModes.For(liveGame, technology));
+        }
+        RaiseChanged();
+    });
+
+    // Under _streamGate. Live game streams from the shared full reader; technology from a light tech-only reader of its
+    // own, which starts with the full reader's save (if any) so players get techs straight away; off reads nothing.
+    // The host is given the new source's newest save (null when it has none yet) before the switch, which resends it.
+    void ConfigureStreaming(SessionHost host, StreamMode mode)
+    {
+        if (mode != StreamMode.LiveGame && _fullSubscribed)
+        {
+            live!.Changed -= PushFull;
+            _fullSubscribed = false;
+        }
+        if (mode != StreamMode.Technology) StopTechLive();
+
+        GameSnapshot? current = null;
+        if (mode == StreamMode.LiveGame && live is not null)
+        {
+            if (!_fullSubscribed)
+            {
+                live.Changed += PushFull;
+                _fullSubscribed = true;
+            }
+            live.Start();
+            current = live.Current;
+        }
+        else if (mode == StreamMode.Technology)
+        {
+            if (_techLive is null)
+            {
+                _techLive = new LiveGameService(_saveGamesDir, _readTechs);
+                _techLive.Changed += PushTech;
+            }
+            _techLive.Start();
+            current = _techLive.Current ?? live?.Current;
+        }
+        host.UpdateLive(current);
+        host.SetMode(mode);
+    }
+
+    // The readers report every refresh; the gate keeps a reader that was just switched off from pushing afterwards.
+    void PushFull()
+    {
+        lock (_streamGate)
+            if (_fullSubscribed && _host is { } host && live!.Current is { } snapshot) host.UpdateLive(snapshot);
+    }
+
+    void PushTech()
+    {
+        lock (_streamGate)
+            if (_techLive?.Current is { } snapshot && _host is { } host) host.UpdateLive(snapshot);
+    }
+
+    // Under _streamGate.
+    void StopTechLive()
+    {
+        if (_techLive is not { } techLive) return;
+        techLive.Changed -= PushTech;
+        techLive.Dispose();
+        _techLive = null;
+    }
+
+    // Under _streamGate. The shared full reader keeps running: the Live Game tab may use it.
+    void StopStreaming()
+    {
+        if (_fullSubscribed)
+        {
+            live!.Changed -= PushFull;
+            _fullSubscribed = false;
+        }
+        StopTechLive();
     }
 
     public Task LeaveAsync()
@@ -351,7 +458,8 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         if (host is not null)
         {
             host.RosterChanged -= RaiseChanged;
-            if (live is not null) live.Changed -= PushLive;
+            host.LiveSent -= RaiseChanged;
+            lock (_streamGate) StopStreaming();
             await host.DisposeAsync();
         }
         if (client is not null) await client.DisposeAsync();

@@ -17,6 +17,7 @@ namespace FazStellarisModmanager.Core.Session;
 [JsonDerivedType(typeof(Bye), "bye")]
 [JsonDerivedType(typeof(LiveUpdate), "live")]
 [JsonDerivedType(typeof(LiveViewAs), "liveViewAs")]
+[JsonDerivedType(typeof(StreamingState), "streaming")]
 public abstract record SessionMessage;
 
 /// <summary>Client to host, first message.</summary>
@@ -48,6 +49,24 @@ public sealed record LiveUpdate(FazStellarisModmanager.Core.Saves.GameSnapshot S
 
 /// <summary>Client to host: I play this country in the save.</summary>
 public sealed record LiveViewAs(int CountryId) : SessionMessage;
+
+/// <summary>Host to clients, on joining and whenever it changes: what the host streams (effective values, see <see cref="StreamModes.StateFor"/>).</summary>
+public sealed record StreamingState(bool LiveGame, bool Technology) : SessionMessage;
+
+/// <summary>What the host streams from its saves: nothing, each player's own techs, or the live game (which includes the techs).</summary>
+public enum StreamMode { Off, Technology, LiveGame }
+
+public static class StreamModes
+{
+    /// <summary>The effective mode of the host's two toggles: live game wins, then technology, else off.</summary>
+    public static StreamMode For(bool liveGame, bool technology) =>
+        liveGame ? StreamMode.LiveGame : technology ? StreamMode.Technology : StreamMode.Off;
+
+    public static StreamMode For(AppSettings settings) => For(settings.StreamLiveGame, settings.StreamTechnology);
+
+    /// <summary>The toggles as players see them: technology is on whenever the live game is.</summary>
+    public static StreamingState StateFor(StreamMode mode) => new(mode == StreamMode.LiveGame, mode != StreamMode.Off);
+}
 
 public enum PlayerStatus { Waiting, Busy, Ready, Mismatch, Unreliable }
 
