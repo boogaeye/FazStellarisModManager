@@ -54,6 +54,7 @@ public static class AppServices
         });
         services.AddSingleton(new LiveViewerStore(paths.LiveGame));
         services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>(), sp.GetRequiredService<LiveGameService>()));
+        services.AddSingleton(new PublicAddressLookup());
         services.AddSingleton(sp => new LiveFeed(
             sp.GetRequiredService<LiveGameService>(),
             sp.GetRequiredService<SessionService>(),

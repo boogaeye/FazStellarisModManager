@@ -226,6 +226,16 @@ public class SessionServiceTests
     }
 
     [Fact]
+    public async Task PlayerName_is_the_trimmed_setting_or_the_machine_name()
+    {
+        await using var named = new Rig("  Cli  ", "[]");
+        await using var blank = new Rig(" ", "[]");
+
+        Assert.Equal("Cli", named.Session.PlayerName);
+        Assert.Equal(Environment.MachineName, blank.Session.PlayerName);
+    }
+
+    [Fact]
     public async Task Hosting_remembers_the_port()
     {
         await using var host = new Rig("Hosty", "[]");

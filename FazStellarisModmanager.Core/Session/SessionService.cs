@@ -98,7 +98,8 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
 
     public event Action? Changed;
 
-    string PlayerName => string.IsNullOrWhiteSpace(manager.Settings.PlayerName) ? Environment.MachineName : manager.Settings.PlayerName.Trim();
+    /// <summary>The name other players see: the Settings player name, or this PC's name when it is blank.</summary>
+    public string PlayerName => string.IsNullOrWhiteSpace(manager.Settings.PlayerName) ? Environment.MachineName : manager.Settings.PlayerName.Trim();
 
     /// <summary>Host only: a client's full diff against the host.</summary>
     public DiffResult? DiffFor(string playerId) => _host?.DiffFor(playerId);
@@ -261,7 +262,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
                 catch { /* best effort */ }
             }
             if (applied)
-                throw new InvalidOperationException($"Applied the host's list, but the rescan did not finish: {ex.Message}. Click Rescan my mods.", ex);
+                throw new InvalidOperationException($"Applied the host's list, but the rescan did not finish: {ex.Message}. Click Rescan.", ex);
             throw;
         }
     }
