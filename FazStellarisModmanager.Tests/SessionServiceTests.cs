@@ -55,6 +55,24 @@ public class SessionServiceTests
     }
 
     [Fact]
+    public async Task Match_host_renames_a_clashing_copy_of_a_listed_mod()
+    {
+        await using var host = new Rig("Hosty", "[\"mod/ugc_111.mod\",\"mod/local.mod\"]");
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]");
+        client.Fake.Write("user/mod/copy.mod", "name=" + '"' + "Local Mod" + '"' + (char)10 + "path=" + '"' + "mod/local" + '"' + (char)10);
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+
+        await client.Session.MatchHostAsync();
+
+        Assert.Equal(1, client.Session.LastDupeRenames);
+        Assert.Null(client.Session.LastLauncherWarning);
+        Assert.Contains("Local Mod (duplicate: copy)", File.ReadAllText(Path.Combine(client.Fake.UserDir, "mod", "copy.mod")));
+        Assert.DoesNotContain("duplicate", File.ReadAllText(Path.Combine(client.Fake.UserDir, "mod", "local.mod")));
+        Assert.Equal(new[] { "mod/ugc_111.mod", "mod/local.mod" }, DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
+    }
+
+    [Fact]
     public async Task Cancelled_match_does_not_leave_the_host_showing_busy()
     {
         await using var host = new Rig("Hosty", "[\"mod/ugc_111.mod\",\"mod/local.mod\"]");

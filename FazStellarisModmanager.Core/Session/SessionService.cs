@@ -30,6 +30,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     volatile CancellationTokenSource? _opCts;
     volatile string? _lastBackupPath;
     volatile string? _lastLauncherWarning;
+    volatile int _lastDupeRenames;
     volatile LiveUpdate? _hostLive;
     DateTime? _hostLiveReceivedUtc;
     LiveUpdate? _seenLive;
@@ -58,6 +59,9 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
 
     /// <summary>A Paradox launcher playset problem from the last Match host (null if none).</summary>
     public string? LastLauncherWarning => _lastLauncherWarning;
+
+    /// <summary>How many duplicate-named mods the last Match host renamed so Stellaris loads them (0 if none).</summary>
+    public int LastDupeRenames => _lastDupeRenames;
 
     /// <summary>This player's id on the host (null when hosting or not in a session).</summary>
     public string? MyPlayerId => _client?.PlayerId;
@@ -129,6 +133,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
                     _lastPlan = null;
                     _lastBackupPath = null;
                     _lastLauncherWarning = null;
+                    _lastDupeRenames = 0;
                 }
                 if (client.Live is { } l && !ReferenceEquals(l, _seenLive))
                 {
@@ -167,6 +172,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         _lastPlan = null;
         _lastBackupPath = null;
         _lastLauncherWarning = null;
+        _lastDupeRenames = 0;
         ModList? hostList = null;
         if (_host is not null)
         {
@@ -202,9 +208,12 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             var plan = await Task.Run(() => MatchPlan.Create(target.HostList, diff, manager.Library, mine), CancellationToken.None);
             ct.ThrowIfCancellationRequested();
             if (!client.IsConnected || !ReferenceEquals(_client, client)) throw new InvalidOperationException("The host has disconnected.");
+            // Stellaris skips every mod whose name another mod/*.mod shares: rename the unused copies first (this rescans the library).
+            var dupes = manager.ResolveDupesWithDefaults(plan.ToApply);
             var result = manager.Apply(plan.ToApply);
             _lastBackupPath = result.BackupPath;
-            _lastLauncherWarning = result.LauncherWarning;
+            _lastDupeRenames = dupes.Renamed.Count;
+            _lastLauncherWarning = string.Join(" ", new[] { dupes.LauncherWarning, result.LauncherWarning }.OfType<string>()) is { Length: > 0 } w ? w : null;
             applied = true;
             _lastPlan = plan;
             var snapshot = await ScanAsync(ct);
@@ -322,6 +331,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         _lastPlan = null;
         _lastBackupPath = null;
         _lastLauncherWarning = null;
+        _lastDupeRenames = 0;
         if (host is not null)
         {
             host.RosterChanged -= RaiseChanged;
@@ -341,6 +351,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         _lastPlan = null;
         _lastBackupPath = null;
         _lastLauncherWarning = null;
+        _lastDupeRenames = 0;
         _lastDisconnectReason = reason;
         RaiseChanged();
         _ = client.DisposeAsync().AsTask();

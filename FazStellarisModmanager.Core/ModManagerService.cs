@@ -100,6 +100,37 @@ public sealed class ModManagerService
         }
     }
 
+    /// <summary>Dupe groups (clashing descriptor names) with at least one member in the list. Uses the last <see cref="RefreshLibrary"/>.</summary>
+    public IReadOnlyList<DupeGroup> DupesIn(ModList list)
+    {
+        var rels = RelsOf(list);
+        return DupeConflicts.Find(Library).Where(g => g.Mods.Any(m => rels.Contains(m.DescriptorRel))).ToList();
+    }
+
+    /// <summary>
+    /// Renames the unkept members of each group (descriptor + launcher database), then rescans. Refuses while the launcher runs.
+    /// Launcher database problems are returned as <see cref="DupeResolution.LauncherWarning"/>.
+    /// </summary>
+    public DupeResolution ResolveDupes(IReadOnlyList<DupeChoice> choices)
+    {
+        if (IsLauncherRunning()) throw new InvalidOperationException("Close the Paradox launcher first, or it will overwrite your mod list.");
+        DupeResolution result;
+        lock (_gate) result = DupeResolver.Resolve(Resolve().UserDir, choices, _paths.Backups, DateTimeOffset.UtcNow);
+        RefreshLibrary();
+        return result;
+    }
+
+    /// <summary><see cref="ResolveDupes"/> for every group touching the list, keeping each group's default copy.</summary>
+    public DupeResolution ResolveDupesWithDefaults(ModList list)
+    {
+        var rels = RelsOf(list);
+        var choices = DupesIn(list).Select(g => new DupeChoice(g, DupeConflicts.DefaultKeep(g, rels))).ToList();
+        return choices.Count == 0 ? new DupeResolution([], null, null) : ResolveDupes(choices);
+    }
+
+    static HashSet<string> RelsOf(ModList list) =>
+        new(list.Mods.Select(m => m.DescriptorRel.Replace((char)92, '/')), StringComparer.OrdinalIgnoreCase);
+
     /// <summary>When set and returning a reason, <see cref="Launch"/> refuses with that reason (e.g. while Workshop downloads run).</summary>
     public Func<string?>? LaunchBlockedReason { get; set; }
 
