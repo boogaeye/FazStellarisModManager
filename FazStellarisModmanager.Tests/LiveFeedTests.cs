@@ -85,4 +85,16 @@ public class LiveFeedTests
         Assert.Equal(1, feed.ViewerId);
         Assert.Equal(1, store.Get("Duo"));
     }
+
+    [Fact]
+    public void A_page_lease_keeps_the_local_reader_watching()
+    {
+        using var t = new TempDir();
+        using var local = new LiveGameService(() => t.Path, _ => Snap("Solo"), TimeSpan.Zero);
+        using var feed = new LiveFeed(local, new FakeHost(), new LiveViewerStore(Path.Combine(t.Path, "v.json")), () => ["Me"]);
+
+        using (feed.Acquire()) Assert.True(local.IsWatching);
+
+        Assert.False(local.IsWatching);
+    }
 }

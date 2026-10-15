@@ -294,6 +294,43 @@ public class SessionServiceTests
         Assert.True(Volatile.Read(ref techReads) >= 1);
         await Wait.Until(() => host.Session.LastLiveSentBytes > 0, "host records the size sent");
         Assert.Equal("2300.01.01", host.Session.LastLiveSentDate);
+
+        // Off stops the light reader: a newer save is not read (a reader still watching would after its 2 s stable wait).
+        await host.Session.SetStreamingAsync(false, false);
+        var readsBefore = Volatile.Read(ref techReads);
+        host.Fake.Write("user/save games/mp_game/autosave_2.sav", "y");
+        await Task.Delay(3000);
+        Assert.Equal(readsBefore, Volatile.Read(ref techReads));
+    }
+
+    [Fact]
+    public async Task The_full_reader_is_held_only_while_streaming_the_live_game()
+    {
+        using var saves = new TempDir();
+        saves.Write("mp_game/autosave.sav", "x");
+        using var full = new LiveGameService(() => saves.Path, p => SaveAt(p, techOnly: false), TimeSpan.Zero);
+        await using var host = new Rig("Hosty", "[]", live: full, readTechs: p => SaveAt(p, techOnly: true), saveGamesDir: saves.Path);
+        await host.Session.SetStreamingAsync(true, false);
+
+        await host.Session.HostAsync(0);
+        Assert.True(full.IsWatching);
+
+        await host.Session.SetStreamingAsync(false, true);
+        Assert.False(full.IsWatching);
+
+        await host.Session.SetStreamingAsync(true, false);
+        Assert.True(full.IsWatching);
+        using (full.Acquire()) // a page's own lease keeps it watching after the stream lets go
+        {
+            await host.Session.SetStreamingAsync(false, false);
+            Assert.True(full.IsWatching);
+        }
+        Assert.False(full.IsWatching);
+
+        await host.Session.SetStreamingAsync(true, false);
+        Assert.True(full.IsWatching);
+        await host.Session.LeaveAsync();
+        Assert.False(full.IsWatching);
     }
 
     [Fact]

@@ -1,8 +1,9 @@
 namespace FazStellarisModmanager.Core.Saves;
 
 /// <summary>
-/// Watches the save games folder and keeps <see cref="Current"/> as the newest readable save. Reads run one at a time on
-/// a dedicated background thread at below-normal priority, so a running game keeps priority over the app; <c>enrich</c>
+/// Keeps <see cref="Current"/> as the newest readable save while someone holds a lease (<see cref="Acquire"/>): only then
+/// is the save games folder watched, since reading a save is heavy and can make the game stutter. Reads run one at a time
+/// on a dedicated background thread at below-normal priority, so a running game keeps priority over the app; <c>enrich</c>
 /// (optional) runs on that same thread after each read. A failed read keeps the previous snapshot and is not retried until the file changes.
 /// <see cref="Changed"/> fires on any thread.
 /// </summary>
@@ -12,10 +13,11 @@ public sealed class LiveGameService(Func<string?> saveGamesDir, Func<string, Gam
     readonly TimeSpan _stableDelay = stableDelay ?? TimeSpan.FromSeconds(2);
     readonly SemaphoreSlim _gate = new(1, 1);
     readonly CancellationTokenSource _stop = new();
+    readonly Lock _watchGate = new();
+    int _leases; // guarded by _watchGate, like the watcher and the poll timer
     FileSystemWatcher? _watcher;
     Timer? _poll;
     (string Path, DateTime Time)? _failed;
-    bool _started;
 
     public GameSnapshot? Current { get; private set; }
     public string? Status { get; private set; }
@@ -23,29 +25,84 @@ public sealed class LiveGameService(Func<string?> saveGamesDir, Func<string, Gam
     public bool Reading { get; private set; }
     public event Action? Changed;
 
-    /// <summary>Starts watching (once) and reads the newest save.</summary>
-    public void Start()
+    /// <summary>True while the folder is watched: at least one lease is held and the service is not disposed.</summary>
+    public bool IsWatching
     {
-        if (_started) return;
-        _started = true;
+        get { lock (_watchGate) return _poll is not null; }
+    }
+
+    /// <summary>
+    /// Holds the reader until the lease is disposed (disposing twice is harmless). The first lease starts watching and
+    /// reads the newest save; disposing the last stops watching. Current, Status and Error stay; a read already running finishes.
+    /// </summary>
+    public IDisposable Acquire()
+    {
+        bool start;
+        lock (_watchGate)
+        {
+            start = _leases == 0 && !_stop.IsCancellationRequested;
+            if (start) StartWatching();
+            _leases++;
+        }
+        // Outside the lock: a refresh may raise Changed on this thread, and its handlers may take their own locks.
+        if (start) Kick();
+        return new Lease(this);
+    }
+
+    sealed class Lease(LiveGameService owner) : IDisposable
+    {
+        int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0) owner.Release();
+        }
+    }
+
+    void Release()
+    {
+        lock (_watchGate)
+        {
+            if (--_leases == 0) StopWatching();
+        }
+    }
+
+    // Under _watchGate.
+    void StartWatching()
+    {
         var dir = saveGamesDir();
         if (dir is not null && Directory.Exists(dir))
         {
             try
             {
                 _watcher = new FileSystemWatcher(dir, "*.sav") { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size };
-                _watcher.Created += (_, _) => Kick();
-                _watcher.Changed += (_, _) => Kick();
-                _watcher.Renamed += (_, _) => Kick();
+                _watcher.Created += (_, _) => Poke();
+                _watcher.Changed += (_, _) => Poke();
+                _watcher.Renamed += (_, _) => Poke();
                 _watcher.EnableRaisingEvents = true;
             }
             catch (Exception ex) when (ex is IOException or ArgumentException or PlatformNotSupportedException)
             {
+                _watcher?.Dispose();
                 _watcher = null; // polling still works
             }
         }
-        _poll = new Timer(_ => Kick(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
-        Kick();
+        _poll = new Timer(_ => Poke(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+    }
+
+    // Under _watchGate.
+    void StopWatching()
+    {
+        _watcher?.Dispose();
+        _watcher = null;
+        _poll?.Dispose();
+        _poll = null;
+    }
+
+    // Watcher and poll callbacks: one may still arrive just after watching stopped.
+    void Poke()
+    {
+        if (IsWatching) Kick();
     }
 
     void Kick() => _ = RefreshAsync();
@@ -148,8 +205,10 @@ public sealed class LiveGameService(Func<string?> saveGamesDir, Func<string, Gam
 
     public void Dispose()
     {
-        _stop.Cancel();
-        _watcher?.Dispose();
-        _poll?.Dispose();
+        lock (_watchGate)
+        {
+            _stop.Cancel();
+            StopWatching();
+        }
     }
 }

@@ -43,6 +43,64 @@ public class LiveGameServiceTests
     }
 
     [Fact]
+    public async Task Nothing_is_read_before_the_first_lease_which_starts_watching_and_reads()
+    {
+        using var t = new TempDir();
+        var first = Path.GetFullPath(t.Write("g/1.sav", "x"));
+        var reads = 0;
+        using var live = new LiveGameService(() => t.Path, p => { Interlocked.Increment(ref reads); return Snap(p); }, TimeSpan.Zero);
+        await Task.Delay(100);
+        Assert.False(live.IsWatching);
+        Assert.Equal(0, Volatile.Read(ref reads));
+
+        using var lease = live.Acquire();
+
+        Assert.True(live.IsWatching);
+        await Wait.Until(() => live.Current is not null, "first read");
+        Assert.Equal(first, live.Current!.SavePath);
+    }
+
+    [Fact]
+    public async Task The_last_lease_stops_watching_and_a_new_lease_reads_the_newest_save()
+    {
+        using var t = new TempDir();
+        var first = Path.GetFullPath(t.Write("g/1.sav", "x"));
+        File.SetLastWriteTimeUtc(first, DateTime.UtcNow.AddMinutes(-5));
+        using var live = new LiveGameService(() => t.Path, Snap, TimeSpan.Zero);
+        var a = live.Acquire();
+        var b = live.Acquire();
+        await Wait.Until(() => live.Current is not null, "first read");
+
+        a.Dispose();
+        a.Dispose(); // idempotent: b still holds the reader
+        Assert.True(live.IsWatching);
+        b.Dispose();
+        Assert.False(live.IsWatching);
+        Assert.Equal(first, live.Current!.SavePath); // what was read stays
+
+        var second = Path.GetFullPath(t.Write("g/2.sav", "y"));
+        using var c = live.Acquire();
+
+        Assert.True(live.IsWatching);
+        await Wait.Until(() => live.Current!.SavePath == second, "the newer save, read on the new lease");
+    }
+
+    [Fact]
+    public void Disposing_the_service_stops_watching()
+    {
+        using var t = new TempDir();
+        var live = new LiveGameService(() => t.Path, Snap, TimeSpan.Zero);
+        var lease = live.Acquire();
+
+        live.Dispose();
+
+        Assert.False(live.IsWatching);
+        lease.Dispose();
+        using var late = live.Acquire(); // a lease after disposal does nothing
+        Assert.False(live.IsWatching);
+    }
+
+    [Fact]
     public async Task Read_and_enrich_run_on_a_below_normal_priority_background_thread()
     {
         using var t = new TempDir();

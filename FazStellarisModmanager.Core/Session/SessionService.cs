@@ -13,7 +13,7 @@ public enum SessionRole { None, Host, Client }
 /// UI-facing multiplayer state. One operation (host, join, rescan, match, leave) runs at a time;
 /// <see cref="Changed"/> may fire on any thread.
 /// </summary>
-/// <param name="live">The shared full save reader (also the host's own Live Game tab); streams the live game while hosting.</param>
+/// <param name="live">The shared full save reader (also the pages' local live data); leased while hosting streams the live game.</param>
 /// <param name="readTechs">Reads a save for technology-only streaming; defaults to <see cref="SaveReader.ReadTechs"/>.</param>
 /// <param name="saveGamesDir">Where technology-only streaming looks for saves; defaults to <see cref="ModManagerService.SaveGamesDir"/>.</param>
 public sealed class SessionService(ModManagerService manager, IWorkshopService? workshop = null, LiveGameService? live = null,
@@ -43,8 +43,9 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     StreamingState? _seenStreaming;
     // The save readers feeding the host. Guarded by _streamGate, which also orders their pushes against mode switches.
     readonly Lock _streamGate = new();
-    bool _fullSubscribed;
+    IDisposable? _fullLease; // held only while streaming the live game
     LiveGameService? _techLive;
+    IDisposable? _techLease;
     int _busyCount;
     long _lastProgressRaise;
     HashCache? _cache;
@@ -363,27 +364,23 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         RaiseChanged();
     });
 
-    // Under _streamGate. Live game streams from the shared full reader; technology from a light tech-only reader of its
-    // own, which starts with the full reader's save (if any) so players get techs straight away; off reads nothing.
-    // The host is given the new source's newest save (null when it has none yet) before the switch, which resends it.
+    // Under _streamGate. Live game streams from the shared full reader, leased only in that mode; technology from a light
+    // tech-only reader of its own, which starts with the full reader's save (if any) so players get techs straight away;
+    // off reads nothing. The host is given the new source's newest save (null when it has none yet) before the switch,
+    // which resends it.
     void ConfigureStreaming(SessionHost host, StreamMode mode)
     {
-        if (mode != StreamMode.LiveGame && _fullSubscribed)
-        {
-            live!.Changed -= PushFull;
-            _fullSubscribed = false;
-        }
+        if (mode != StreamMode.LiveGame) StopFullLive();
         if (mode != StreamMode.Technology) StopTechLive();
 
         GameSnapshot? current = null;
         if (mode == StreamMode.LiveGame && live is not null)
         {
-            if (!_fullSubscribed)
+            if (_fullLease is null)
             {
                 live.Changed += PushFull;
-                _fullSubscribed = true;
+                _fullLease = live.Acquire();
             }
-            live.Start();
             current = live.Current;
         }
         else if (mode == StreamMode.Technology)
@@ -392,8 +389,8 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             {
                 _techLive = new LiveGameService(_saveGamesDir, _readTechs);
                 _techLive.Changed += PushTech;
+                _techLease = _techLive.Acquire();
             }
-            _techLive.Start();
             current = _techLive.Current ?? live?.Current;
         }
         host.UpdateLive(current);
@@ -404,7 +401,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     void PushFull()
     {
         lock (_streamGate)
-            if (_fullSubscribed && _host is { } host && live!.Current is { } snapshot) host.UpdateLive(snapshot);
+            if (_fullLease is not null && _host is { } host && live!.Current is { } snapshot) host.UpdateLive(snapshot);
     }
 
     void PushTech()
@@ -413,23 +410,30 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             if (_techLive?.Current is { } snapshot && _host is { } host) host.UpdateLive(snapshot);
     }
 
+    // Under _streamGate. The shared reader stops watching unless a page still holds it.
+    void StopFullLive()
+    {
+        if (_fullLease is null) return;
+        live!.Changed -= PushFull;
+        _fullLease.Dispose();
+        _fullLease = null;
+    }
+
     // Under _streamGate.
     void StopTechLive()
     {
         if (_techLive is not { } techLive) return;
         techLive.Changed -= PushTech;
+        _techLease?.Dispose();
+        _techLease = null;
         techLive.Dispose();
         _techLive = null;
     }
 
-    // Under _streamGate. The shared full reader keeps running: the Live Game tab may use it.
+    // Under _streamGate.
     void StopStreaming()
     {
-        if (_fullSubscribed)
-        {
-            live!.Changed -= PushFull;
-            _fullSubscribed = false;
-        }
+        StopFullLive();
         StopTechLive();
     }
 

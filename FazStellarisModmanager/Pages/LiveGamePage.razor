@@ -168,11 +168,12 @@
     string? animatedFor;
     string? builtFor;
     Timer? clock;
+    IDisposable? liveLease; // keeps this PC's saves read while the page is open
 
     protected override void OnInitialized()
     {
         Feed.Changed += OnLiveChanged;
-        Feed.Start();
+        liveLease = Feed.Acquire();
         Rebuild();
         clock = new Timer(_ => _ = InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
@@ -279,6 +280,7 @@
     public async ValueTask DisposeAsync()
     {
         Feed.Changed -= OnLiveChanged;
+        liveLease?.Dispose();
         clock?.Dispose();
         if (module is not null)
         {
