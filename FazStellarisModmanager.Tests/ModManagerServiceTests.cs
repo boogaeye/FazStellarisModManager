@@ -11,7 +11,7 @@ public class ModManagerServiceTests
     {
         var paths = new AppPaths(fake.DataDir);
         SettingsStore.Save(paths.Settings, new AppSettings(UserDir: fake.UserDir));
-        return new ModManagerService(paths, _ => fake.GameDir);
+        return new ModManagerService(paths, _ => fake.GameDir) { IsLauncherRunning = () => false };
     }
 
     [Fact]
@@ -76,11 +76,43 @@ public class ModManagerServiceTests
         svc.RefreshLibrary();
         var list = new ModList("L", [new("ugc:111", "Workshop One", "mod/ugc_111.mod", "111"), new("local:local.mod", "Local Mod", "mod/local.mod", null)], []);
 
-        var backup = svc.Apply(list);
+        var result = svc.Apply(list);
 
         Assert.Equal(new[] { "mod/ugc_111.mod", "mod/local.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
-        Assert.NotNull(backup);
-        Assert.StartsWith(Path.Combine(fake.DataDir, "backups"), backup);
+        Assert.NotNull(result.BackupPath);
+        Assert.StartsWith(Path.Combine(fake.DataDir, "backups"), result.BackupPath);
+        Assert.False(result.LauncherPlaysetSet);
+        Assert.Null(result.LauncherWarning);
+    }
+
+    [Fact]
+    public void Apply_refuses_while_the_launcher_runs_and_writes_nothing()
+    {
+        using var fake = new FakeInstall();
+        var svc = Create(fake);
+        svc.IsLauncherRunning = () => true;
+        var before = File.ReadAllText(Path.Combine(fake.UserDir, "dlc_load.json"));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => svc.Apply(new ModList("L", [new("local:local.mod", "Local Mod", "mod/local.mod", null)], [])));
+
+        Assert.Contains("Paradox launcher", ex.Message);
+        Assert.Equal(before, File.ReadAllText(Path.Combine(fake.UserDir, "dlc_load.json")));
+    }
+
+    [Fact]
+    public void Apply_sets_the_launcher_playset_when_the_launcher_database_exists()
+    {
+        using var fake = new FakeInstall();
+        var svc = Create(fake);
+        var db = Path.Combine(fake.UserDir, LauncherPlaysetFile.FileName);
+        LauncherDb.Create(db);
+        LauncherDb.AddMod(db, "m1", "mod/local.mod");
+
+        var result = svc.Apply(new ModList("L", [new("local:local.mod", "Local Mod", "mod/local.mod", null)], []));
+
+        Assert.True(result.LauncherPlaysetSet);
+        Assert.Null(result.LauncherWarning);
+        Assert.Equal("m1", LauncherDb.Query(db, "select modId from playsets_mods").Single()[0]);
     }
 
     [Fact]

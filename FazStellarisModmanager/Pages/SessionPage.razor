@@ -90,6 +90,10 @@ else
         <section class="panel pad">
             <h2>Match host result</h2>
             <p>Wrote the host's list (@plan.ToApply.Mods.Count installed mods, in the host's order) to dlc_load.json.@(Session.LastBackupPath is { } backup ? " Backup: " + System.IO.Path.GetFileName(backup) : "")</p>
+            @if (Session.LastLauncherWarning is { } launcherWarning)
+            {
+                <p class="status error">@launcherWarning</p>
+            }
             @if (plan.NeedsWorkshopInstall.Count > 0)
             {
                 <p class="status error">Not installed. Subscribe to these on the Steam Workshop, then click Rescan my mods:</p>

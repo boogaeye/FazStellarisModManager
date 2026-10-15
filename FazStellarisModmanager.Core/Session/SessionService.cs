@@ -29,6 +29,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     volatile string? _lastDisconnectReason;
     volatile CancellationTokenSource? _opCts;
     volatile string? _lastBackupPath;
+    volatile string? _lastLauncherWarning;
     volatile LiveUpdate? _hostLive;
     DateTime? _hostLiveReceivedUtc;
     LiveUpdate? _seenLive;
@@ -54,6 +55,9 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
 
     /// <summary>The dlc_load.json backup written by the last Match host (null if none was needed or written).</summary>
     public string? LastBackupPath => _lastBackupPath;
+
+    /// <summary>A Paradox launcher playset problem from the last Match host (null if none).</summary>
+    public string? LastLauncherWarning => _lastLauncherWarning;
 
     /// <summary>This player's id on the host (null when hosting or not in a session).</summary>
     public string? MyPlayerId => _client?.PlayerId;
@@ -124,6 +128,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
                     lastTarget = client.Target; // the host's target changed: the old plan no longer describes it
                     _lastPlan = null;
                     _lastBackupPath = null;
+                    _lastLauncherWarning = null;
                 }
                 if (client.Live is { } l && !ReferenceEquals(l, _seenLive))
                 {
@@ -161,6 +166,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     {
         _lastPlan = null;
         _lastBackupPath = null;
+        _lastLauncherWarning = null;
         ModList? hostList = null;
         if (_host is not null)
         {
@@ -196,7 +202,9 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             var plan = await Task.Run(() => MatchPlan.Create(target.HostList, diff, manager.Library, mine), CancellationToken.None);
             ct.ThrowIfCancellationRequested();
             if (!client.IsConnected || !ReferenceEquals(_client, client)) throw new InvalidOperationException("The host has disconnected.");
-            _lastBackupPath = manager.Apply(plan.ToApply);
+            var result = manager.Apply(plan.ToApply);
+            _lastBackupPath = result.BackupPath;
+            _lastLauncherWarning = result.LauncherWarning;
             applied = true;
             _lastPlan = plan;
             var snapshot = await ScanAsync(ct);
@@ -313,6 +321,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         _hostAddress = null;
         _lastPlan = null;
         _lastBackupPath = null;
+        _lastLauncherWarning = null;
         if (host is not null)
         {
             host.RosterChanged -= RaiseChanged;
@@ -331,6 +340,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         _hostAddress = null;
         _lastPlan = null;
         _lastBackupPath = null;
+        _lastLauncherWarning = null;
         _lastDisconnectReason = reason;
         RaiseChanged();
         _ = client.DisposeAsync().AsTask();

@@ -7,6 +7,9 @@ namespace FazStellarisModmanager.Core;
 
 public sealed record ResolvedPaths(string UserDir, string? GameDir, string? WorkshopDir);
 
+/// <summary>What Apply did: the dlc_load.json backup, whether the launcher playset was set, and a launcher problem to show (null if none).</summary>
+public sealed record ApplyResult(string? BackupPath, bool LauncherPlaysetSet, string? LauncherWarning);
+
 /// <summary>Stateful facade the UI talks to: settings, installed-mod library, saved lists, apply and launch. Mutating calls are serialized; property reads return the last published state.</summary>
 public sealed class ModManagerService
 {
@@ -74,10 +77,27 @@ public sealed class ModManagerService
     /// <exception cref="InvalidDataException">dlc_load.json is corrupt (this is not an <see cref="IOException"/>).</exception>
     public ModList ImportCurrent(string name) => ModList.FromDlcLoad(name, DlcLoadFile.Read(Resolve().UserDir), Library);
 
-    /// <summary>Writes the list to dlc_load.json after backing up the old file. Returns the backup path (null if there was none).</summary>
-    public string? Apply(ModList list)
+    /// <summary>Checked by <see cref="Apply"/>: while the Paradox launcher runs it would overwrite dlc_load.json from its own playset.</summary>
+    public Func<bool> IsLauncherRunning { get; set; } = LauncherPlaysetFile.IsLauncherRunning;
+
+    /// <summary>
+    /// Writes the list to dlc_load.json (after backing up the old file), then makes it the Paradox launcher's active playset,
+    /// so opening the launcher keeps it. Refuses while the launcher runs. Launcher database problems are returned as a warning.
+    /// </summary>
+    public ApplyResult Apply(ModList list)
     {
-        lock (_gate) return DlcLoadFile.Write(Resolve().UserDir, list.ToDlcLoad(), _paths.Backups);
+        if (IsLauncherRunning()) throw new InvalidOperationException("Close the Paradox launcher first, or it will overwrite your mod list.");
+        lock (_gate)
+        {
+            var user = Resolve().UserDir;
+            var load = list.ToDlcLoad();
+            var backup = DlcLoadFile.Write(user, load, _paths.Backups);
+            var sync = LauncherPlaysetFile.Write(user, load.EnabledMods, _paths.Backups, DateTimeOffset.UtcNow);
+            var warnings = new List<string>();
+            if (sync.Warning is { } w) warnings.Add(w);
+            if (sync.Skipped.Count > 0) warnings.Add("Not added to the launcher playset (descriptor missing): " + string.Join(", ", sync.Skipped) + ".");
+            return new ApplyResult(backup, sync.Written, warnings.Count == 0 ? null : string.Join(" ", warnings));
+        }
     }
 
     /// <summary>When set and returning a reason, <see cref="Launch"/> refuses with that reason (e.g. while Workshop downloads run).</summary>

@@ -398,8 +398,15 @@
             return "Click Apply again to write an empty mod list.";
         }
         confirmEmpty = false;
-        var backup = Manager.Apply(Build());
-        return $"Applied {current.Count} mods to dlc_load.json" + (backup is null ? "." : $" (backup: {Path.GetFileName(backup)}).");
+        var result = Manager.Apply(Build());
+        var message = $"Applied {current.Count} mods to dlc_load.json" + (result.BackupPath is null ? "." : $" (backup: {Path.GetFileName(result.BackupPath)}).")
+            + (result.LauncherPlaysetSet ? " Set as the active Paradox launcher playset." : "");
+        if (result.LauncherWarning is { } warning)
+        {
+            (status, error) = (message + " " + warning, true);
+            return null;
+        }
+        return message;
     });
 
     void ApplyAndLaunch() => Run(() =>
@@ -416,7 +423,7 @@
         }
         confirmEmpty = false;
         var steamWarning = GameLauncher.IsSteamRunning() ? "" : " Warning: Steam does not appear to be running.";
-        Manager.Apply(Build());
+        var result = Manager.Apply(Build());
         try
         {
             Manager.Launch();
@@ -424,6 +431,11 @@
         catch (Exception ex)
         {
             (status, error) = ($"Applied, but launch failed: {ex.Message}", true);
+            return null;
+        }
+        if (result.LauncherWarning is { } warning)
+        {
+            (status, error) = ("Applied and launched Stellaris." + steamWarning + " " + warning, true);
             return null;
         }
         return "Applied and launched Stellaris." + steamWarning;

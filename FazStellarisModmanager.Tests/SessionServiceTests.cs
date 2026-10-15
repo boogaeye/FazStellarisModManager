@@ -23,7 +23,7 @@ public class SessionServiceTests
             var paths = new AppPaths(Fake.DataDir);
             SettingsStore.Save(paths.Settings, new AppSettings(UserDir: Fake.UserDir, PlayerName: playerName));
             Fake.Write("user/dlc_load.json", "{\"disabled_dlcs\":[],\"enabled_mods\":" + enabledModsJson + "}");
-            Session = new SessionService(new ModManagerService(paths, _ => Fake.GameDir), workshop?.Invoke(Fake));
+            Session = new SessionService(new ModManagerService(paths, _ => Fake.GameDir) { IsLauncherRunning = () => false }, workshop?.Invoke(Fake));
         }
 
         public async ValueTask DisposeAsync()
