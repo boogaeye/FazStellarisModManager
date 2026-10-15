@@ -13,7 +13,7 @@ public sealed record DupeResolution(IReadOnlyList<DupeRename> Renamed, string? B
 public static class DupeResolver
 {
     // The first top-level name line: optional indentation, name = "value".
-    static readonly Regex NameLine = new(@"^([ \t]*name[ \t]*=[ \t]*"")([^""]*)("")", RegexOptions.Multiline);
+    static readonly Regex NameLine = new(@"^([ \t]*name[ \t]*=[ \t]*"")([^""\r\n]*)("")", RegexOptions.Multiline);
 
     /// <summary>
     /// Backs up each renamed descriptor to &lt;backupDir&gt;/descriptors_&lt;timestamp&gt;/, rewrites only its name value, then
