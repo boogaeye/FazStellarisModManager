@@ -1,0 +1,238 @@
+@using System.Collections.Concurrent
+@using System.Globalization
+@implements IDisposable
+@inject IWorkshopService Workshop
+
+<div class="modal-backdrop" @onmousedown="() => downOnBackdrop = true" @onclick="BackdropClick">
+    <div class="modal workshop-modal" role="dialog" aria-modal="true" aria-labelledby="um-title" tabindex="-1" @ref="dialog"
+         @onclick:stopPropagation @onmousedown:stopPropagation @onmousedown="() => downOnBackdrop = false" @onkeydown="OnKeyDown">
+        <h2 id="um-title">Update mods</h2>
+
+        @if (phase == Phase.Confirm)
+        {
+            <p>Update the @Mods.Count Workshop @(Mods.Count == 1 ? "mod" : "mods") in @ListLabel() through Steam? Steam shows you as playing Stellaris while this runs.</p>
+            <div class="modal-actions">
+                <button class="primary" @onclick="Run">Update</button>
+                <button @onclick="Close">Cancel</button>
+            </div>
+        }
+        else if (phase == Phase.Working)
+        {
+            <p class="muted small" aria-live="polite">@FinishedCount() of @Mods.Count done</p>
+            <ul class="ws-list">
+                @foreach (var mod in Mods)
+                {
+                    var p = progress.GetValueOrDefault(mod.Id);
+                    <li>
+                        <span>@NameOf(mod.Id)</span>
+                        <span class="muted small">@StateText(p)</span>
+                        <progress max="1" value="@F(p?.Fraction ?? 0)" aria-label="@($"{NameOf(mod.Id)} download progress")"></progress>
+                    </li>
+                }
+            </ul>
+            <div class="modal-actions">
+                <button @onclick="CancelRun" disabled="@cancelling">@(cancelling ? "Cancelling…" : "Cancel")</button>
+            </div>
+        }
+        else
+        {
+            @if (results is { } r)
+            {
+                <p>@ModUpdater.Summary(r)</p>
+                @if (Of(r, ModUpdateOutcome.Updated) is { Count: > 0 } updated)
+                {
+                    <h3>Updated</h3>
+                    <ul class="ws-list short">
+                        @foreach (var u in updated)
+                        {
+                            <li>@NameOf(u.Id)</li>
+                        }
+                    </ul>
+                }
+                @if (Of(r, ModUpdateOutcome.Failed) is { Count: > 0 } failed)
+                {
+                    <h3>Failed</h3>
+                    <ul class="ws-list short">
+                        @foreach (var f in failed)
+                        {
+                            <li>
+                                <span>@NameOf(f.Id)</span>
+                                <span class="status error">@f.Error</span>
+                                <a href="@($"steam://url/CommunityFilePage/{f.Id}")" target="_blank">Open in Steam</a>
+                            </li>
+                        }
+                    </ul>
+                }
+            }
+            @if (error is not null)
+            {
+                <p class="status error">@error</p>
+            }
+            <div class="modal-actions">
+                <button class="primary" @onclick="Close">Close</button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>The list's Workshop mods (id and the list's name for it), in list order.</summary>
+    [Parameter, EditorRequired] public IReadOnlyList<(ulong Id, string Name)> Mods { get; set; } = [];
+    [Parameter, EditorRequired] public string ListName { get; set; } = "";
+    /// <summary>A mod's install folder before the update; null when it isn't installed.</summary>
+    [Parameter, EditorRequired] public Func<ulong, string?> FolderOf { get; set; } = default!;
+    /// <summary>The results when an update ran; null when it was cancelled before starting or never got going.</summary>
+    [Parameter] public EventCallback<IReadOnlyList<ModUpdateResult>?> OnClose { get; set; }
+
+    enum Phase { Confirm, Working, Done }
+
+    static readonly TimeSpan InfoTimeout = TimeSpan.FromSeconds(20);
+    static readonly TimeSpan RenderEvery = TimeSpan.FromMilliseconds(250);
+
+    Phase phase = Phase.Confirm;
+    readonly ConcurrentDictionary<ulong, WorkshopProgress> progress = new(); // reported from any thread
+    readonly Dictionary<ulong, string> names = [];
+    readonly Dictionary<ulong, string> titles = []; // Steam's titles for mods the list only knows by their file name
+    ElementReference dialog;
+    CancellationTokenSource? infoCts; // the running title fetch; cancelled by Dispose
+    CancellationTokenSource? run;
+    IReadOnlyList<ModUpdateResult>? results;
+    string? error;
+    bool cancelling;
+    bool downOnBackdrop;
+    int renderPending; // 1 while a progress render is scheduled
+
+    protected override void OnParametersSet()
+    {
+        names.Clear();
+        foreach (var (id, name) in Mods)
+            if (!string.IsNullOrWhiteSpace(name)) names.TryAdd(id, name);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Mods that aren't installed only have their descriptor's file name (ugc_<id>) in the list.
+        var unknown = Mods.Where(m => string.IsNullOrWhiteSpace(m.Name) || string.Equals(m.Name, $"ugc_{m.Id}", StringComparison.OrdinalIgnoreCase))
+            .Select(m => m.Id).ToList();
+        if (unknown.Count == 0) return;
+        using var cts = new CancellationTokenSource(InfoTimeout);
+        infoCts = cts;
+        try
+        {
+            foreach (var item in await Workshop.GetInfoAsync(unknown, cts.Token))
+                if (item.Title is { Length: > 0 } title) titles[item.Id] = title;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // The file names will do.
+        }
+        finally
+        {
+            if (ReferenceEquals(infoCts, cts)) infoCts = null;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { await dialog.FocusAsync(); } // so Escape closes it
+        catch (Exception ex) when (ex is not OutOfMemoryException) { /* focus is a convenience */ }
+    }
+
+    public void Dispose()
+    {
+        CancelQuietly(infoCts);
+        CancelQuietly(run);
+    }
+
+    static void CancelQuietly(CancellationTokenSource? cts)
+    {
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { /* it just finished */ }
+    }
+
+    async Task Run()
+    {
+        (phase, results, error, cancelling) = (Phase.Working, null, null, false);
+        progress.Clear();
+        run = new CancellationTokenSource();
+        try
+        {
+            results = await ModUpdater.RunAsync(Workshop, Mods.Select(m => m.Id).ToList(), FolderOf, new Sink(this), run.Token);
+        }
+        catch (WorkshopUnavailableException ex)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            error = "The update failed: " + ex.Message;
+        }
+        phase = Phase.Done;
+    }
+
+    void CancelRun()
+    {
+        cancelling = true;
+        CancelQuietly(run);
+    }
+
+    sealed class Sink(UpdateModsDialog owner) : IProgress<WorkshopProgress>
+    {
+        public void Report(WorkshopProgress value)
+        {
+            owner.progress[value.Id] = value;
+            owner.RenderSoon();
+        }
+    }
+
+    // At most about 4 renders a second while progress streams in; the latest report is always shown.
+    void RenderSoon()
+    {
+        if (Interlocked.Exchange(ref renderPending, 1) == 0) _ = RenderLaterAsync();
+    }
+
+    async Task RenderLaterAsync()
+    {
+        await Task.Delay(RenderEvery);
+        Volatile.Write(ref renderPending, 0);
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { /* the dialog is gone */ }
+    }
+
+    string ListLabel() => ListName.Trim() is { Length: > 0 } name ? $"'{name}'" : "this list";
+
+    string NameOf(ulong id) =>
+        titles.TryGetValue(id, out var title) ? title : names.TryGetValue(id, out var name) ? name : $"Workshop {id}";
+
+    static List<ModUpdateResult> Of(IReadOnlyList<ModUpdateResult> results, ModUpdateOutcome outcome) =>
+        results.Where(r => r.Outcome == outcome).ToList();
+
+    static string StateText(WorkshopProgress? p) => p?.State switch
+    {
+        null or WorkshopItemState.Waiting => "Waiting",
+        WorkshopItemState.Subscribing => "Checking…",
+        WorkshopItemState.Downloading => $"Downloading {p.Fraction * 100:0}%",
+        WorkshopItemState.Installed => "Done",
+        WorkshopItemState.Failed => "Failed" + (p.Message is { } m ? ": " + m : ""),
+        _ => "Cancelled",
+    };
+
+    int FinishedCount() => Mods.Count(m => progress.TryGetValue(m.Id, out var p)
+        && p.State is WorkshopItemState.Installed or WorkshopItemState.Failed or WorkshopItemState.Cancelled);
+
+    static string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+
+    async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape" && phase != Phase.Working) await Close();
+    }
+
+    async Task BackdropClick()
+    {
+        if (downOnBackdrop && phase != Phase.Working) await Close();
+        downOnBackdrop = false;
+    }
+
+    Task Close() => OnClose.InvokeAsync(phase == Phase.Done ? results : null);
+}

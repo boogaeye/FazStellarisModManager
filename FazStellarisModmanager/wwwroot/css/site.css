@@ -206,6 +206,7 @@ button.gsrc { width: 100%; text-align: left; background: none; border: 0; color:
 .ws-list { list-style: none; padding: 0; margin: .3rem 0; display: flex; flex-direction: column; gap: .35rem; max-height: 45vh; overflow: auto; }
 .ws-list li { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .ws-list progress { flex: 1; min-width: 120px; }
+.ws-list.short { max-height: 25vh; }
 
 /* Mod list revamp */
 .mods-page { display: flex; flex-direction: column; gap: .5rem; height: calc(100% - 2.5rem); }
