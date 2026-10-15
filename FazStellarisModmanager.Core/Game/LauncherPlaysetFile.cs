@@ -62,12 +62,34 @@ public static class LauncherPlaysetFile
         }
     }
 
+    /// <summary>
+    /// Sets mods.displayName for these descriptors so the launcher keeps the new names when it rewrites mod/*.mod on start.
+    /// Null when done, when there is no database or nothing to rename; otherwise a warning (the transaction leaves the file unchanged).
+    /// </summary>
+    public static string? RenameMods(string userDir, IReadOnlyList<(string DescriptorRel, string NewName)> renames, string backupDir, DateTimeOffset now)
+    {
+        var db = Path.Combine(userDir, FileName);
+        if (renames.Count == 0 || !File.Exists(db)) return null;
+        try
+        {
+            Backup(db, backupDir, now);
+            using var conn = OpenDatabase(db);
+            using var tx = conn.BeginTransaction();
+            foreach (var (rel, name) in renames)
+                Exec(conn, "update mods set displayName = $n where lower(replace(gameRegistryId, char(92), '/')) = lower($g)",
+                    ("$n", name), ("$g", rel.Replace((char)92, '/')));
+            tx.Commit();
+            return null;
+        }
+        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return "Could not update the Paradox launcher's mod names: " + ex.Message;
+        }
+    }
+
     static List<string> WriteDatabase(string db, string userDir, IReadOnlyList<string> descriptorRels, DateTimeOffset now)
     {
-        var cs = new SqliteConnectionStringBuilder { DataSource = db, Mode = SqliteOpenMode.ReadWrite, Pooling = false, DefaultTimeout = 5 }.ToString();
-        using var conn = new SqliteConnection(cs);
-        conn.Open();
-        RequireSchema(conn);
+        using var conn = OpenDatabase(db);
         using var tx = conn.BeginTransaction();
         var ms = now.ToUnixTimeMilliseconds();
 
@@ -148,6 +170,24 @@ public static class LauncherPlaysetFile
             ("$source", ModKeys.WorkshopId(key) is not null ? "steam" : "local"),
             ("$created", now.ToUnixTimeSeconds()));
         return id;
+    }
+
+    // An open read-write connection to an existing database with the expected layout (throws InvalidDataException otherwise).
+    static SqliteConnection OpenDatabase(string db)
+    {
+        var cs = new SqliteConnectionStringBuilder { DataSource = db, Mode = SqliteOpenMode.ReadWrite, Pooling = false, DefaultTimeout = 5 }.ToString();
+        var conn = new SqliteConnection(cs);
+        try
+        {
+            conn.Open();
+            RequireSchema(conn);
+            return conn;
+        }
+        catch
+        {
+            conn.Dispose();
+            throw;
+        }
     }
 
     static string Full(string userDir, string p) => Path.IsPathRooted(p) ? Path.GetFullPath(p) : Path.GetFullPath(Path.Combine(userDir, p));
