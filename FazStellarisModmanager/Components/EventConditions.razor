@@ -16,7 +16,7 @@
         <div class="muted small evt-gap">Option @(option.Index + 1): allow</div>
         <CondBlock Evaluator="Graph.Conditions" Block="option.Allow" Facts="Facts" EmptyText="None." />
     }
-    @if (Facts is null) { <p class="muted small">Live game data needed for ✓/✗ marks.</p> }
+    @if (Facts is null) { <p class="muted small">Live game data needed.</p> }
 </div>
 
 @code {
