@@ -6,6 +6,7 @@
 @inject ModFileCache FileCache
 @inject EditedModList State
 @inject SessionService Session
+@inject AddonService Addons
 
 @{
     var workshopIds = WorkshopIdsInList();
@@ -246,6 +247,7 @@
             await Manager.RefreshLibraryAsync();
             Icons.Refresh();
             FileCache.Clear();
+            Addons.InvalidateCatalog();
             LibraryChanged();
             return $"Found {Manager.Library.Count} installed mods." + ErrorSuffix();
         });
@@ -389,6 +391,7 @@
             await Manager.RefreshLibraryAsync();
             Icons.Refresh();
             FileCache.Clear();
+            Addons.InvalidateCatalog();
             LibraryChanged();
             return summary + ErrorSuffix();
         });
@@ -520,9 +523,10 @@
         }
         confirmEmpty = false;
         var result = Manager.Apply(Build());
-        var message = $"Applied {current.Count} mods to dlc_load.json" + (result.BackupPath is null ? "." : $" (backup: {Path.GetFileName(result.BackupPath)}).")
+        var message = $"Applied {current.Count} mods" + (result.AddonsApplied ? " with Faz Addons" : "") + " to dlc_load.json"
+            + (result.BackupPath is null ? "." : $" (backup: {Path.GetFileName(result.BackupPath)}).")
             + (result.LauncherPlaysetSet ? " Set as the active Paradox launcher playset." : "");
-        if (result.LauncherWarning is { } warning)
+        if (result.Warning is { } warning)
         {
             (status, error) = (message + " " + warning, true);
             return null;
@@ -554,12 +558,13 @@
             (status, error) = ($"Applied, but launch failed: {ex.Message}", true);
             return null;
         }
-        if (result.LauncherWarning is { } warning)
+        var applied = result.AddonsApplied ? "Applied with Faz Addons and launched Stellaris." : "Applied and launched Stellaris.";
+        if (result.Warning is { } warning)
         {
-            (status, error) = ("Applied and launched Stellaris." + steamWarning + " " + warning, true);
+            (status, error) = (applied + steamWarning + " " + warning, true);
             return null;
         }
-        return "Applied and launched Stellaris." + steamWarning;
+        return applied + steamWarning;
     }
 
     async Task RunAsync(Func<Task<string?>> action)

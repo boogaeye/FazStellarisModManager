@@ -13,6 +13,10 @@ public static class AddonMod
     public const string ContentRel = "mod/faz_addons";
     public const string Name = "Faz Addons";
 
+    /// <summary>True for Faz Addons' descriptor as dlc_load.json or a list names it (either slash, any case).</summary>
+    public static bool IsAddon(string descriptorRel) =>
+        string.Equals(descriptorRel.Replace((char)92, '/'), DescriptorRel, StringComparison.OrdinalIgnoreCase);
+
     public static string ContentFolder(string userDir) => Path.GetFullPath(Path.Combine(userDir, ContentRel));
 
     public static string DescriptorFile(string userDir) => Path.GetFullPath(Path.Combine(userDir, DescriptorRel));

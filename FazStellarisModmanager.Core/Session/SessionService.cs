@@ -1,3 +1,4 @@
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Hashing;
 using FazStellarisModmanager.Core.Lists;
@@ -78,8 +79,11 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     /// <summary>The dlc_load.json backup written by the last Match host (null if none was needed or written).</summary>
     public string? LastBackupPath => _lastBackupPath;
 
-    /// <summary>A Paradox launcher playset problem from the last Match host (null if none).</summary>
+    /// <summary>A Paradox launcher playset (or Faz Addons) problem from the last Match host (null if none).</summary>
     public string? LastLauncherWarning => _lastLauncherWarning;
+
+    /// <summary>Client only: the host's addon settings, which Apply builds Faz Addons from while connected (null when the host has addons off, or not a client).</summary>
+    public AddonSettings? HostAddons => null; // the session protocol carries them from the next version on
 
     /// <summary>How many duplicate-named mods the last Match host renamed so Stellaris loads them (0 if none).</summary>
     public int LastDupeRenames => _lastDupeRenames;
@@ -245,7 +249,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             var result = manager.Apply(plan.ToApply);
             _lastBackupPath = result.BackupPath;
             _lastDupeRenames = dupes.Renamed.Count;
-            _lastLauncherWarning = string.Join(" ", new[] { dupes.LauncherWarning, result.LauncherWarning }.OfType<string>()) is { Length: > 0 } w ? w : null;
+            _lastLauncherWarning = string.Join(" ", new[] { dupes.LauncherWarning, result.Warning }.OfType<string>()) is { Length: > 0 } w ? w : null;
             applied = true;
             _lastPlan = plan;
             var snapshot = await ScanAsync(ct);

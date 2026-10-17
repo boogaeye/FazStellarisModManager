@@ -48,6 +48,29 @@ public sealed class FakeInstall : IDisposable
         _tmp.Write($"lib/steamapps/workshop/content/281990/{id}/common/w{id}.txt", $"ws {id}");
     }
 
+    /// <summary>The base game's strategic resources (energy on the market, nanites off it) and launcher-settings.json saying v4.5.2, for Faz Addons builds.</summary>
+    public void AddMarket()
+    {
+        _tmp.Write("lib/steamapps/common/Stellaris/launcher-settings.json", """{ "gameId": "stellaris", "rawVersion": "v4.5.2" }""");
+        _tmp.Write("lib/steamapps/common/Stellaris/" + MarketFile, MarketFixture.LfText("""
+            energy = {
+                tradable = yes
+                category = basic
+                market_amount = 100
+                market_price = 100
+                max = 25000
+            }
+            nanites = {
+                tradable = no
+                category = rare
+            }
+
+            """));
+    }
+
+    /// <summary>The strategic resources file <see cref="AddMarket"/> writes, relative to the game (or a mod's content) folder.</summary>
+    public const string MarketFile = "common/strategic_resources/00_strategic_resources.txt";
+
     public string Write(string relative, string content) => _tmp.Write(relative, content);
 
     public void Dispose() => _tmp.Dispose();
