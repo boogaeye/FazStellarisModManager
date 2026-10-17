@@ -151,7 +151,7 @@ public class MatchPlanTests
     }
 
     [Fact]
-    public void Differences_need_a_workshop_update_only_when_my_mod_is_the_workshop_item()
+    public void Differences_need_a_workshop_update_when_mine_is_the_workshop_item_and_a_switch_when_only_the_hosts_is()
     {
         var host = new ModList("H", [new("ugc:5", "Five", "mod/ugc_5.mod", "5"), new("ugc:6", "Six", "mod/ugc_6.mod", "6")], []);
         var library = new[] { Inst("local:copy.mod", "mod/copy.mod", "Five", "5"), Inst("ugc:6", "mod/ugc_6.mod", "Six", "6") };
@@ -163,7 +163,80 @@ public class MatchPlanTests
 
         Assert.Equal(["local:copy.mod", "ugc:6"], plan.ToApply.Mods.Select(m => m.Key));
         Assert.Equal(["ugc:6"], plan.NeedsWorkshopUpdate.Select(u => u.Key));
-        Assert.Equal(["ugc:5"], plan.DiffersLocally.Select(u => u.Key));
+        Assert.Equal([5UL], plan.NeedsWorkshopSwitch.Select(u => ModKeys.WorkshopId(u.Key)));
+        Assert.Empty(plan.DiffersLocally);
+        Assert.Empty(plan.SwitchedToWorkshop);
+        Assert.False(plan.IsComplete);
+    }
+
+    [Fact]
+    public void A_switch_alone_makes_the_plan_incomplete()
+    {
+        var host = new ModList("H", [new("ugc:5", "Five", "mod/ugc_5.mod", "5")], []);
+        var library = new[] { Inst("local:copy.mod", "mod/copy.mod", "Five", "5") };
+        var diff = Diff(Changed("ugc:5") with { MineKey = "local:copy.mod", Match = MatchKind.WorkshopId, LocalCopyOfWorkshop = true });
+
+        var plan = MatchPlan.Create(host, diff, library, TestSnapshots.Machine("M"));
+
+        Assert.Equal(["ugc:5"], plan.NeedsWorkshopSwitch.Select(u => u.Key));
+        Assert.Empty(plan.DiffersLocally);
+        Assert.Empty(plan.NeedsWorkshopUpdate);
+        Assert.False(plan.IsComplete);
+    }
+
+    [Fact]
+    public void Local_copies_on_both_sides_of_one_workshop_item_differ_locally()
+    {
+        var host = new ModList("H", [new("local:hostcopy.mod", "(H) Seven", "mod/hostcopy.mod", "7")], []);
+        var library = new[] { Inst("local:mine.mod", "mod/mine.mod", "(Mine) Seven", "7") };
+        var diff = Diff(Changed("local:hostcopy.mod") with { RemoteId = "7", MineKey = "local:mine.mod", Match = MatchKind.WorkshopId });
+
+        var plan = MatchPlan.Create(host, diff, library, TestSnapshots.Machine("M"));
+
+        Assert.Equal(["local:hostcopy.mod"], plan.DiffersLocally.Select(u => u.Key));
+        Assert.Empty(plan.NeedsWorkshopSwitch);
+        Assert.Empty(plan.NeedsWorkshopUpdate);
+    }
+
+    [Fact]
+    public void A_host_local_copy_paired_with_my_workshop_item_still_needs_a_workshop_update()
+    {
+        var host = new ModList("H", [new("local:hostcopy.mod", "(H) Nine", "mod/hostcopy.mod", "9")], []);
+        var library = new[] { Inst("ugc:9", "mod/ugc_9.mod", "Nine", "9") };
+        var diff = Diff(Changed("local:hostcopy.mod") with
+        {
+            RemoteId = "9", MineKey = "ugc:9", Match = MatchKind.WorkshopId, LocalCopyOfWorkshop = true,
+        });
+
+        var plan = MatchPlan.Create(host, diff, library, TestSnapshots.Machine("M"));
+
+        Assert.Equal(["local:hostcopy.mod"], plan.NeedsWorkshopUpdate.Select(u => u.Key));
+        Assert.Empty(plan.NeedsWorkshopSwitch);
+        Assert.Empty(plan.DiffersLocally);
+    }
+
+    [Fact]
+    public void Once_the_hosts_workshop_item_is_installed_the_plan_switches_to_it()
+    {
+        var host = new ModList("H", [new("ugc:5", "Five", "mod/ugc_5.mod", "5")], []);
+        var copy = Inst("local:8cde_5.mod", "mod/8cde_5.mod", "Five", "5");
+        var diff = Diff(Changed("ugc:5") with
+        {
+            MineKey = "local:8cde_5.mod", MineName = "(Mine) Five", Match = MatchKind.WorkshopId, LocalCopyOfWorkshop = true,
+        });
+        var before = MatchPlan.Create(host, diff, [copy], TestSnapshots.Machine("M"));
+
+        // The downloaded item got its mod/ugc_5.mod; the diff (of my enabled mods) still pairs the host's item with my copy.
+        var after = MatchPlan.Create(host, diff, [copy, Inst("ugc:5", "mod/ugc_5.mod", "Five", "5")], TestSnapshots.Machine("M"));
+
+        Assert.Equal(["ugc:5"], before.NeedsWorkshopSwitch.Select(u => u.Key));
+        Assert.Empty(before.SwitchedToWorkshop);
+        Assert.Equal(["mod/ugc_5.mod"], after.ToApply.Mods.Select(m => m.DescriptorRel));
+        var switched = Assert.Single(after.SwitchedToWorkshop);
+        Assert.Equal(("ugc:5", "(Mine) Five"), (switched.Key, switched.MineName));
+        Assert.Empty(after.NeedsWorkshopSwitch);
+        Assert.Empty(after.DiffersLocally);
+        Assert.True(after.IsComplete);
     }
 
     static UnitDiff Same(string key, string mineKey, MatchKind match) =>
@@ -213,6 +286,21 @@ public class MatchPlanTests
         // The copy's differences no longer apply: the Workshop item's files were not compared.
         Assert.Empty(plan.DiffersLocally);
         Assert.Empty(plan.NeedsWorkshopUpdate);
+        Assert.Empty(plan.NeedsWorkshopSwitch);
+        // Matching and differing copies both count as switched.
+        Assert.Equal(["ugc:5", "ugc:6"], plan.SwitchedToWorkshop.Select(u => u.Key));
+    }
+
+    [Fact]
+    public void Replacing_a_copy_of_a_host_local_mod_is_not_a_workshop_switch()
+    {
+        var host = new ModList("H", [new("local:a.mod", "A", "mod/a.mod", null)], []);
+        var library = new[] { Inst("local:b.mod", "mod/b.mod", "A", null), Inst("local:a.mod", "mod/a.mod", "A", null) };
+
+        var plan = MatchPlan.Create(host, Diff(Same("local:a.mod", "local:b.mod", MatchKind.Name)), library, TestSnapshots.Machine("M"));
+
+        Assert.Equal(["mod/a.mod"], plan.ToApply.Mods.Select(m => m.DescriptorRel));
+        Assert.Empty(plan.SwitchedToWorkshop);
     }
 
     [Fact]

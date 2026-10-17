@@ -420,6 +420,34 @@ public class SessionServiceTests
     }
 
     [Fact]
+    public async Task Switching_downloads_the_hosts_workshop_item_and_renames_my_differing_local_copy()
+    {
+        await using var host = new Rig("Hosty", """["mod/ugc_333.mod","mod/local.mod"]""");
+        host.Fake.AddWorkshopItem(333);
+        FakeWorkshop? workshop = null;
+        await using var client = new Rig("Cli", """["mod/8cde_333.mod","mod/local.mod"]""",
+            f => workshop = new FakeWorkshop(id => { f.AddWorkshopItem(id); return true; }));
+        // My local copy of item 333: same name and remote_file_id, older files.
+        client.Fake.Write("user/mod/8cde_333.mod", "name=" + '"' + "Workshop 333" + '"' + (char)10 + "path=" + '"' + "mod/8cde_333" + '"' + (char)10
+            + "remote_file_id=" + '"' + "333" + '"' + (char)10);
+        client.Fake.Write("user/mod/8cde_333/common/w333.txt", "ws 333, older");
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+
+        var needs = WorkshopNeeds.From(await client.Session.PlanAsync());
+        Assert.Equal([(333UL, WorkshopNeedKind.Switch)], needs.Items.Select(i => (i.Id, i.Kind)));
+
+        var result = await client.Session.InstallFromWorkshopAndMatchAsync([333UL], new NoProgress());
+
+        Assert.Equal([333UL], workshop!.Requested);
+        Assert.Equal(["mod/ugc_333.mod", "mod/local.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
+        Assert.Contains("Workshop 333 (duplicate: 8cde_333)", File.ReadAllText(Path.Combine(client.Fake.UserDir, "mod", "8cde_333.mod")));
+        Assert.Equal(["ugc:333"], client.Session.LastPlan!.SwitchedToWorkshop.Select(u => u.Key));
+        Assert.True(result.Plan!.IsComplete);
+        Assert.True(client.Session.MyDiff!.IsMatch);
+    }
+
+    [Fact]
     public async Task A_failed_workshop_item_is_reported_and_the_rest_is_still_matched()
     {
         await using var host = new Rig("Hosty", "[\"mod/ugc_222.mod\",\"mod/local.mod\"]");

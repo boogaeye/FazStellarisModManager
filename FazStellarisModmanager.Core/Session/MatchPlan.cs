@@ -6,26 +6,33 @@ using FazStellarisModmanager.Core.Snapshots;
 
 namespace FazStellarisModmanager.Core.Session;
 
-/// <summary>What "Match host" does on this machine, and what it could not fix.</summary>
+/// <summary>
+/// What "Match host" does on this machine, and what it could not fix. NeedsWorkshopSwitch: my local copy of the host's
+/// Workshop item differs, so the item itself should be downloaded. SwitchedToWorkshop: host Workshop mods for which my
+/// installed Workshop item replaced the copy the diff paired (the UnitDiff still names that copy in MineName).
+/// </summary>
 public sealed record MatchPlan(
     ModList ToApply,
     List<ModListEntry> NeedsWorkshopInstall,
     List<ModListEntry> NeedsManualInstall,
     List<UnitDiff> NeedsWorkshopUpdate,
+    List<UnitDiff> NeedsWorkshopSwitch,
     List<UnitDiff> DiffersLocally,
-    List<UnitDiff> NeedsDlc)
+    List<UnitDiff> NeedsDlc,
+    List<UnitDiff> SwitchedToWorkshop)
 {
     public bool IsComplete =>
         NeedsWorkshopInstall.Count == 0 && NeedsManualInstall.Count == 0 && NeedsWorkshopUpdate.Count == 0
-        && DiffersLocally.Count == 0 && NeedsDlc.Count == 0;
+        && NeedsWorkshopSwitch.Count == 0 && DiffersLocally.Count == 0 && NeedsDlc.Count == 0;
 
     /// <summary>
     /// The host list restricted to mods installed here (in the host order, pointing at this machine descriptors),
     /// plus the host disabled DLCs and any DLC installed here that the host does not use.
     /// Each host mod uses my paired mod (by key, Workshop id, name or files), except that a mod I have installed under
     /// the host's exact key beats a copy the diff paired. Unpaired host mods with a Workshop id need a Workshop install,
-    /// others a manual one. Content mismatches need a Workshop update when my mod is the Workshop item, otherwise local
-    /// attention. DLCs the host has and this PC lacks are reported in NeedsDlc.
+    /// others a manual one. Content mismatches need a Workshop update when my mod is the Workshop item, a switch to the
+    /// Workshop item when only the host's mod is, otherwise local attention. DLCs the host has and this PC lacks are
+    /// reported in NeedsDlc.
     /// <paramref name="hostList"/> and <paramref name="diff"/> must come from the same host target.
     /// </summary>
     public static MatchPlan Create(ModList hostList, DiffResult diff, IReadOnlyList<InstalledMod> library, MachineSnapshot mine)
@@ -84,14 +91,23 @@ public sealed record MatchPlan(
         }
 
         // A replaced copy's differences no longer apply; the mod used instead was not scanned, the rescan will tell.
+        // Mine is the Workshop item: Steam can update it. Only the host's is: switch my local copy to the item. Else local.
         var changed = diff.Mods.Where(u => u.Status == UnitStatus.ContentMismatch && !replaced.Contains(u.Key)).ToList();
+        var updates = changed.Where(u => ModKeys.WorkshopId(u.MineKey ?? u.Key) is not null).ToList();
+        var mineLocal = changed.Where(u => ModKeys.WorkshopId(u.MineKey ?? u.Key) is null).ToList();
+        // Replaced pairs (matching or not) whose host mod is the Workshop item: my installed item is used instead of my copy.
+        var switched = diff.Mods
+            .Where(u => u.Status is (UnitStatus.Ok or UnitStatus.ContentMismatch) && replaced.Contains(u.Key) && ModKeys.WorkshopId(u.Key) is not null)
+            .ToList();
         return new MatchPlan(
             new ModList(hostList.Name, apply, disabled),
             workshop,
             manual,
-            changed.Where(u => ModKeys.WorkshopId(u.MineKey ?? u.Key) is not null).ToList(),
-            changed.Where(u => ModKeys.WorkshopId(u.MineKey ?? u.Key) is null).ToList(),
-            diff.Dlcs.Where(d => d.Status == UnitStatus.Missing).ToList());
+            updates,
+            mineLocal.Where(u => ModKeys.WorkshopId(u.Key) is not null).ToList(),
+            mineLocal.Where(u => ModKeys.WorkshopId(u.Key) is null).ToList(),
+            diff.Dlcs.Where(d => d.Status == UnitStatus.Missing).ToList(),
+            switched);
     }
 
     static readonly Regex DlcDescriptor = new(@"^dlc/[^/:*?""<>|]+/[^/:*?""<>|]+\.dlc$", RegexOptions.IgnoreCase);

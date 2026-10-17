@@ -20,6 +20,8 @@ public class WorkshopNeedsTests
             [new("local:only.mod", "Host only", "mod/only.mod", null)],
             [Changed("ugc:9", "ugc:9", "My Nine"), Changed("ugc:5", "ugc:5")],
             [],
+            [],
+            [],
             []);
 
         var needs = WorkshopNeeds.From(plan);
@@ -34,8 +36,8 @@ public class WorkshopNeedsTests
     [Fact]
     public void Updates_use_my_key_and_a_complete_plan_needs_no_prompt()
     {
-        var local = new MatchPlan(new ModList("H", [], []), [], [], [Changed("ugc:5", "local:copy.mod")], [], []);
-        var none = new MatchPlan(new ModList("H", [], []), [], [], [], [], []);
+        var local = new MatchPlan(new ModList("H", [], []), [], [], [Changed("ugc:5", "local:copy.mod")], [], [], [], []);
+        var none = new MatchPlan(new ModList("H", [], []), [], [], [], [], [], [], []);
 
         Assert.Empty(WorkshopNeeds.From(local).Items);
         Assert.False(WorkshopNeeds.From(none).NeedsPrompt);
@@ -44,10 +46,31 @@ public class WorkshopNeedsTests
     [Fact]
     public void A_host_local_copy_paired_with_my_workshop_item_is_an_update_named_after_the_host_when_mine_has_no_name()
     {
-        var plan = new MatchPlan(new ModList("H", [], []), [], [], [Changed("local:copy.mod", "ugc:9")], [], []);
+        var plan = new MatchPlan(new ModList("H", [], []), [], [], [Changed("local:copy.mod", "ugc:9")], [], [], [], []);
 
         var need = Assert.Single(WorkshopNeeds.From(plan).Items);
 
         Assert.Equal((9UL, "local:copy.mod name", WorkshopNeedKind.Update), (need.Id, need.Name, need.Kind));
+    }
+
+    [Fact]
+    public void Switches_are_named_after_the_hosts_workshop_item_and_dedupe_keeps_install_then_update_then_switch()
+    {
+        var plan = new MatchPlan(
+            new ModList("H", [], []),
+            [new("ugc:5", "Five", "mod/ugc_5.mod", "5")],
+            [],
+            [Changed("ugc:6", "ugc:6", "My Six")],
+            [Changed("ugc:7", "local:copy7.mod", "My copy of Seven"), Changed("ugc:5", "local:copy5.mod"), Changed("ugc:6", "local:copy6.mod")],
+            [],
+            [],
+            []);
+
+        var needs = WorkshopNeeds.From(plan);
+
+        Assert.Equal(
+            [(5UL, "Five", WorkshopNeedKind.Install), (6UL, "My Six", WorkshopNeedKind.Update), (7UL, "ugc:7 name", WorkshopNeedKind.Switch)],
+            needs.Items.Select(i => (i.Id, i.Name, i.Kind)));
+        Assert.True(needs.NeedsPrompt);
     }
 }
