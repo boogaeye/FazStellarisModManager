@@ -124,6 +124,13 @@
                 </li>
             }
         }
+        @* Faz Addons isn't a mod of the list: Apply appends it after every mod while the addon settings change the game. *@
+        @if (Manager.EffectiveAddons() is { Enabled: true, Marketplace: { Enabled: true, ChangeCount: > 0 } })
+        {
+            <li class="addonrow" title="Generated from the Addons tab. Apply loads it after every mod.">
+                <span>🔒</span><b>@AddonMod.Name</b><span class="muted small">· generated · Marketplace</span><span class="spacer"></span><span class="lock">always last</span>
+            </li>
+        }
     </ol>
 </div>
 

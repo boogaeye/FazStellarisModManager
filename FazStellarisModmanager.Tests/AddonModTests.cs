@@ -1,5 +1,6 @@
 using System.Text;
 using FazStellarisModmanager.Core.Addons;
+using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Tests.TestUtil;
 
 namespace FazStellarisModmanager.Tests;
@@ -113,6 +114,40 @@ public class AddonModTests
         Assert.True(AddonMod.IsUpToDate(user.Path, output));
         Assert.False(AddonMod.IsUpToDate(user.Path, Output(("common/defines/zzzzz_faz_addons.txt", "y"))));
         Assert.False(AddonMod.IsUpToDate(user.Path, Output()));
+    }
+
+    [Fact]
+    public void Is_applied_when_a_build_with_changes_is_on_disk_and_loaded_or_a_build_without_is_not_loaded()
+    {
+        using var user = new TempDir();
+        var output = Output(("common/defines/zzzzz_faz_addons.txt", "x"));
+        string[] loaded = ["mod/ugc_1.mod", "mod" + (char)92 + "FAZ_ADDONS.mod"];
+        string[] notLoaded = ["mod/ugc_1.mod"];
+
+        Assert.False(AddonMod.IsApplied(user.Path, output, loaded));
+        AddonMod.Write(user.Path, output);
+        Assert.True(AddonMod.IsApplied(user.Path, output, loaded));
+        Assert.False(AddonMod.IsApplied(user.Path, output, notLoaded));
+        Assert.False(AddonMod.IsApplied(user.Path, Output(("common/defines/zzzzz_faz_addons.txt", "y")), loaded));
+
+        // Nothing to build: Apply doesn't load it (the old files may stay on disk).
+        Assert.True(AddonMod.IsApplied(user.Path, Output(), notLoaded));
+        Assert.False(AddonMod.IsApplied(user.Path, Output(), loaded));
+    }
+
+    [Fact]
+    public void Matches_the_host_unless_the_comparison_flags_the_addon()
+    {
+        static UnitDiff Unit(string key, UnitStatus status, string? mineKey = null) =>
+            new(key, key, null, status, 1, 1, false, null, null, null, MineKey: mineKey);
+        static DiffResult Diff(params UnitDiff[] mods) => new("v4.5.2", "v4.5.2", new FileDiff([], [], []), [], mods.ToList(), [], []);
+
+        Assert.Null(AddonMod.MatchesHost(null));
+        Assert.True(AddonMod.MatchesHost(Diff()));
+        Assert.True(AddonMod.MatchesHost(Diff(Unit("ugc:1", UnitStatus.Missing), Unit(AddonMod.Key, UnitStatus.Ok))));
+        Assert.False(AddonMod.MatchesHost(Diff(Unit("LOCAL:faz_addons.mod", UnitStatus.ContentMismatch))));
+        Assert.False(AddonMod.MatchesHost(Diff(Unit(AddonMod.Key, UnitStatus.Missing))));
+        Assert.False(AddonMod.MatchesHost(Diff(Unit("local:other.mod", UnitStatus.Extra, mineKey: AddonMod.Key))));
     }
 
     [Fact]

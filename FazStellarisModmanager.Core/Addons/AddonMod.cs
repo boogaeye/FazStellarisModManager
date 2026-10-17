@@ -1,4 +1,5 @@
 using System.Text;
+using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.IO;
 using FazStellarisModmanager.Core.Library;
 
@@ -68,6 +69,23 @@ public static class AddonMod
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
     }
+
+    /// <summary>
+    /// Whether the game runs what Apply would make of <paramref name="output"/>, given dlc_load.json's <paramref name="enabledMods"/>: with
+    /// changes, Faz Addons is loaded and <see cref="IsUpToDate"/>; without, it isn't loaded (Apply leaves the old files on disk then).
+    /// </summary>
+    public static bool IsApplied(string userDir, AddonOutput output, IEnumerable<string> enabledMods)
+    {
+        var loaded = enabledMods.Any(IsAddon);
+        return output.HasChanges ? loaded && IsUpToDate(userDir, output) : !loaded;
+    }
+
+    /// <summary>
+    /// For a session player: false when the comparison with the host flags Faz Addons (missing, different or extra), true when it doesn't,
+    /// null before there is a comparison.
+    /// </summary>
+    public static bool? MatchesHost(DiffResult? diff) =>
+        diff is null ? null : !diff.Mods.Any(u => (IsAddonKey(u.Key) || IsAddonKey(u.MineKey)) && u.Status != UnitStatus.Ok);
 
     /// <summary>The content of mod/faz_addons.mod for an output: its descriptor.mod plus path="mod/faz_addons".</summary>
     public static byte[] Descriptor(AddonOutput output)
