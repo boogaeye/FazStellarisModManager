@@ -5,7 +5,11 @@
 @inject ModIconCache Icons
 @inject ModFileCache FileCache
 @inject EditedModList State
+@inject SessionService Session
 
+@{
+    var workshopIds = WorkshopIdsInList();
+}
 <div class="mods-page">
     <div class="mods-toolbar">
         <input class="list-name" @bind="listName" placeholder="List name" />
@@ -26,6 +30,8 @@
     </div>
     <div class="mods-toolbar">
         <button class="primary" @onclick="() => adding = true" disabled="@(busy || !loaded)">+ Add mods</button>
+        <button @onclick="OpenUpdate" disabled="@(busy || !loaded || workshopIds.Count == 0)"
+                title="Have Steam check this list's Workshop mods for updates and download them">⟳ Update mods (@workshopIds.Count)</button>
         <input class="list-filter" placeholder="Filter this list…" @bind="filter" @bind:event="oninput" />
         <span class="muted">@current.Count @(current.Count == 1 ? "mod" : "mods")</span>
     </div>
@@ -130,6 +136,10 @@
     <DupeDialog Groups="dupeGroups" InListRels="ListRels()" ConfirmText="@(afterDupes is null ? "Keep selected" : "Fix and apply")"
                 OnConfirm="ConfirmDupes" OnClose="() => { dupeGroups = null; afterDupes = null; }" />
 }
+@if (updating is not null)
+{
+    <UpdateModsDialog Mods="updating" ListName="@listName" FolderOf="ContentFolderOf" OnClose="CloseUpdate" />
+}
 
 @code {
     List<ModListEntry> current => State.Mods;
@@ -150,6 +160,7 @@
     DotNetObjectReference<Mods>? self;
     int posVersion;
     bool adding;
+    IReadOnlyList<(ulong Id, string Name)>? updating; // the Update mods dialog is open for these
     Dictionary<string, InstalledMod> byKey = new(StringComparer.OrdinalIgnoreCase);
     CancellationTokenSource? iconRun;
 
@@ -346,6 +357,56 @@
             ScheduleConflicts();
         }
         (status, error) = ($"Added {added} {(added == 1 ? "mod" : "mods")}.", false);
+    }
+
+    IReadOnlyList<ulong> WorkshopIdsInList() => ModUpdater.WorkshopIds(new ModList(listName, current, disabledDlcs));
+
+    void OpenUpdate()
+    {
+        var names = new Dictionary<ulong, string>();
+        foreach (var e in current)
+            if (ModKeys.WorkshopId(e.Key) is { } id) names.TryAdd(id, e.Name);
+        var ids = WorkshopIdsInList();
+        if (ids.Count > 0) updating = ids.Select(id => (id, names[id])).ToList();
+    }
+
+    // Where the library has the Workshop mod installed (null when it isn't).
+    string? ContentFolderOf(ulong id) => byKey.GetValueOrDefault($"ugc:{id}")?.ContentPath;
+
+    // After an update the mod folders may have changed: rescan them like "Rescan mods", then let the session compare
+    // the new files. The status keeps the update's summary.
+    async Task CloseUpdate(IReadOnlyList<ModUpdateResult>? results)
+    {
+        updating = null;
+        if (results is null) return;
+        var summary = ModUpdater.Summary(results);
+        var failed = results.Any(r => r.Outcome == ModUpdateOutcome.Failed);
+        status = "Scanning mods…";
+        error = false;
+        busy = true;
+        await RunAsync(async () =>
+        {
+            await Manager.RefreshLibraryAsync();
+            Icons.Refresh();
+            FileCache.Clear();
+            LibraryChanged();
+            return summary + ErrorSuffix();
+        });
+        error |= failed;
+        if (Session.Role == SessionRole.None || Session.IsBusy) return;
+
+        var (shown, wasError) = (status, error);
+        status = shown + " Rescanning for the session…";
+        StateHasChanged();
+        try
+        {
+            await Session.RescanAsync();
+            (status, error) = (shown, wasError);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            (status, error) = ($"{shown} Rescanning for the session failed: {ex.Message}", true);
+        }
     }
 
     public async ValueTask DisposeAsync()
