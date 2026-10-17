@@ -218,6 +218,11 @@
                         {
                             <p class="status error">@launcherWarning</p>
                         }
+                        @if (plan.SwitchedToWorkshop.Count > 0)
+                        {
+                            <p class="status">Now using the Workshop version instead of your local copy:</p>
+                            <ul>@foreach (var u in plan.SwitchedToWorkshop) { <li>@UnitName(u)</li> }</ul>
+                        }
                         @if (plan.NeedsWorkshopInstall.Count > 0)
                         {
                             <p class="status error">Not installed. Subscribe to these on the Steam Workshop, then click Rescan:</p>
@@ -239,6 +244,11 @@
                                 }
                             </ul>
                         }
+                        @if (plan.NeedsWorkshopSwitch.Count > 0)
+                        {
+                            <p class="status error">Your local copy differs from the host's Workshop version; switch to the Workshop version from the Workshop mods pop-up:</p>
+                            <ul>@foreach (var u in plan.NeedsWorkshopSwitch) { <li>@UnitName(u)</li> }</ul>
+                        }
                         @if (plan.NeedsManualInstall.Count > 0)
                         {
                             <p class="status error">Local mods you don't have. Ask the host to share them:</p>
@@ -247,7 +257,18 @@
                         @if (plan.DiffersLocally.Count > 0)
                         {
                             <p class="status error">Local mods whose files differ from the host's:</p>
-                            <ul>@foreach (var u in plan.DiffersLocally) { <li>@UnitName(u)</li> }</ul>
+                            <ul>
+                                @foreach (var u in plan.DiffersLocally)
+                                {
+                                    <li>
+                                        @UnitName(u)
+                                        @if (MatchPlan.HostUsesLocalCopyOfSameItem(u, Manager.Library))
+                                        {
+                                            <span class="status">the host uses a local copy too — ask the host to share it, or both switch to the Workshop version</span>
+                                        }
+                                    </li>
+                                }
+                            </ul>
                         }
                         @if (plan.NeedsDlc.Count > 0)
                         {

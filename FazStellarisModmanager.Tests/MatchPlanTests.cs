@@ -199,6 +199,25 @@ public class MatchPlanTests
     }
 
     [Fact]
+    public void The_host_uses_a_local_copy_too_only_when_both_sides_are_local_copies_of_one_workshop_item()
+    {
+        var library = new[]
+        {
+            Inst("local:mine7.mod", "mod/mine7.mod", "Seven", "7"), Inst("local:mine8.mod", "mod/mine8.mod", "Eight", "8"),
+            Inst("local:plain.mod", "mod/plain.mod", "Plain", null), Inst("ugc:7", "mod/ugc_7.mod", "Seven", "7"),
+        };
+        UnitDiff HostCopy(string? mineKey) => Changed("local:hostcopy.mod") with { RemoteId = "7", MineKey = mineKey };
+
+        Assert.True(MatchPlan.HostUsesLocalCopyOfSameItem(HostCopy("LOCAL:mine7.mod"), library));
+        Assert.False(MatchPlan.HostUsesLocalCopyOfSameItem(HostCopy("local:mine8.mod"), library)); // another item
+        Assert.False(MatchPlan.HostUsesLocalCopyOfSameItem(HostCopy("local:plain.mod"), library)); // mine has no Workshop id
+        Assert.False(MatchPlan.HostUsesLocalCopyOfSameItem(HostCopy("ugc:7"), library)); // mine is the Workshop item
+        Assert.False(MatchPlan.HostUsesLocalCopyOfSameItem(HostCopy("local:gone.mod"), library)); // not installed any more
+        Assert.False(MatchPlan.HostUsesLocalCopyOfSameItem(HostCopy(null), library));
+        Assert.False(MatchPlan.HostUsesLocalCopyOfSameItem(Changed("ugc:7") with { MineKey = "local:mine7.mod" }, library)); // the host's is the item
+    }
+
+    [Fact]
     public void A_host_local_copy_paired_with_my_workshop_item_still_needs_a_workshop_update()
     {
         var host = new ModList("H", [new("local:hostcopy.mod", "(H) Nine", "mod/hostcopy.mod", "9")], []);

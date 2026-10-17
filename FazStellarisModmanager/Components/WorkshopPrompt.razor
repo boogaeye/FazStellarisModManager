@@ -26,10 +26,14 @@
                         <li>
                             <label class="inline">
                                 <input type="checkbox" checked="@selected.Contains(n.Id)" @onchange="e => Toggle(n.Id, e.Value is true)" />
-                                <span class="badge @(n.Kind == WorkshopNeedKind.Install ? "workshop" : "local")">@(n.Kind == WorkshopNeedKind.Install ? "Install" : "Update")</span>
+                                <span class="badge @(n.Kind == WorkshopNeedKind.Install ? "workshop" : "local")">@BadgeText(n.Kind)</span>
                                 <span>@NameOf(n.Id)</span>
                             </label>
                             <span class="muted small">Workshop @n.Id@SizeOf(n.Id)</span>
+                            @if (n.Kind == WorkshopNeedKind.Switch)
+                            {
+                                <span class="muted small">your local copy differs from the host's Workshop version</span>
+                            }
                         </li>
                     }
                 </ul>
@@ -52,7 +56,7 @@
             <div class="modal-actions">
                 @if (Needs.Items.Count > 0)
                 {
-                    <button class="primary" disabled="@(selected.Count == 0)" @onclick="() => Run(Needs.Items.Select(i => i.Id).Where(selected.Contains).ToList())">Install/update selected (@selected.Count) and match</button>
+                    <button class="primary" disabled="@(selected.Count == 0)" @onclick="() => Run(Needs.Items.Select(i => i.Id).Where(selected.Contains).ToList())">Download selected (@selected.Count) and match</button>
                 }
                 <button @onclick="() => Run([])">Match without installing</button>
                 <button @onclick="Close">Close</button>
@@ -96,7 +100,7 @@
                                 <span>@NameOf(it.Id)</span>
                                 @if (it.Success)
                                 {
-                                    <span class="status ok">@(KindOf(it.Id) == WorkshopNeedKind.Update ? "Updated" : "Installed")</span>
+                                    <span class="status ok">@DoneText(KindOf(it.Id))</span>
                                 }
                                 else
                                 {
@@ -120,7 +124,7 @@
                         <ul>
                             @foreach (var d in diffs)
                             {
-                                <li>@(d.MineName ?? d.Name)@(UpdatedHere(d) ? " (updated just now; the host may be on an older version)" : "")</li>
+                                <li>@(d.MineName ?? d.Name)@(UpdatedHere(d) ? " (downloaded just now; the host may be on an older version)" : "")</li>
                             }
                         </ul>
                     }
@@ -271,6 +275,21 @@
     WorkshopNeed? NeedOf(ulong id) => Needs.Items.FirstOrDefault(i => i.Id == id);
 
     WorkshopNeedKind? KindOf(ulong id) => NeedOf(id)?.Kind;
+
+    static string BadgeText(WorkshopNeedKind kind) => kind switch
+    {
+        WorkshopNeedKind.Install => "Install",
+        WorkshopNeedKind.Update => "Update",
+        _ => "Switch",
+    };
+
+    // A switch downloads the host's Workshop item to use instead of my local copy.
+    static string DoneText(WorkshopNeedKind? kind) => kind switch
+    {
+        WorkshopNeedKind.Update => "Updated",
+        WorkshopNeedKind.Switch => "Downloaded",
+        _ => "Installed",
+    };
 
     string NameOf(ulong id) =>
         Info.TryGetValue(id, out var i) && i.Title is { Length: > 0 } title ? title : NeedOf(id)?.Name ?? $"Workshop {id}";

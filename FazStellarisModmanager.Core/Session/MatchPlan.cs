@@ -110,6 +110,18 @@ public sealed record MatchPlan(
             switched);
     }
 
+    /// <summary>
+    /// For a <see cref="DiffersLocally"/> entry: the host's mod and mine are both local copies of one Workshop item, so the
+    /// host could share theirs, or both could switch to the Workshop item. My copy's remote id comes from
+    /// <paramref name="library"/> (by MineKey).
+    /// </summary>
+    public static bool HostUsesLocalCopyOfSameItem(UnitDiff u, IReadOnlyList<InstalledMod> library)
+    {
+        if (ModKeys.WorkshopId(u.Key) is not null || u.MineKey is not { } mineKey || ModKeys.WorkshopId(mineKey) is not null) return false;
+        var mine = library.FirstOrDefault(m => string.Equals(m.Key, mineKey, StringComparison.OrdinalIgnoreCase));
+        return mine is not null && ModMatcher.WorkshopIdOf(u.Key, u.RemoteId) is { } id && id == ModMatcher.WorkshopIdOf(mine.Key, mine.RemoteId);
+    }
+
     static readonly Regex DlcDescriptor = new(@"^dlc/[^/:*?""<>|]+/[^/:*?""<>|]+\.dlc$", RegexOptions.IgnoreCase);
 
     static bool IsDlcDescriptor(string path) => path.Length <= 200 && !path.Contains("..") && DlcDescriptor.IsMatch(path);
