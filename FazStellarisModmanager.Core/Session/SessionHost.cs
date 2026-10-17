@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Channels;
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Lists;
 using FazStellarisModmanager.Core.Saves;
@@ -72,6 +73,7 @@ public sealed class SessionHost : IAsyncDisposable
     Task? _acceptLoop;
     ModList _hostList;
     MachineSnapshot _hostSnapshot;
+    AddonSettings? _hostAddons;
     int _pendingHandshakes;
     GameSnapshot? _live;
     StreamMode _mode;
@@ -82,11 +84,14 @@ public sealed class SessionHost : IAsyncDisposable
     int _disposed;
 
     /// <param name="mode">What peers get from <see cref="UpdateLive"/> until <see cref="SetMode"/> changes it.</param>
-    public SessionHost(string hostName, ModList hostList, MachineSnapshot hostSnapshot, StreamMode mode = StreamMode.LiveGame)
+    /// <param name="addons">The host's addon settings, sent with its list and snapshot (null: addons off).</param>
+    public SessionHost(string hostName, ModList hostList, MachineSnapshot hostSnapshot, StreamMode mode = StreamMode.LiveGame,
+        AddonSettings? addons = null)
     {
         _hostName = hostName;
         _hostList = hostList;
         _hostSnapshot = hostSnapshot;
+        _hostAddons = addons;
         _mode = mode;
     }
 
@@ -165,19 +170,20 @@ public sealed class SessionHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// The host rescanned or changed its list: push the new target to everyone and re-diff them.
-    /// Never waits on peers' connections. Throws InvalidDataException if the target is too large to send.
+    /// The host rescanned or changed its list: push the new target (list, snapshot and addon settings, null meaning addons off) to
+    /// everyone and re-diff them. Never waits on peers' connections. Throws InvalidDataException if the target is too large to send.
     /// </summary>
-    public async Task UpdateHostAsync(ModList hostList, MachineSnapshot hostSnapshot)
+    public async Task UpdateHostAsync(ModList hostList, MachineSnapshot hostSnapshot, AddonSettings? addons = null)
     {
         // Encoded once for everyone, off the caller's thread; queued per peer in the same lock that changes the
         // target, so every peer's single writer delivers targets in the order they were set.
-        var frame = await Task.Run(() => Framing.Encode(new HostTargetUpdate(hostList, hostSnapshot)));
+        var frame = await Task.Run(() => Framing.Encode(new HostTargetUpdate(hostList, hostSnapshot, addons)));
         List<Peer> peers;
         lock (_gate)
         {
             _hostList = hostList;
             _hostSnapshot = hostSnapshot;
+            _hostAddons = addons;
             peers = _peers.Values.ToList();
             foreach (var p in peers) Enqueue(p, frame);
         }
@@ -347,7 +353,7 @@ public sealed class SessionHost : IAsyncDisposable
                     p.Writer = Task.Run(() => WriteLoopAsync(p), CancellationToken.None);
                     // Queued in the same lock that publishes the peer, so Welcome is always first and any later
                     // target update (queued under this lock too) comes after it. The streaming state precedes any live data.
-                    Enqueue(p, new Welcome(p.Id, _hostList, _hostSnapshot));
+                    Enqueue(p, new Welcome(p.Id, _hostList, _hostSnapshot, _hostAddons));
                     Enqueue(p, StreamModes.StateFor(_mode));
                     SendLive(p);
                     joined = true;

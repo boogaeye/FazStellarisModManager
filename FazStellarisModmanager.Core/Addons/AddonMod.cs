@@ -1,5 +1,6 @@
 using System.Text;
 using FazStellarisModmanager.Core.IO;
+using FazStellarisModmanager.Core.Library;
 
 namespace FazStellarisModmanager.Core.Addons;
 
@@ -13,9 +14,15 @@ public static class AddonMod
     public const string ContentRel = "mod/faz_addons";
     public const string Name = "Faz Addons";
 
+    /// <summary>Faz Addons' key in snapshots and diffs: "local:faz_addons.mod" (see <see cref="ModKeys.For"/>).</summary>
+    public static readonly string Key = ModKeys.For(DescriptorRel);
+
     /// <summary>True for Faz Addons' descriptor as dlc_load.json or a list names it (either slash, any case).</summary>
     public static bool IsAddon(string descriptorRel) =>
         string.Equals(descriptorRel.Replace((char)92, '/'), DescriptorRel, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True for <see cref="Key"/> (any case), e.g. as a diff unit's Key or MineKey.</summary>
+    public static bool IsAddonKey(string? key) => string.Equals(key, Key, StringComparison.OrdinalIgnoreCase);
 
     public static string ContentFolder(string userDir) => Path.GetFullPath(Path.Combine(userDir, ContentRel));
 

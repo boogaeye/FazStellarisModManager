@@ -57,7 +57,13 @@ public static class AppServices
             return new LiveGameService(manager.SaveGamesDir, enrich: enricher.Enrich);
         });
         services.AddSingleton(new LiveViewerStore(paths.LiveGame));
-        services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>(), sp.GetRequiredService<LiveGameService>()));
+        services.AddSingleton(sp =>
+        {
+            var addons = sp.GetRequiredService<AddonService>();
+            // Hosting sends this PC's saved addon settings (SessionService sends none while they are off).
+            return new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>(), sp.GetRequiredService<LiveGameService>(),
+                hostAddons: () => addons.Settings);
+        });
         services.AddSingleton(new PublicAddressLookup());
         services.AddSingleton(sp => new LiveFeed(
             sp.GetRequiredService<LiveGameService>(),

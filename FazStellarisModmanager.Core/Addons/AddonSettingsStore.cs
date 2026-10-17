@@ -23,8 +23,8 @@ public static class AddonSettingsStore
         AtomicFile.WriteAllText(file, JsonSerializer.Serialize(settings, Json));
     }
 
-    // A hand-edited file can hold "key": null or an empty key; neither means anything.
-    static AddonSettings Clean(AddonSettings s)
+    /// <summary>Without "key": null and blank keys, which a hand-edited file or a session host can send; neither means anything.</summary>
+    internal static AddonSettings Clean(AddonSettings s)
     {
         if (s.Marketplace?.Resources is not { } resources) return s;
         var kept = new Dictionary<string, ResourceOverride>(StringComparer.OrdinalIgnoreCase);
