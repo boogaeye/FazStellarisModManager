@@ -95,6 +95,34 @@ public class AddonBuilderTests
         return f.TechCatalog();
     }
 
+    [Fact]
+    public void The_build_is_the_same_with_or_without_names_and_this_pcs_modifiers_log()
+    {
+        // Session players build from the host's settings; a PC without modifiers.log (or other names) must still build the same bytes.
+        var dds = DdsBuilder.Bgra32(1, 1, (1, 2, 3, 255));
+        using var f = new MarketFixture()
+            .Base("common/technology/00_soc_tech.txt", "tech_galactic_administration = { area = society tier = 3 category = { statecraft } }" + Lf)
+            .Base("common/technology/category/00_category.txt", "statecraft = { }" + Lf)
+            .Base("common/ethics/00_ethics.txt", "ethic_authoritarian = { }" + Lf + "ethic_fanatic_authoritarian = { }" + Lf)
+            .Base("localisation/english/names_l_english.yml", "l_english:" + Lf + " mod_divided_patrongage_max_subjects:0 " + (char)34 + "Exempt" + (char)34 + Lf)
+            .Bytes("Base game", "gfx/interface/icons/technologies/repeatable_diplomacy_tech.dds", dds);
+        var bare = f.TechCatalog();
+        var loc = FazStellarisModmanager.Core.Technology.Localisation.Load(f.Sources, f.Warnings);
+        var full = f.TechCatalog(loc, "Printing Modifier Definitions:" + Lf + "- divided_patrongage_max_subjects, Category: Federations" + Lf);
+        var unknown = Patronage with { Key = "tech_faz_unknown_modifier", Name = "Unknown", Modifiers = [new TechModifier("made_up_modifier", 0)] };
+        var broken = Patronage with { Key = "tech_faz_broken", Name = "Broken", Icon = "nope" };
+        var settings = WithTechs(Patronage, unknown, broken);
+
+        var a = AddonBuilder.Build(MarketCatalog.Empty, bare, settings, "Cepheus v4.5.2");
+        var b = AddonBuilder.Build(MarketCatalog.Empty, full, settings, "Cepheus v4.5.2");
+
+        Assert.NotEqual(bare.ModifiersFromLog, full.ModifiersFromLog);
+        Assert.Equal(a.Files.Select(x => x.Path), b.Files.Select(x => x.Path));
+        for (var i = 0; i < a.Files.Count; i++) Assert.Equal(a.Files[i].Bytes, b.Files[i].Bytes);
+        Assert.Contains("tech_faz_unknown_modifier", Encoding.UTF8.GetString(a.Get(AddonBuilder.TechPath)!)); // warnings never drop a tech
+        Assert.DoesNotContain("tech_faz_broken", Encoding.UTF8.GetString(a.Get(AddonBuilder.TechPath)!));
+    }
+
     // The mockup's example: a repeatable, Authoritarian-only tech giving +1 subject exempt from Divided Patronage per level.
     static readonly CustomTech Patronage = new("tech_faz_imperial_patronage", "Imperial Patronage Doctrine",
         "Our administrators learn to keep more subjects content under one banner.", "repeatable_diplomacy_tech",
