@@ -1,4 +1,7 @@
 using System.Collections.Concurrent;
+using FazStellarisModmanager.Core.Addons;
+using FazStellarisModmanager.Core.Game;
+using FazStellarisModmanager.Core.Lists;
 
 namespace FazStellarisModmanager.Core.Technology;
 
@@ -95,11 +98,21 @@ public sealed class TechTreeService
         await _manager.RefreshLibraryAsync();
         var paths = _manager.Resolve();
         var gameDir = paths.GameDir ?? throw new InvalidOperationException("Stellaris install not found. Set the game folder in Settings.");
-        var list = choice.ListName is null
-            ? _manager.ImportCurrent("Current game")
-            : _manager.Lists.Load(choice.ListName) ?? throw new InvalidOperationException($"Saved list '{choice.ListName}' not found.");
+        // The current game includes Faz Addons (its custom techs) when dlc_load.json loads it; saved lists never do.
+        ModList list;
+        var includeAddon = false;
+        if (choice.ListName is null)
+        {
+            var load = DlcLoadFile.Read(paths.UserDir);
+            list = ModList.FromDlcLoad("Current game", load, _manager.Library);
+            includeAddon = load.EnabledMods.Any(AddonMod.IsAddon);
+        }
+        else
+        {
+            list = _manager.Lists.Load(choice.ListName) ?? throw new InvalidOperationException($"Saved list '{choice.ListName}' not found.");
+        }
         var warnings = new List<string>();
-        var sources = TechSources.Build(gameDir, paths.UserDir, list, warnings);
+        var sources = TechSources.Build(gameDir, paths.UserDir, list, warnings, includeAddon);
         try
         {
             var db = TechDatabase.Build(sources, warnings, new ProgressSink(this), ct);

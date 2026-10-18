@@ -37,6 +37,29 @@ public class TechSourcesTests
     }
 
     [Fact]
+    public void Faz_Addons_is_added_last_only_when_asked_and_its_folder_exists()
+    {
+        using var fx = new FakeInstall();
+        var list = new ModList("t", [new("mod/local.mod", "Local Mod", "mod/local.mod", null)], []);
+        string[] Names(bool includeAddon, out bool hasTechFile)
+        {
+            var sources = TechSources.Build(fx.GameDir, fx.UserDir, list, new List<string>(), includeAddon);
+            try
+            {
+                hasTechFile = sources[^1].Exists("common/technology/zzzzz_faz_addons_tech.txt");
+                return sources.Select(s => s.Name).ToArray();
+            }
+            finally { foreach (var s in sources) s.Dispose(); }
+        }
+
+        Assert.Equal(new[] { "Base game", "Local Mod" }, Names(includeAddon: true, out _));
+        fx.Write("user/mod/faz_addons/common/technology/zzzzz_faz_addons_tech.txt", "tech_faz_x = { }");
+        Assert.Equal(new[] { "Base game", "Local Mod" }, Names(includeAddon: false, out _));
+        Assert.Equal(new[] { "Base game", "Local Mod", "Faz Addons" }, Names(includeAddon: true, out var hasTechFile));
+        Assert.True(hasTechFile);
+    }
+
+    [Fact]
     public void Mod_named_like_base_game_gets_a_suffix()
     {
         using var fx = new FakeInstall();

@@ -12,7 +12,7 @@ public sealed record ResolvedPaths(string UserDir, string? GameDir, string? Work
 /// <summary>
 /// What Apply did: the dlc_load.json backup, whether the launcher playset was set, and a launcher problem to show (null if none).
 /// <see cref="AddonsApplied"/>: Faz Addons was built and loaded after every mod. <see cref="AddonWarning"/>: why it wasn't although the
-/// addon settings change the game (null if there was no problem).
+/// addon settings change the game, and the custom techs left out for errors (null if there was no problem).
 /// </summary>
 public sealed record ApplyResult(string? BackupPath, bool LauncherPlaysetSet, string? LauncherWarning, bool AddonsApplied = false, string? AddonWarning = null)
 {
@@ -132,29 +132,51 @@ public sealed class ModManagerService
     }
 
     // Builds Faz Addons from the game and the list's mods and writes it, when the settings can change the game. Returns whether it should
-    // load; a missing game folder or an IO problem is a warning instead (the folder may be left part-written, but it isn't loaded).
+    // load; a missing game folder or an IO problem is a warning instead (the folder may be left part-written, but it isn't loaded), as are
+    // custom techs left out for errors. The catalogs are read from the mod files alone (no names, icons or modifiers.log), as errors need.
     static (bool Applied, string? Warning) WriteAddons(ResolvedPaths paths, ModList list, AddonSettings? settings)
     {
-        if (settings is not { Enabled: true, Marketplace: { Enabled: true, ChangeCount: > 0 } }) return (false, null);
+        if (settings is not { MayChangeGame: true }) return (false, null);
         const string NotLoaded = "Faz Addons was not loaded: ";
         if (paths.GameDir is not { } gameDir) return (false, NotLoaded + "Stellaris install not found. Set the game folder in Settings.");
         List<ContentSource>? sources = null;
+        string? notAdded = null;
         try
         {
             sources = TechSources.Build(gameDir, paths.UserDir, list, new List<string>());
-            var output = AddonBuilder.Build(MarketCatalog.Build(sources), settings, GameVersion.Read(gameDir));
-            if (!output.HasChanges) return (false, null);
+            var market = settings.Marketplace is { Enabled: true, ChangeCount: > 0 } ? MarketCatalog.Build(sources) : MarketCatalog.Empty;
+            var techs = settings.Technologies is { Enabled: true, Techs.Count: > 0 } ? TechAddonCatalog.Build(sources) : TechAddonCatalog.Empty;
+            notAdded = NotAddedTechs(settings.Technologies?.Techs ?? [], techs);
+            var output = AddonBuilder.Build(market, techs, settings, GameVersion.Read(gameDir));
+            if (!output.HasChanges) return (false, notAdded);
             AddonMod.Write(paths.UserDir, output);
-            return (true, null);
+            return (true, notAdded);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException)
         {
-            return (false, NotLoaded + ex.Message);
+            return (false, string.Join(" ", new[] { notAdded, NotLoaded + ex.Message }.OfType<string>()));
         }
         finally
         {
             foreach (var s in sources ?? []) s.Dispose();
         }
+    }
+
+    // "Not added (fix on the Addons tab): Name (first error); …." for the custom techs the build leaves out, or null.
+    static string? NotAddedTechs(IReadOnlyList<CustomTech> all, TechAddonCatalog catalog)
+    {
+        if (all.Count == 0) return null;
+        var buildable = TechValidator.Buildable(all, catalog);
+        var skipped = all
+            .Where(t => !buildable.Any(b => ReferenceEquals(b, t)))
+            .Select(t =>
+            {
+                var name = string.IsNullOrWhiteSpace(t.Name) ? (t.Key.Length > 0 ? t.Key : "Unnamed technology") : t.Name.Trim();
+                var error = TechValidator.Validate(t, all, catalog).FirstOrDefault(i => i.Level == TechIssueLevel.Error)?.Message ?? "it has errors";
+                return $"{name} ({error.TrimEnd('.')})";
+            })
+            .ToList();
+        return skipped.Count == 0 ? null : "Not added (fix on the Addons tab): " + string.Join("; ", skipped) + ".";
     }
 
     /// <summary>Dupe groups (clashing descriptor names) with at least one member in the list. Uses the last <see cref="RefreshLibrary"/>.</summary>

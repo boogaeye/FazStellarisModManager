@@ -186,7 +186,7 @@ public sealed class MarketCatalog
             List("NAI.AI_ALLOWED_TO_SELL"));
     }
 
-    static Dictionary<string, string> ReadGlobals(IReadOnlyList<ContentSource> sources, ICollection<string> warnings, CancellationToken ct)
+    internal static Dictionary<string, string> ReadGlobals(IReadOnlyList<ContentSource> sources, ICollection<string> warnings, CancellationToken ct)
     {
         var globals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (source, rel) in Winners(sources, "common/scripted_variables"))
@@ -199,7 +199,7 @@ public sealed class MarketCatalog
     }
 
     // Per relative path the last source wins; the winners load in file-name order.
-    static IEnumerable<(ContentSource Source, string Rel)> Winners(IReadOnlyList<ContentSource> sources, string folder)
+    internal static IEnumerable<(ContentSource Source, string Rel)> Winners(IReadOnlyList<ContentSource> sources, string folder)
     {
         var files = new Dictionary<string, (ContentSource Source, string Rel)>(StringComparer.OrdinalIgnoreCase);
         foreach (var source in sources)
@@ -208,7 +208,7 @@ public sealed class MarketCatalog
         return files.Values.OrderBy(f => f.Rel, TechDatabase.LoadOrder).ToList();
     }
 
-    static string? TryRead(ContentSource source, string rel, ICollection<string> warnings)
+    internal static string? TryRead(ContentSource source, string rel, ICollection<string> warnings)
     {
         try { return source.ReadText(rel); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException)

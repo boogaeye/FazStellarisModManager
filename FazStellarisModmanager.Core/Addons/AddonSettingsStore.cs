@@ -23,13 +23,39 @@ public static class AddonSettingsStore
         AtomicFile.WriteAllText(file, JsonSerializer.Serialize(settings, Json));
     }
 
-    /// <summary>Without "key": null and blank keys, which a hand-edited file or a session host can send; neither means anything.</summary>
+    /// <summary>
+    /// Without "key": null and blank keys, which a hand-edited file or a session host can send; neither means anything. The same goes for
+    /// null techs and null items in a tech's lists; a tech's null texts become empty (which the validator reports).
+    /// </summary>
     internal static AddonSettings Clean(AddonSettings s)
     {
-        if (s.Marketplace?.Resources is not { } resources) return s;
-        var kept = new Dictionary<string, ResourceOverride>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (key, value) in resources.OrderBy(kv => kv.Key, StringComparer.Ordinal))
-            if ((ResourceOverride?)value is not null && !string.IsNullOrWhiteSpace(key)) kept[key] = value;
-        return s with { Marketplace = s.Marketplace with { Resources = kept.Count == 0 ? null : kept } };
+        if (s.Marketplace?.Resources is { } resources)
+        {
+            var kept = new Dictionary<string, ResourceOverride>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (key, value) in resources.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+                if ((ResourceOverride?)value is not null && !string.IsNullOrWhiteSpace(key)) kept[key] = value;
+            s = s with { Marketplace = s.Marketplace with { Resources = kept.Count == 0 ? null : kept } };
+        }
+        if (s.Technologies is { } technologies)
+        {
+            var techs = (technologies.Techs ?? []).Where(t => (CustomTech?)t is not null).Select(Clean).ToList();
+            s = s with { Technologies = technologies with { Techs = techs.Count == 0 ? null : techs } };
+        }
+        return s;
     }
+
+    static CustomTech Clean(CustomTech t) => t with
+    {
+        Key = t.Key ?? "",
+        Name = t.Name ?? "",
+        Description = t.Description ?? "",
+        Icon = t.Icon ?? "",
+        Area = t.Area ?? "",
+        Category = t.Category ?? "",
+        Ethics = Kept(t.Ethics?.Where(e => (string?)e is not null)),
+        Prerequisites = Kept(t.Prerequisites?.Where(p => (string?)p is not null)),
+        Modifiers = Kept(t.Modifiers?.Where(m => (TechModifier?)m is not null).Select(m => m with { Key = m.Key ?? "" })),
+    };
+
+    static IReadOnlyList<T>? Kept<T>(IEnumerable<T>? items) => items?.ToList() is { Count: > 0 } list ? list : null;
 }

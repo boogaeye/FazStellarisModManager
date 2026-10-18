@@ -76,7 +76,94 @@ public class AddonBuilderTests
         new(Enabled: true, new MarketplaceSettings(Resources: resources.ToDictionary(r => r.Key, r => r.Override)));
 
     static AddonOutput Build(MarketFixture game, AddonSettings settings, string? version = "Cepheus v4.5.2") =>
-        AddonBuilder.Build(game.Catalog(), settings, version);
+        AddonBuilder.Build(game.Catalog(), Techs, settings, version);
+
+    // The game's techs as Apply reads them (file names only): a tech to require, two categories, ethics (authoritarian with its fanatic
+    // variant, materialist without one, gestalt) and two tech icons.
+    static readonly TechAddonCatalog Techs = TechGame();
+
+    static TechAddonCatalog TechGame()
+    {
+        var dds = DdsBuilder.Bgra32(1, 1, (1, 2, 3, 255));
+        using var f = new MarketFixture()
+            .Base("common/technology/00_soc_tech.txt", "tech_galactic_administration = { area = society tier = 3 category = { statecraft } }" + Lf)
+            .Base("common/technology/category/00_category.txt", "statecraft = { }" + Lf + "particles = { }" + Lf)
+            .Base("common/ethics/00_ethics.txt", "ethic_authoritarian = { }" + Lf + "ethic_fanatic_authoritarian = { }" + Lf
+                + "ethic_materialist = { }" + Lf + "ethic_gestalt_consciousness = { }" + Lf)
+            .Bytes("Base game", "gfx/interface/icons/technologies/repeatable_diplomacy_tech.dds", dds)
+            .Bytes("Base game", "gfx/interface/icons/technologies/tech_lasers_1.dds", dds);
+        return f.TechCatalog();
+    }
+
+    // The mockup's example: a repeatable, Authoritarian-only tech giving +1 subject exempt from Divided Patronage per level.
+    static readonly CustomTech Patronage = new("tech_faz_imperial_patronage", "Imperial Patronage Doctrine",
+        "Our administrators learn to keep more subjects content under one banner.", "repeatable_diplomacy_tech",
+        Area: "society", Category: "statecraft", Tier: 5, Repeatable: true, Cost: 50000, CostPerLevel: 5000, Weight: 15,
+        Ethics: ["ethic_authoritarian"], Prerequisites: ["tech_galactic_administration"],
+        Modifiers: [new TechModifier("divided_patrongage_max_subjects", 1)]);
+
+    static readonly string PatronageText = MarketFixture.LfText("""
+        tech_faz_imperial_patronage = {
+        	area = society
+        	tier = 5
+        	category = { statecraft }
+        	cost = 50000
+        	cost_per_level = 5000
+        	levels = -1
+        	icon = repeatable_diplomacy_tech
+        	weight = 15
+
+        	potential = {
+        		OR = {
+        			has_ethic = ethic_authoritarian
+        			has_ethic = ethic_fanatic_authoritarian
+        		}
+        	}
+        	prerequisites = { "tech_galactic_administration" }
+
+        	weight_modifier = { factor = 0.5 }
+        	ai_weight = { factor = 1 }
+        	weight_groups = { repeatable }
+        	mod_weight_if_group_picked = { repeatable = 0.01 }
+
+        	modifier = {
+        		divided_patrongage_max_subjects = 1
+        	}
+        }
+        """) + Lf;
+
+    // A one-off rare tech without ethics or prerequisites; its cost per level doesn't count.
+    static readonly CustomTech Lasers = new("tech_faz_ancient_lasers", "Ancient Lasers", "Found in a derelict.", "tech_lasers_1",
+        Area: "physics", Category: "particles", Tier: 2, Repeatable: false, Rare: true, Cost: 3000, CostPerLevel: 700, Weight: 50,
+        Modifiers: [new TechModifier("ship_weapon_damage", 0.05), new TechModifier("ship_upkeep_mult", -0.25)]);
+
+    static readonly string LasersText = MarketFixture.LfText("""
+        tech_faz_ancient_lasers = {
+        	area = physics
+        	tier = 2
+        	category = { particles }
+        	cost = 3000
+        	icon = tech_lasers_1
+        	is_rare = yes
+        	weight = 50
+
+        	ai_weight = { factor = 1 }
+
+        	modifier = {
+        		ship_weapon_damage = 0.05
+        		ship_upkeep_mult = -0.25
+        	}
+        }
+        """) + Lf;
+
+    static AddonSettings WithTechs(params CustomTech[] techs) => new(Enabled: true, Technologies: new TechnologiesSettings(Techs: techs));
+
+    static string Utf8WithBom(AddonOutput output, string path)
+    {
+        var bytes = output.Get(path)!;
+        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, bytes[..3]);
+        return Encoding.UTF8.GetString(bytes[3..]);
+    }
 
     static string Text(AddonOutput output, string path) => Encoding.UTF8.GetString(output.Get(path)!);
 
@@ -331,6 +418,11 @@ public class AddonBuilderTests
             new(Enabled: true),
             new(Enabled: true, new MarketplaceSettings(MaxBaseAmounts: 200, TradeFeeBase: 0.3)),
             On(("energy", new ResourceOverride(MarketPrice: 100, Tradable: true)), ("mystery", new ResourceOverride(Tradable: true))),
+            WithTechs(Patronage) with { Enabled = false },
+            WithTechs(Patronage) with { Technologies = new TechnologiesSettings(Enabled: false, Techs: [Patronage]) },
+            WithTechs(),
+            new(Enabled: true, Technologies: new TechnologiesSettings()),
+            WithTechs(Patronage with { Icon = "missing_icon" }),
         ];
 
         foreach (var settings in cases)
@@ -391,7 +483,7 @@ public class AddonBuilderTests
 
         var a = Build(game, forward);
         var b = Build(game, forward);
-        var c = AddonBuilder.Build(game.Catalog(), reversed, "Cepheus v4.5.2");
+        var c = AddonBuilder.Build(game.Catalog(), Techs, reversed, "Cepheus v4.5.2");
 
         Assert.Equal(7, a.Files.Count); // README, descriptor, defines, on_actions, events and the two resource files
         foreach (var other in new[] { b, c })
@@ -399,6 +491,198 @@ public class AddonBuilderTests
             Assert.Equal(a.Files.Select(f => f.Path), other.Files.Select(f => f.Path));
             for (var i = 0; i < a.Files.Count; i++) Assert.Equal(a.Files[i].Bytes, other.Files[i].Bytes);
         }
+    }
+
+    [Fact]
+    public void A_repeatable_ethic_locked_tech_is_written_with_the_fanatic_variant()
+    {
+        using var game = Game();
+
+        var output = Build(game, WithTechs(Patronage));
+
+        Assert.True(output.HasChanges);
+        Assert.Equal(["README.txt", AddonBuilder.TechPath, "descriptor.mod", AddonBuilder.TechLocalisationPath], output.Files.Select(f => f.Path));
+        Assert.Equal(PatronageText, Text(output, AddonBuilder.TechPath));
+        Assert.False(output.Get(AddonBuilder.TechPath)!.AsSpan().StartsWith(new byte[] { 0xEF, 0xBB, 0xBF }));
+        Assert.Contains("Faz Addons", Text(output, "README.txt"));
+    }
+
+    [Fact]
+    public void A_one_off_rare_tech_has_no_repeatable_lines_and_no_potential()
+    {
+        using var game = Game();
+
+        var output = Build(game, WithTechs(Lasers));
+
+        Assert.Equal(LasersText, Text(output, AddonBuilder.TechPath));
+    }
+
+    [Fact]
+    public void Techs_are_written_in_settings_order_separated_by_a_blank_line()
+    {
+        using var game = Game();
+
+        var output = Build(game, WithTechs(Lasers, Patronage));
+
+        Assert.Equal(LasersText + Lf + PatronageText, Text(output, AddonBuilder.TechPath));
+        Assert.Equal(MarketFixture.LfText("""
+            l_english:
+             tech_faz_ancient_lasers:0 "Ancient Lasers"
+             tech_faz_ancient_lasers_desc:0 "Found in a derelict."
+             tech_faz_imperial_patronage:0 "Imperial Patronage Doctrine"
+             tech_faz_imperial_patronage_desc:0 "Our administrators learn to keep more subjects content under one banner."
+            """) + Lf, Utf8WithBom(output, AddonBuilder.TechLocalisationPath));
+    }
+
+    [Fact]
+    public void Localisation_starts_with_a_bom_and_the_language_and_cleans_line_breaks_and_quotes()
+    {
+        using var game = Game();
+        var q = ((char)34).ToString();
+        var tech = Lasers with { Name = "The " + q + "Old" + q + " Lasers", Description = "First line" + Crlf + "second line" + Lf + "third" + (char)13 + "end" };
+
+        var output = Build(game, WithTechs(tech));
+
+        Assert.Equal("l_english:" + Lf
+            + " tech_faz_ancient_lasers:0 " + q + "The 'Old' Lasers" + q + Lf
+            + " tech_faz_ancient_lasers_desc:0 " + q + "First line second line third end" + q + Lf,
+            Utf8WithBom(output, AddonBuilder.TechLocalisationPath));
+    }
+
+    [Fact]
+    public void Ethics_without_a_fanatic_variant_are_listed_alone()
+    {
+        using var game = Game();
+
+        var output = Build(game, WithTechs(Lasers with { Ethics = ["ethic_materialist", "ethic_gestalt_consciousness"] }));
+
+        Assert.Contains(MarketFixture.LfText("""
+            	weight = 50
+
+            	potential = {
+            		OR = {
+            			has_ethic = ethic_materialist
+            			has_ethic = ethic_gestalt_consciousness
+            		}
+            	}
+
+            	ai_weight = { factor = 1 }
+            """), Text(output, AddonBuilder.TechPath));
+    }
+
+    [Fact]
+    public void Prerequisites_without_ethics_and_a_tech_without_effects()
+    {
+        using var game = Game();
+
+        var output = Build(game, WithTechs(Lasers with { Prerequisites = ["tech_galactic_administration", "tech_faz_imperial_patronage"], Modifiers = null }, Patronage));
+
+        Assert.StartsWith(MarketFixture.LfText("""
+            tech_faz_ancient_lasers = {
+            	area = physics
+            	tier = 2
+            	category = { particles }
+            	cost = 3000
+            	icon = tech_lasers_1
+            	is_rare = yes
+            	weight = 50
+
+            	prerequisites = { "tech_galactic_administration" "tech_faz_imperial_patronage" }
+
+            	ai_weight = { factor = 1 }
+            }
+
+            tech_faz_imperial_patronage = {
+            """), Text(output, AddonBuilder.TechPath));
+    }
+
+    [Fact]
+    public void Modifier_values_are_invariant_with_up_to_4_decimals_and_never_minus_zero()
+    {
+        using var game = Game();
+        var tech = Lasers with { Modifiers = [new("a_mult", 1.23456), new("b_add", -0.00001), new("c_add", 1500), new("d_mult", -0.1)] };
+        var culture = CultureInfo.CurrentCulture;
+        AddonOutput output;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+            output = Build(game, WithTechs(tech));
+        }
+        finally { CultureInfo.CurrentCulture = culture; }
+
+        Assert.Contains(MarketFixture.LfText("""
+            	modifier = {
+            		a_mult = 1.2346
+            		b_add = 0
+            		c_add = 1500
+            		d_mult = -0.1
+            	}
+            """), Text(output, AddonBuilder.TechPath));
+    }
+
+    [Fact]
+    public void Techs_with_errors_are_left_out_and_the_rest_are_built()
+    {
+        using var game = Game();
+        var broken = Lasers with { Key = "tech_faz_broken", Category = "nonsense" };
+        // Requires the broken tech, so it can't be built either.
+        var dependent = Lasers with { Key = "tech_faz_dependent", Prerequisites = ["tech_faz_broken"] };
+
+        var output = Build(game, WithTechs(broken, Patronage, dependent));
+
+        Assert.Equal(PatronageText, Text(output, AddonBuilder.TechPath));
+        Assert.DoesNotContain("tech_faz_broken", Utf8WithBom(output, AddonBuilder.TechLocalisationPath));
+        Assert.DoesNotContain("tech_faz_dependent", Utf8WithBom(output, AddonBuilder.TechLocalisationPath));
+    }
+
+    [Fact]
+    public void Market_changes_and_techs_are_built_together()
+    {
+        using var game = Game();
+        var settings = On(("energy", new ResourceOverride(MarketPrice: 150))) with { Technologies = new TechnologiesSettings(Techs: [Patronage]) };
+
+        var output = Build(game, settings);
+
+        Assert.True(output.HasChanges);
+        Assert.Equal(["README.txt", ResFile, AddonBuilder.TechPath, "descriptor.mod", AddonBuilder.TechLocalisationPath], output.Files.Select(f => f.Path));
+    }
+
+    [Fact]
+    public void Tech_builds_are_deterministic()
+    {
+        using var game = Game();
+        var settings = WithTechs(Patronage, Lasers with { Ethics = ["ethic_authoritarian", "ethic_materialist"] });
+
+        var a = Build(game, settings);
+        var b = AddonBuilder.Build(game.Catalog(), TechGame(), settings with { Technologies = settings.Technologies! with { Techs = settings.Technologies.Techs!.ToList() } }, "Cepheus v4.5.2");
+
+        Assert.Equal(a.Files.Select(f => f.Path), b.Files.Select(f => f.Path));
+        for (var i = 0; i < a.Files.Count; i++) Assert.Equal(a.Files[i].Bytes, b.Files[i].Bytes);
+    }
+
+    [Fact]
+    public void TechText_is_one_techs_part_of_the_files()
+    {
+        var (technology, localisation) = AddonBuilder.TechText(Patronage, Techs);
+
+        Assert.Equal(PatronageText, technology);
+        Assert.Equal("l_english:" + Lf
+            + " tech_faz_imperial_patronage:0 " + (char)34 + "Imperial Patronage Doctrine" + (char)34 + Lf
+            + " tech_faz_imperial_patronage_desc:0 " + (char)34 + "Our administrators learn to keep more subjects content under one banner." + (char)34 + Lf,
+            localisation);
+    }
+
+    [Fact]
+    public void TechText_writes_a_tech_even_when_it_has_errors()
+    {
+        var (technology, _) = AddonBuilder.TechText(Patronage with { Ethics = ["ethic_unknown"], Icon = "" }, Techs);
+
+        Assert.Contains(MarketFixture.LfText("""
+            		OR = {
+            			has_ethic = ethic_unknown
+            		}
+            """), technology);
+        Assert.Contains(Lf + (char)9 + "icon = " + Lf, technology);
     }
 }
 

@@ -24,6 +24,9 @@ public sealed class Localisation
 
     public int Count => _map.Count;
 
+    /// <summary>Every key (spelled as first added), in no particular order.</summary>
+    public IEnumerable<string> Keys => _map.Keys;
+
     /// <summary>Scripted localisation used for [GetX] commands; empty until set.</summary>
     public ScriptedLoc Scripted { get; set; } = ScriptedLoc.Empty;
 
