@@ -17,6 +17,9 @@
     var marketOn = market?.Enabled ?? true;
     var maxBase = catalog is null ? null : MarketplaceView.MaxBaseAmounts(catalog, market);
     var hostName = Session.HostName ?? Session.HostAddress ?? "the host";
+    var techCatalog = Addons.TechCatalog ?? TechAddonCatalog.Empty;
+    var techCount = TechnologiesView.Techs(settings).Count;
+    var techsOn = settings.Technologies?.Enabled ?? true;
 }
 <div class="addons-page">
     <div class="head">
@@ -91,14 +94,25 @@
         <div class="grid">
             <div class="side">
                 <div class="muted small side-cap">Addons</div>
-                <div class="arow sel">
+                <div class="arow pick @(technologies ? "" : "sel")" role="button" tabindex="0" aria-pressed="@(technologies ? "false" : "true")"
+                     @onclick="() => Show(technologies: false)" @onkeydown="e => ShowKey(e, technologies: false)">
                     <span class="aico">⚖</span>
                     <div class="grow">
                         Marketplace
                         <div class="muted small">@(changeCount == 0 ? "No changes" : changeCount == 1 ? "1 change" : $"{changeCount} changes")</div>
                     </div>
                     <button class="sw sm @(marketOn ? "on" : "") @(readOnly ? "ro" : "")" role="switch" aria-checked="@(marketOn ? "true" : "false")"
-                            aria-label="Marketplace" disabled="@readOnly" @onclick="ToggleMarketplace"></button>
+                            aria-label="Marketplace" disabled="@readOnly" @onclick="ToggleMarketplace" @onclick:stopPropagation="true"></button>
+                </div>
+                <div class="arow pick @(technologies ? "sel" : "")" role="button" tabindex="0" aria-pressed="@(technologies ? "true" : "false")"
+                     @onclick="() => Show(technologies: true)" @onkeydown="e => ShowKey(e, technologies: true)">
+                    <span class="aico tech">🧪</span>
+                    <div class="grow">
+                        Technologies
+                        <div class="muted small">@(techCount == 0 ? "No techs" : techCount == 1 ? "1 tech" : $"{techCount} techs")</div>
+                    </div>
+                    <button class="sw sm @(techsOn ? "on" : "") @(readOnly ? "ro" : "")" role="switch" aria-checked="@(techsOn ? "true" : "false")"
+                            aria-label="Technologies" disabled="@readOnly" @onclick="ToggleTechnologies" @onclick:stopPropagation="true"></button>
                 </div>
                 <div class="arow soon">
                     <span class="aico">＋</span>
@@ -107,208 +121,215 @@
             </div>
 
             <div class="main">
-                <div class="card">
-                    <h3>Market rules</h3>
-                    <div class="muted small">Game settings for the whole market</div>
-                    <div class="set">
-                        <div class="setc">
-                            <b>Max per trade</b>
-                            <div class="muted small">bundles per single trade (game: @(catalog.MaxBaseAmounts?.ToString(CultureInfo.InvariantCulture) ?? "?"))</div>
-                            <div class="setrow">
-                                <input type="range" min="@SliderMin" max="@SliderMax" step="50" value="@(Math.Clamp(maxBase ?? SliderMin, SliderMin, SliderMax))"
-                                       aria-label="Max per trade" disabled="@readOnly" @oninput="SetMaxBase" />
-                                <span><input @key="inputsVersion" class="num @(changed?.MaxBaseAmounts is not null ? "chg" : "")" type="number" min="1" value="@maxBase"
-                                             aria-label="Max per trade in bundles" disabled="@readOnly" @oninput="SetMaxBase" @onchange="Commit" /></span>
-                            </div>
-                            <div class="prev @(changed?.MaxBaseAmounts is not null ? "chgtxt" : "")">
-                                @if (maxBase is { } max)
-                                {
-                                    var trade = MarketplaceView.TradePreview(rows, max);
-                                    <span>@(max.ToString(CultureInfo.InvariantCulture)) bundles@(trade.Count > 0 ? " → " : "")</span>
-                                    @for (var i = 0; i < trade.Count; i++)
+                @if (technologies)
+                {
+                    <TechnologiesEditor Settings="settings" Catalog="techCatalog" ReadOnly="readOnly" OnEdit="e => Edit(e.Change, e.Now)" />
+                }
+                else
+                {
+                    <div class="card">
+                        <h3>Market rules</h3>
+                        <div class="muted small">Game settings for the whole market</div>
+                        <div class="set">
+                            <div class="setc">
+                                <b>Max per trade</b>
+                                <div class="muted small">bundles per single trade (game: @(catalog.MaxBaseAmounts?.ToString(CultureInfo.InvariantCulture) ?? "?"))</div>
+                                <div class="setrow">
+                                    <input type="range" min="@SliderMin" max="@SliderMax" step="50" value="@(Math.Clamp(maxBase ?? SliderMin, SliderMin, SliderMax))"
+                                           aria-label="Max per trade" disabled="@readOnly" @oninput="SetMaxBase" />
+                                    <span><input @key="inputsVersion" class="num @(changed?.MaxBaseAmounts is not null ? "chg" : "")" type="number" min="1" value="@maxBase"
+                                                 aria-label="Max per trade in bundles" disabled="@readOnly" @oninput="SetMaxBase" @onchange="Commit" /></span>
+                                </div>
+                                <div class="prev @(changed?.MaxBaseAmounts is not null ? "chgtxt" : "")">
+                                    @if (maxBase is { } max)
                                     {
-                                        <span>@((i > 0 ? " · " : "") + trade[i].Label + " ")</span><b>@(trade[i].Amount.ToString("N0", CultureInfo.InvariantCulture))</b>
+                                        var trade = MarketplaceView.TradePreview(rows, max);
+                                        <span>@(max.ToString(CultureInfo.InvariantCulture)) bundles@(trade.Count > 0 ? " → " : "")</span>
+                                        @for (var i = 0; i < trade.Count; i++)
+                                        {
+                                            <span>@((i > 0 ? " · " : "") + trade[i].Label + " ")</span><b>@(trade[i].Amount.ToString("N0", CultureInfo.InvariantCulture))</b>
+                                        }
                                     }
+                                    else
+                                    {
+                                        <span>The game doesn't define it.</span>
+                                    }
+                                </div>
+                            </div>
+                            <div class="setc">
+                                <b>Trade fee</b>
+                                <div class="muted small">game: base @(Pct(catalog.TradeFeeBase)) · minimum @(Pct(catalog.TradeFeeMin))</div>
+                                <div class="setrow">
+                                    <label>Base <input @key="inputsVersion" class="num @(changed?.TradeFeeBase is not null ? "chg" : "")" type="number" min="0" max="100" step="any"
+                                                       value="@(MarketplaceView.Percent(market?.TradeFeeBase ?? catalog.TradeFeeBase))" disabled="@readOnly"
+                                                       @oninput="e => SetFee(e, minimum: false)" @onchange="Commit" /> %</label>
+                                    <label>Minimum <input @key="inputsVersion" class="num @(changed?.TradeFeeMin is not null ? "chg" : "")" type="number" min="0" max="100" step="any"
+                                                          value="@(MarketplaceView.Percent(market?.TradeFeeMin ?? catalog.TradeFeeMin))" disabled="@readOnly"
+                                                          @oninput="e => SetFee(e, minimum: true)" @onchange="Commit" /> %</label>
+                                </div>
+                                @if (changed?.TradeFeeBase is not null || changed?.TradeFeeMin is not null)
+                                {
+                                    <div class="prev chgtxt">base @(Pct(market?.TradeFeeBase ?? catalog.TradeFeeBase)) · minimum @(Pct(market?.TradeFeeMin ?? catalog.TradeFeeMin))</div>
                                 }
                                 else
                                 {
-                                    <span>The game doesn't define it.</span>
+                                    <div class="prev">unchanged</div>
+                                }
+                            </div>
+                            <div class="setc">
+                                <b>Price swing</b>
+                                <div class="muted small">how far prices move (game: @(Signed(catalog.MinFluctuation)) … @(Signed(catalog.MaxFluctuation)))</div>
+                                <div class="setrow">
+                                    <label>Min <input @key="inputsVersion" class="num @(changed?.MinFluctuation is not null ? "chg" : "")" type="number" min="-100" max="0"
+                                                      value="@(market?.MinFluctuation ?? catalog.MinFluctuation)" disabled="@readOnly"
+                                                      @oninput="e => SetSwing(e, minimum: true)" @onchange="Commit" /> %</label>
+                                    <label>Max <input @key="inputsVersion" class="num @(changed?.MaxFluctuation is not null ? "chg" : "")" type="number" min="0"
+                                                      value="@(market?.MaxFluctuation ?? catalog.MaxFluctuation)" disabled="@readOnly"
+                                                      @oninput="e => SetSwing(e, minimum: false)" @onchange="Commit" /> %</label>
+                                </div>
+                                @if (changed?.MinFluctuation is not null || changed?.MaxFluctuation is not null)
+                                {
+                                    <div class="prev chgtxt">@(Signed(market?.MinFluctuation ?? catalog.MinFluctuation)) … @(Signed(market?.MaxFluctuation ?? catalog.MaxFluctuation))</div>
+                                }
+                                else
+                                {
+                                    <div class="prev">unchanged</div>
                                 }
                             </div>
                         </div>
-                        <div class="setc">
-                            <b>Trade fee</b>
-                            <div class="muted small">game: base @(Pct(catalog.TradeFeeBase)) · minimum @(Pct(catalog.TradeFeeMin))</div>
-                            <div class="setrow">
-                                <label>Base <input @key="inputsVersion" class="num @(changed?.TradeFeeBase is not null ? "chg" : "")" type="number" min="0" max="100" step="any"
-                                                   value="@(MarketplaceView.Percent(market?.TradeFeeBase ?? catalog.TradeFeeBase))" disabled="@readOnly"
-                                                   @oninput="e => SetFee(e, minimum: false)" @onchange="Commit" /> %</label>
-                                <label>Minimum <input @key="inputsVersion" class="num @(changed?.TradeFeeMin is not null ? "chg" : "")" type="number" min="0" max="100" step="any"
-                                                      value="@(MarketplaceView.Percent(market?.TradeFeeMin ?? catalog.TradeFeeMin))" disabled="@readOnly"
-                                                      @oninput="e => SetFee(e, minimum: true)" @onchange="Commit" /> %</label>
-                            </div>
-                            @if (changed?.TradeFeeBase is not null || changed?.TradeFeeMin is not null)
-                            {
-                                <div class="prev chgtxt">base @(Pct(market?.TradeFeeBase ?? catalog.TradeFeeBase)) · minimum @(Pct(market?.TradeFeeMin ?? catalog.TradeFeeMin))</div>
-                            }
-                            else
-                            {
-                                <div class="prev">unchanged</div>
-                            }
-                        </div>
-                        <div class="setc">
-                            <b>Price swing</b>
-                            <div class="muted small">how far prices move (game: @(Signed(catalog.MinFluctuation)) … @(Signed(catalog.MaxFluctuation)))</div>
-                            <div class="setrow">
-                                <label>Min <input @key="inputsVersion" class="num @(changed?.MinFluctuation is not null ? "chg" : "")" type="number" min="-100" max="0"
-                                                  value="@(market?.MinFluctuation ?? catalog.MinFluctuation)" disabled="@readOnly"
-                                                  @oninput="e => SetSwing(e, minimum: true)" @onchange="Commit" /> %</label>
-                                <label>Max <input @key="inputsVersion" class="num @(changed?.MaxFluctuation is not null ? "chg" : "")" type="number" min="0"
-                                                  value="@(market?.MaxFluctuation ?? catalog.MaxFluctuation)" disabled="@readOnly"
-                                                  @oninput="e => SetSwing(e, minimum: false)" @onchange="Commit" /> %</label>
-                            </div>
-                            @if (changed?.MinFluctuation is not null || changed?.MaxFluctuation is not null)
-                            {
-                                <div class="prev chgtxt">@(Signed(market?.MinFluctuation ?? catalog.MinFluctuation)) … @(Signed(market?.MaxFluctuation ?? catalog.MaxFluctuation))</div>
-                            }
-                            else
-                            {
-                                <div class="prev">unchanged</div>
-                            }
-                        </div>
                     </div>
-                </div>
 
-                <div class="card">
-                    <h3>Resources</h3>
-                    <div class="filters">
-                        @foreach (var (chip, label) in Chips)
-                        {
-                            <button class="chip @(filter == chip ? "on" : "")" @onclick="() => filter = chip">@label @(MarketplaceView.Count(rows, chip, showHidden))</button>
-                        }
-                        <button class="chip @(showHidden ? "on" : "")" @onclick="() => showHidden = !showHidden"
-                                title="Internal resources the game never shows">Show hidden (@(rows.Count(r => r.Resource.Hidden)))</button>
-                        <span class="spacer"></span>
-                        <input class="in search" placeholder="Search resources…" @bind="search" @bind:event="oninput" />
-                    </div>
-                    <div class="table-wrap">
-                        <table class="res">
-                            <thead>
-                                <tr>
-                                    <th>Resource</th>
-                                    <th>From</th>
-                                    <th title="Can be bought and sold on the market">Market</th>
-                                    <th title="tradable: can be offered in trade deals with other empires">Trade deals</th>
-                                    <th title="NAI.AI_ALLOWED_TO_BUY / _SELL: AI empires may trade it">AI trades</th>
-                                    <th class="r">Bundle</th>
-                                    <th class="r">Base price</th>
-                                    <th class="r">Max per trade</th>
-                                    <th class="r" title="The resource's base storage (max). Buildings, techs and other modifiers still add on top.">Base storage</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @{ var groups = MarketplaceView.Group(rows, filter, showHidden, search); }
-                                @foreach (var g in groups)
-                                {
-                                    <tr class="cat"><td colspan="10">@g.Name</td></tr>
-                                    @foreach (var row in g.Rows)
+                    <div class="card">
+                        <h3>Resources</h3>
+                        <div class="filters">
+                            @foreach (var (chip, label) in Chips)
+                            {
+                                <button class="chip @(filter == chip ? "on" : "")" @onclick="() => filter = chip">@label @(MarketplaceView.Count(rows, chip, showHidden))</button>
+                            }
+                            <button class="chip @(showHidden ? "on" : "")" @onclick="() => showHidden = !showHidden"
+                                    title="Internal resources the game never shows">Show hidden (@(rows.Count(r => r.Resource.Hidden)))</button>
+                            <span class="spacer"></span>
+                            <input class="in search" placeholder="Search resources…" @bind="search" @bind:event="oninput" />
+                        </div>
+                        <div class="table-wrap">
+                            <table class="res">
+                                <thead>
+                                    <tr>
+                                        <th>Resource</th>
+                                        <th>From</th>
+                                        <th title="Can be bought and sold on the market">Market</th>
+                                        <th title="tradable: can be offered in trade deals with other empires">Trade deals</th>
+                                        <th title="NAI.AI_ALLOWED_TO_BUY / _SELL: AI empires may trade it">AI trades</th>
+                                        <th class="r">Bundle</th>
+                                        <th class="r">Base price</th>
+                                        <th class="r">Max per trade</th>
+                                        <th class="r" title="The resource's base storage (max). Buildings, techs and other modifiers still add on top.">Base storage</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @{ var groups = MarketplaceView.Group(rows, filter, showHidden, search); }
+                                    @foreach (var g in groups)
                                     {
-                                        var r = row.Resource;
-                                        <tr class="@(row.OnMarket ? "" : "off")">
-                                            <td class="resname">
-                                                @if (r.IconUri is { } icon)
-                                                {
-                                                    <img class="ri" src="@icon" alt="" />
-                                                }
-                                                else
-                                                {
-                                                    <span class="ri ph">?</span>
-                                                }
-                                                <span class="rn">@r.Name</span> <span class="key">@r.Key</span>
-                                                @if (row.Added)
-                                                {
-                                                    <span class="tag t-new">added</span>
-                                                }
-                                                @if (r.Gated)
-                                                {
-                                                    <span class="tag t-gate" title="Has a tradable_in_market rule: some empires (e.g. gestalts) can't trade it">rule</span>
-                                                }
-                                                @if (r.Hidden)
-                                                {
-                                                    <span class="tag t-hid" title="Internal resource (visibility_prerequisite always = no). Not recommended for the market or AI trading.">hidden</span>
-                                                }
-                                            </td>
-                                            <td class="from" title="@(string.Join(", ", r.Files))">@r.SourceName</td>
-                                            <td>
-                                                <button class="sw sm @(row.OnMarket ? "on" : "") @(row.MarketChanged ? "chg" : "") @(readOnly ? "ro" : "")" role="switch"
-                                                        aria-checked="@(row.OnMarket ? "true" : "false")" aria-label="@($"{r.Name} on the market")"
-                                                        disabled="@readOnly" @onclick="() => ToggleMarket(row)"></button>
-                                            </td>
-                                            <td>
-                                                <button class="sw sm @(row.Tradable ? "on" : "") @(row.TradableChanged ? "chg" : "") @(readOnly ? "ro" : "")" role="switch"
-                                                        aria-checked="@(row.Tradable ? "true" : "false")" aria-label="@($"{r.Name} in trade deals")"
-                                                        disabled="@readOnly" @onclick="() => ToggleTradable(row)"></button>
-                                            </td>
-                                            <td>
-                                                <button class="sw sm @(row.AiTrades ? "on" : "") @(row.AiTradesChanged ? "chg" : "") @(readOnly ? "ro" : "")" role="switch"
-                                                        aria-checked="@(row.AiTrades ? "true" : "false")" aria-label="@($"AI trades {r.Name}")"
-                                                        disabled="@readOnly" @onclick="() => ToggleAiTrades(row)"></button>
-                                            </td>
-                                            <td class="r">
-                                                <input @key="inputsVersion" class="num @(row.BundleChanged ? "chg" : "")" type="number" min="1" value="@row.Bundle" placeholder="—"
-                                                       aria-label="@($"{r.Name} bundle")" disabled="@(readOnly || !row.OnMarket)"
-                                                       @oninput="e => SetBundle(row, e)" @onchange="Commit" />
-                                            </td>
-                                            <td class="r">
-                                                <input @key="inputsVersion" class="num @(row.PriceChanged ? "chg" : "")" type="number" min="1" value="@row.Price" placeholder="—"
-                                                       aria-label="@($"{r.Name} base price")" disabled="@(readOnly || !row.OnMarket)"
-                                                       @oninput="e => SetPrice(row, e)" @onchange="Commit" />
-                                            </td>
-                                            <td class="r cap">
-                                                @if (row.MaxPerTrade(maxBase) is { } cap)
-                                                {
-                                                    <b>@(cap.ToString("N0", CultureInfo.InvariantCulture))</b>
-                                                }
-                                                else
-                                                {
-                                                    <span class="muted">—</span>
-                                                }
-                                            </td>
-                                            <td class="r">
-                                                @if (r.Max is null)
-                                                {
-                                                    <span class="muted" title="This resource has no base storage (max)">—</span>
-                                                }
-                                                else
-                                                {
-                                                    <input @key="inputsVersion" class="num wide @(row.BaseStorageChanged ? "chg" : "")" type="number" min="0" value="@row.BaseStorage"
-                                                           aria-label="@($"{r.Name} base storage")" disabled="@(readOnly || r.FixedMax)"
-                                                           title="@(r.FixedMax ? "fixed_max_amount = yes: this storage can't be changed" : null)"
-                                                           @oninput="e => SetStorage(row, e)" @onchange="Commit" />
-                                                }
-                                            </td>
-                                            <td class="r">
-                                                @if (!readOnly && row.HasOverride)
-                                                {
-                                                    <button class="reset" title="Back to the game's values" @onclick="() => Reset(row)">↺</button>
-                                                }
-                                            </td>
-                                        </tr>
+                                        <tr class="cat"><td colspan="10">@g.Name</td></tr>
+                                        @foreach (var row in g.Rows)
+                                        {
+                                            var r = row.Resource;
+                                            <tr class="@(row.OnMarket ? "" : "off")">
+                                                <td class="resname">
+                                                    @if (r.IconUri is { } icon)
+                                                    {
+                                                        <img class="ri" src="@icon" alt="" />
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="ri ph">?</span>
+                                                    }
+                                                    <span class="rn">@r.Name</span> <span class="key">@r.Key</span>
+                                                    @if (row.Added)
+                                                    {
+                                                        <span class="tag t-new">added</span>
+                                                    }
+                                                    @if (r.Gated)
+                                                    {
+                                                        <span class="tag t-gate" title="Has a tradable_in_market rule: some empires (e.g. gestalts) can't trade it">rule</span>
+                                                    }
+                                                    @if (r.Hidden)
+                                                    {
+                                                        <span class="tag t-hid" title="Internal resource (visibility_prerequisite always = no). Not recommended for the market or AI trading.">hidden</span>
+                                                    }
+                                                </td>
+                                                <td class="from" title="@(string.Join(", ", r.Files))">@r.SourceName</td>
+                                                <td>
+                                                    <button class="sw sm @(row.OnMarket ? "on" : "") @(row.MarketChanged ? "chg" : "") @(readOnly ? "ro" : "")" role="switch"
+                                                            aria-checked="@(row.OnMarket ? "true" : "false")" aria-label="@($"{r.Name} on the market")"
+                                                            disabled="@readOnly" @onclick="() => ToggleMarket(row)"></button>
+                                                </td>
+                                                <td>
+                                                    <button class="sw sm @(row.Tradable ? "on" : "") @(row.TradableChanged ? "chg" : "") @(readOnly ? "ro" : "")" role="switch"
+                                                            aria-checked="@(row.Tradable ? "true" : "false")" aria-label="@($"{r.Name} in trade deals")"
+                                                            disabled="@readOnly" @onclick="() => ToggleTradable(row)"></button>
+                                                </td>
+                                                <td>
+                                                    <button class="sw sm @(row.AiTrades ? "on" : "") @(row.AiTradesChanged ? "chg" : "") @(readOnly ? "ro" : "")" role="switch"
+                                                            aria-checked="@(row.AiTrades ? "true" : "false")" aria-label="@($"AI trades {r.Name}")"
+                                                            disabled="@readOnly" @onclick="() => ToggleAiTrades(row)"></button>
+                                                </td>
+                                                <td class="r">
+                                                    <input @key="inputsVersion" class="num @(row.BundleChanged ? "chg" : "")" type="number" min="1" value="@row.Bundle" placeholder="—"
+                                                           aria-label="@($"{r.Name} bundle")" disabled="@(readOnly || !row.OnMarket)"
+                                                           @oninput="e => SetBundle(row, e)" @onchange="Commit" />
+                                                </td>
+                                                <td class="r">
+                                                    <input @key="inputsVersion" class="num @(row.PriceChanged ? "chg" : "")" type="number" min="1" value="@row.Price" placeholder="—"
+                                                           aria-label="@($"{r.Name} base price")" disabled="@(readOnly || !row.OnMarket)"
+                                                           @oninput="e => SetPrice(row, e)" @onchange="Commit" />
+                                                </td>
+                                                <td class="r cap">
+                                                    @if (row.MaxPerTrade(maxBase) is { } cap)
+                                                    {
+                                                        <b>@(cap.ToString("N0", CultureInfo.InvariantCulture))</b>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="muted">—</span>
+                                                    }
+                                                </td>
+                                                <td class="r">
+                                                    @if (r.Max is null)
+                                                    {
+                                                        <span class="muted" title="This resource has no base storage (max)">—</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <input @key="inputsVersion" class="num wide @(row.BaseStorageChanged ? "chg" : "")" type="number" min="0" value="@row.BaseStorage"
+                                                               aria-label="@($"{r.Name} base storage")" disabled="@(readOnly || r.FixedMax)"
+                                                               title="@(r.FixedMax ? "fixed_max_amount = yes: this storage can't be changed" : null)"
+                                                               @oninput="e => SetStorage(row, e)" @onchange="Commit" />
+                                                    }
+                                                </td>
+                                                <td class="r">
+                                                    @if (!readOnly && row.HasOverride)
+                                                    {
+                                                        <button class="reset" title="Back to the game's values" @onclick="() => Reset(row)">↺</button>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
                                     }
-                                }
-                                @if (groups.Count == 0)
-                                {
-                                    <tr><td colspan="10" class="muted">No resources match.</td></tr>
-                                }
-                            </tbody>
-                        </table>
+                                    @if (groups.Count == 0)
+                                    {
+                                        <tr><td colspan="10" class="muted">No resources match.</td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="note">
+                            Base storage is the resource's starting capacity; silos, techs and other modifiers still add on top (it is not fixed at that value).
+                            Switching a resource onto the market suggests a bundle by category (basic 100, advanced 25, strategic 10, rare 5) and price @(MarketCatalog.SuggestedPrice).
+                        </div>
                     </div>
-                    <div class="note">
-                        Base storage is the resource's starting capacity; silos, techs and other modifiers still add on top (it is not fixed at that value).
-                        Switching a resource onto the market suggests a bundle by category (basic 100, advanced 25, strategic 10, rare 5) and price @(MarketCatalog.SuggestedPrice).
-                    </div>
-                </div>
+                }
             </div>
         </div>
     }
@@ -333,6 +354,7 @@
     bool disposed;
     bool loading; // the list or the catalog is being read for this page
     bool previewing;
+    bool technologies; // the Technologies addon is shown, else the Marketplace
 
     ResourceFilter filter = ResourceFilter.All;
     bool showHidden;
@@ -515,6 +537,15 @@
     void ToggleAddons() => Edit(s => s with { Enabled = !s.Enabled }, now: true);
 
     void ToggleMarketplace() => Edit(s => MarketplaceView.EditMarket(s, m => m with { Enabled = !m.Enabled }), now: true);
+
+    void ToggleTechnologies() => Edit(s => TechnologiesView.EditTechnologies(s, t => t with { Enabled = !t.Enabled }), now: true);
+
+    void Show(bool technologies) => this.technologies = technologies;
+
+    void ShowKey(KeyboardEventArgs e, bool technologies)
+    {
+        if (e.Key is "Enter" or " ") Show(technologies);
+    }
 
     void SetMaxBase(ChangeEventArgs e)
     {

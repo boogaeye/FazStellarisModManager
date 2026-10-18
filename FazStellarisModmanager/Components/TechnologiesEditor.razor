@@ -1,0 +1,815 @@
+@using System.Globalization
+@implements IDisposable
+
+@* The Technologies addon on the Addons tab: the custom tech cards, the editor of the selected tech and its preview. Edits go to the page
+   (OnEdit), which saves them; read-only (a session's player) shows the host's techs with every input disabled. *@
+@{
+    var catalog = Catalog;
+    var techs = TechnologiesView.Techs(Settings);
+    var issues = IssuesOf(techs, catalog);
+    var sel = techs.Count == 0 ? -1 : Math.Clamp(selected, 0, techs.Count - 1);
+    var on = Settings.Technologies?.Enabled ?? true;
+    var withErrors = issues.Count(i => TechnologiesView.Badge(i) == TechIssueLevel.Error);
+}
+<div class="card">
+    <div class="thead">
+        <h3>Custom technologies</h3>
+        <span class="muted small">Added to the game by @AddonMod.Name · @TechCount(techs.Count)@(withErrors > 0 ? $" · {withErrors} with errors, not added" : "")</span>
+    </div>
+    @if (!on && techs.Count > 0)
+    {
+        <div class="note">Technologies is off, so Apply doesn't add these techs.</div>
+    }
+    <div class="tlist">
+        @for (var i = 0; i < techs.Count; i++)
+        {
+            var index = i;
+            var card = techs[i];
+            var badge = TechnologiesView.Badge(issues[i]);
+            <div class="tcard @AreaClass(card.Area) @(index == sel ? "sel" : "")" role="button" tabindex="0" aria-pressed="@(index == sel ? "true" : "false")"
+                 title="@card.Key" @onclick="() => Select(index)" @onkeydown="e => CardKey(e, index)">
+                @Img(card.Icon, "ti")
+                <div class="tbody">
+                    <div class="tn">@NameOf(card)</div>
+                    <div class="ts">@TechnologiesView.Subtitle(card, catalog)</div>
+                    <div class="ts">@(TechnologiesView.FirstEffect(card, catalog) ?? "No effects")</div>
+                    @if (card.Ethics is { Count: > 0 } ethics)
+                    {
+                        <div class="tchips">
+                            @foreach (var ethic in ethics)
+                            {
+                                @EthicChip(ethic)
+                            }
+                        </div>
+                    }
+                </div>
+                @if (badge is { } level)
+                {
+                    <span class="tbadge @(level == TechIssueLevel.Error ? "err" : "warn")" title="@Messages(issues[i])">!</span>
+                }
+            </div>
+        }
+        @if (!ReadOnly)
+        {
+            <button class="tcard new" @onclick="NewTech">＋ New technology</button>
+        }
+    </div>
+    @if (techs.Count == 0)
+    {
+        <div class="note">
+            @(ReadOnly ? "The host has no custom technologies." : "No custom technologies yet. ＋ New technology makes one with the base game's repeatable values.")
+        </div>
+    }
+</div>
+
+@if (sel >= 0)
+{
+    var t = techs[sel];
+    var auto = TechnologiesView.IsAutoKey(t.Key, t.Name);
+    var icons = TechnologiesView.SearchIcons(catalog, iconSearch, t.Icon);
+    var text = AddonBuilder.TechText(t, catalog);
+    var mine = issues[sel];
+    var cost = TechnologiesView.CostText(t);
+    var req = TechnologiesView.Requirements(t, techs, sel, catalog);
+    var mods = t.Modifiers ?? [];
+    <div class="tgrid">
+        <div class="card" @key="(sel, inputsVersion)">
+            <div class="sec first">
+                <h4>Identity</h4>
+                <div class="row2">
+                    <label class="f">
+                        Name
+                        <input class="in" value="@t.Name" disabled="@ReadOnly" @oninput="e => SetName(sel, e)" />
+                    </label>
+                    <label class="f" title="@(auto ? "Made from the name until you edit it" : "Edited by hand: renaming keeps it")">
+                        @(auto ? "Key (generated)" : "Key")
+                        <input class="in mono" value="@t.Key" spellcheck="false" disabled="@ReadOnly" @oninput="e => SetKey(sel, e)" />
+                    </label>
+                </div>
+                <label class="f mt6">
+                    Description
+                    <input class="in" value="@t.Description" disabled="@ReadOnly" @oninput="e => SetDescription(sel, e)" />
+                </label>
+                <div class="muted small mt8">Icon (any tech icon from your mod list)</div>
+                <div class="icons">
+                    @foreach (var icon in icons.Items)
+                    {
+                        var name = icon;
+                        var chosen = string.Equals(name, t.Icon, StringComparison.OrdinalIgnoreCase);
+                        <button class="ib @(chosen ? "sel" : "")" title="@name" aria-label="@name" aria-pressed="@(chosen ? "true" : "false")" disabled="@ReadOnly"
+                                @onclick="() => SetIcon(sel, name)">@Img(name, "")</button>
+                    }
+                    <input class="in isearch" placeholder="@($"Search {Thousands(catalog.Icons.Count)} icons…")" aria-label="Search icons"
+                           @bind="iconSearch" @bind:event="oninput" />
+                </div>
+                @if (icons.More > 0)
+                {
+                    <div class="muted small mt4">… @Thousands(icons.More) more: search to find others</div>
+                }
+                else if (icons.Total == 0)
+                {
+                    <div class="muted small mt4">No icon matches.</div>
+                }
+            </div>
+
+            <div class="sec">
+                <h4>Research</h4>
+                <div class="row2">
+                    <div class="f">
+                        Area
+                        <div class="seg" role="radiogroup" aria-label="Area">
+                            @foreach (var area in TechValidator.Areas)
+                            {
+                                var a = area;
+                                var isOn = t.Area == a;
+                                <button class="@(isOn ? "on " + AreaShort(a) : "")" role="radio" aria-checked="@(isOn ? "true" : "false")" disabled="@ReadOnly"
+                                        @onclick="() => EditTech(sel, x => x with { Area = a }, now: true)">@TechnologiesView.AreaName(a)</button>
+                            }
+                        </div>
+                    </div>
+                    <label class="f">
+                        Category
+                        <select class="in" value="@t.Category" disabled="@ReadOnly" @onchange="e => SetCategory(sel, e)">
+                            @if (catalog.FindCategory(t.Category) is null)
+                            {
+                                <option value="@t.Category">@($"{t.Category} (unknown)")</option>
+                            }
+                            @foreach (var c in catalog.Categories)
+                            {
+                                <option value="@c.Key">@c.Name</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+                <div class="row3 mt6">
+                    <label class="f">
+                        Tier
+                        <select class="in" value="@Int(t.Tier)" disabled="@ReadOnly" @onchange="e => SetTier(sel, e)">
+                            @if (t.Tier is < 0 or > TechValidator.MaxTier)
+                            {
+                                <option value="@Int(t.Tier)">@Int(t.Tier)</option>
+                            }
+                            @for (var n = 0; n <= TechValidator.MaxTier; n++)
+                            {
+                                var tier = Int(n);
+                                <option value="@tier">@tier</option>
+                            }
+                        </select>
+                    </label>
+                    <div class="f">
+                        Repeatable
+                        <span class="swl">
+                            <button class="sw sm @(t.Repeatable ? "on" : "") @(ReadOnly ? "ro" : "")" role="switch" aria-checked="@(t.Repeatable ? "true" : "false")"
+                                    aria-label="Repeatable" disabled="@ReadOnly" @onclick="() => EditTech(sel, x => x with { Repeatable = !x.Repeatable }, now: true)"></button>
+                            <span class="small">@(t.Repeatable ? "unlimited levels" : "researched once")</span>
+                        </span>
+                    </div>
+                    <div class="f">
+                        Rare tech
+                        <span class="swl">
+                            <button class="sw sm @(t.Rare ? "on" : "") @(ReadOnly ? "ro" : "")" role="switch" aria-checked="@(t.Rare ? "true" : "false")"
+                                    aria-label="Rare tech" disabled="@ReadOnly" @onclick="() => EditTech(sel, x => x with { Rare = !x.Rare }, now: true)"></button>
+                            <span class="small">@(t.Rare ? "shown as rare" : "")</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sec">
+                <h4>Cost and weight</h4>
+                <div class="row3">
+                    <label class="f">
+                        Base cost
+                        <input class="in" type="number" min="1" step="1" value="@Int(t.Cost)" disabled="@ReadOnly"
+                               @oninput="e => SetNumber(sel, e, (x, v) => x with { Cost = v })" @onchange="Commit" />
+                    </label>
+                    @if (t.Repeatable)
+                    {
+                        <label class="f">
+                            Additional cost per level
+                            <input class="in" type="number" min="0" step="1" value="@Int(t.CostPerLevel)" disabled="@ReadOnly"
+                                   @oninput="e => SetNumber(sel, e, (x, v) => x with { CostPerLevel = v })" @onchange="Commit" />
+                        </label>
+                    }
+                    <label class="f">
+                        Weight
+                        <input class="in" type="number" min="0" step="1" value="@Int(t.Weight)" disabled="@ReadOnly"
+                               @oninput="e => SetNumber(sel, e, (x, v) => x with { Weight = v })" @onchange="Commit" />
+                    </label>
+                </div>
+                <div class="muted small mt4">
+                    @if (t.Repeatable)
+                    {
+                        <span>Defaults are the game's repeatable values (@Thousands(Defaults.Cost) · +@Thousands(Defaults.CostPerLevel) · weight @Int(Defaults.Weight), ×0.5 for repeatables). @TechnologiesView.LevelHint(t)</span>
+                    }
+                    else
+                    {
+                        <span>A higher weight makes it come up more often among the research options.</span>
+                    }
+                </div>
+            </div>
+
+            <div class="sec">
+                <h4>Who can research it</h4>
+                <div class="muted small mb4">Ethics: the empire needs <b class="hi">any</b> of the selected (regular or fanatic). None selected: every empire.</div>
+                <div class="eth">
+                    @foreach (var ethic in catalog.Ethics)
+                    {
+                        var key = ethic.Key;
+                        var isOn = Has(t.Ethics, key);
+                        <button class="ec @(isOn ? "on" : "")" aria-pressed="@(isOn ? "true" : "false")" disabled="@ReadOnly"
+                                title="@(ethic.FanaticKey is { } fanatic ? $"{key} or {fanatic}" : key)"
+                                @onclick="() => EditTech(sel, x => TechnologiesView.ToggleEthic(x, key), now: true)">
+                            @if (ethic.IconUri is { } uri)
+                            {
+                                <img src="@uri" alt="" />
+                            }
+                            @ethic.Name
+                        </button>
+                    }
+                    @foreach (var unknown in (t.Ethics ?? []).Where(e => catalog.FindEthic(e) is null))
+                    {
+                        var key = unknown;
+                        <button class="ec on bad" title="An ethic the game doesn't have: click to remove it" disabled="@ReadOnly"
+                                @onclick="() => EditTech(sel, x => TechnologiesView.ToggleEthic(x, key), now: true)">@(key + " ✕")</button>
+                    }
+                    @if (catalog.Ethics.Count == 0)
+                    {
+                        <span class="muted small">No ethics found.</span>
+                    }
+                </div>
+                <div class="muted small reqcap">Requires technologies</div>
+                <div class="eth">
+                    @foreach (var p in t.Prerequisites ?? [])
+                    {
+                        var key = p;
+                        var found = TechnologiesView.FindPrerequisite(key, techs, sel, catalog);
+                        <span class="ec on @(found is null ? "bad" : "")" title="@(found is null ? $"No technology has the key {key}" : key)">
+                            @if (found is not null)
+                            {
+                                @Img(found.Icon, "pi")
+                            }
+                            @(found?.Name ?? key)
+                            @if (!ReadOnly)
+                            {
+                                <button class="x" title="Remove this requirement" @onclick="() => EditTech(sel, x => TechnologiesView.RemovePrerequisite(x, key), now: true)">✕</button>
+                            }
+                        </span>
+                    }
+                    @if (ReadOnly && (t.Prerequisites?.Count ?? 0) == 0)
+                    {
+                        <span class="muted small">None</span>
+                    }
+                    @if (!ReadOnly && picker != Picker.Prerequisite)
+                    {
+                        <button class="ec add" @onclick="() => OpenPicker(Picker.Prerequisite, -1)">＋ Add technology</button>
+                    }
+                </div>
+                @if (!ReadOnly && picker == Picker.Prerequisite)
+                {
+                    var choices = TechnologiesView.SearchTechs(catalog, techs, sel, pickerSearch);
+                    <div class="picker">
+                        <div class="prow">
+                            <input class="in" @ref="pickerInput" placeholder="Search technologies by name or key…" aria-label="Search technologies"
+                                   @bind="pickerSearch" @bind:event="oninput" @onkeydown="e => PrerequisiteKey(e, sel)" />
+                            <button class="x" title="Close" @onclick="ClosePicker">✕</button>
+                        </div>
+                        <div class="drop">
+                            @if (pickerSearch.Trim().Length == 0)
+                            {
+                                <div class="dnote">Type to search the @Thousands(catalog.Techs.Count) technologies of your mod list and your other custom technologies</div>
+                            }
+                            else
+                            {
+                                @foreach (var choice in choices.Items)
+                                {
+                                    var key = choice.Key;
+                                    <button class="ditem" @onclick="() => AddPrerequisite(sel, key)">
+                                        <span class="dn">@Img(choice.Icon, "pi")@choice.Name</span>
+                                        <span class="k">@(choice.Custom ? key + " · custom" : key)</span>
+                                    </button>
+                                }
+                                @if (choices.Total == 0)
+                                {
+                                    <div class="dnote">No technology matches.</div>
+                                }
+                                else if (choices.More > 0)
+                                {
+                                    <div class="dnote">… @Thousands(choices.More) more: type more to narrow it down</div>
+                                }
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="sec">
+                <h4>Effects (per level for repeatables)</h4>
+                @for (var m = 0; m < mods.Count; m++)
+                {
+                    var mi = m;
+                    var mod = mods[m];
+                    var info = catalog.FindModifier(mod.Key);
+                    var editing = !ReadOnly && picker == Picker.Effect && pickerEffect == mi;
+                    <div class="mrow @(editing ? "edit" : "")">
+                        @if (editing)
+                        {
+                            <input class="in" @ref="pickerInput" placeholder="Search modifiers by name or key…" aria-label="Search modifiers"
+                                   @bind="pickerSearch" @bind:event="oninput" @onkeydown="e => ModifierKey(e, sel, mi)" />
+                        }
+                        else
+                        {
+                            <button class="mpick" title="@(ReadOnly ? mod.Key : "Change the modifier")" disabled="@ReadOnly" @onclick="() => OpenPicker(Picker.Effect, mi)">
+                                <span class="mname">@(info?.Name ?? mod.Key)</span>
+                                <span class="mkey">@(mod.Key + (info?.Category is { } category ? " · " + category : ""))</span>
+                            </button>
+                        }
+                        <input class="in num2" type="number" step="any" value="@Num(mod.Value)" aria-label="@($"{mod.Key} value")" disabled="@ReadOnly"
+                               @oninput="e => SetModifierValue(sel, mi, e)" @onchange="Commit" />
+                        @if (editing)
+                        {
+                            <button class="x" title="Cancel" @onclick="ClosePicker">✕</button>
+                        }
+                        else if (!ReadOnly)
+                        {
+                            <button class="x" title="Remove this effect" @onclick="() => EditTech(sel, x => TechnologiesView.RemoveModifier(x, mi), now: true)">✕</button>
+                        }
+                        else
+                        {
+                            <span></span>
+                        }
+                    </div>
+                    @if (editing)
+                    {
+                        @ModifierDrop(sel, mi)
+                    }
+                }
+                @if (mods.Count == 0 && ReadOnly)
+                {
+                    <div class="muted small">No effects.</div>
+                }
+                @if (!ReadOnly)
+                {
+                    @if (picker == Picker.NewEffect)
+                    {
+                        <div class="mrow edit">
+                            <input class="in" @ref="pickerInput" placeholder="Search modifiers by name or key…" aria-label="Search modifiers"
+                                   @bind="pickerSearch" @bind:event="oninput" @onkeydown="e => ModifierKey(e, sel, -1)" />
+                            <span class="muted small r">value 1</span>
+                            <button class="x" title="Cancel" @onclick="ClosePicker">✕</button>
+                        </div>
+                        @ModifierDrop(sel, -1)
+                    }
+                    else
+                    {
+                        <button class="ec add" @onclick="() => OpenPicker(Picker.NewEffect, -1)">＋ Add effect</button>
+                    }
+                }
+            </div>
+
+            @if (!ReadOnly)
+            {
+                <div class="tdel">
+                    @if (confirmDelete)
+                    {
+                        <span>Delete <b>@NameOf(t)</b>? This can't be undone.</span>
+                        <button class="danger" @onclick="() => Delete(sel)">Delete</button>
+                        <button @onclick="() => confirmDelete = false">Cancel</button>
+                    }
+                    else
+                    {
+                        <button class="danger" @onclick="() => confirmDelete = true">Delete technology</button>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="tprev">
+            <div class="card">
+                <h3>Preview</h3>
+                <div class="muted small">How it looks in the research screen</div>
+                <div class="gcard">
+                    <div class="gh">
+                        @Img(t.Icon, "gi")
+                        <div>
+                            <div class="gt">@NameOf(t)</div>
+                            <div class="gs">@TechnologiesView.Subtitle(t, catalog)</div>
+                        </div>
+                    </div>
+                    <div class="gl"><span class="y">@cost.Amount</span> @cost.Text</div>
+                    @if (mods.Count > 0)
+                    {
+                        <div class="gl">
+                            @foreach (var effect in mods)
+                            {
+                                var shown = TechnologiesView.Effect(effect, catalog);
+                                <div><span class="@(Math.Round(effect.Value, 4) < 0 ? "neg" : "pos")">@shown.Value</span> @shown.Name</div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="gl dim">No effects</div>
+                    }
+                    @if (!req.IsEmpty)
+                    {
+                        <div class="gl">
+                            <span>Requires:</span>
+                            @for (var e = 0; e < req.Ethics.Count; e++)
+                            {
+                                <span>@(e == 0 ? " " : " or ")</span><span class="y">@req.Ethics[e]</span>
+                            }
+                            @if (req.Ethics.Count > 0)
+                            {
+                                <span>@(" ethic")</span>
+                            }
+                            @for (var r = 0; r < req.Techs.Count; r++)
+                            {
+                                <span>@(r == 0 && req.Ethics.Count == 0 ? " " : " · ")</span><span class="y">@req.Techs[r]</span>
+                            }
+                        </div>
+                    }
+                    @if (t.Description.Trim().Length > 0)
+                    {
+                        <div class="gl desc">@t.Description</div>
+                    }
+                </div>
+                <div class="tabs2" role="tablist">
+                    <button class="@(showLoc ? "" : "on")" role="tab" aria-selected="@(showLoc ? "false" : "true")" @onclick="() => showLoc = false">Technology</button>
+                    <button class="@(showLoc ? "on" : "")" role="tab" aria-selected="@(showLoc ? "true" : "false")" @onclick="() => showLoc = true">Localisation</button>
+                </div>
+                <pre class="code">@(showLoc ? text.Localisation : text.Technology)</pre>
+                <div class="issues">
+                    @if (mine.Count == 0)
+                    {
+                        <div class="iss ok">✔ No problems</div>
+                    }
+                    @foreach (var issue in mine)
+                    {
+                        var error = issue.Level == TechIssueLevel.Error;
+                        <div class="iss @(error ? "err" : "warn")">@((error ? "✖ " : "⚠ ") + issue.Message)</div>
+                    }
+                    @if (mine.Any(i => i.Level == TechIssueLevel.Error))
+                    {
+                        <div class="muted small">A technology with errors (✖) isn't added to the game.</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>An edit of the shown settings; <see cref="Now"/> saves at once, else after a pause in typing.</summary>
+    public sealed record SettingsEdit(Func<AddonSettings, AddonSettings> Change, bool Now);
+
+    enum Picker { None, Prerequisite, NewEffect, Effect }
+
+    static readonly CustomTech Defaults = new("", "", "", "");
+
+    /// <summary>The settings shown: this PC's with the unsaved edits, or the host's when <see cref="ReadOnly"/>.</summary>
+    [Parameter, EditorRequired] public AddonSettings Settings { get; set; } = new();
+
+    /// <summary>The current game's techs, icons, categories, ethics and modifiers.</summary>
+    [Parameter, EditorRequired] public TechAddonCatalog Catalog { get; set; } = TechAddonCatalog.Empty;
+
+    [Parameter] public bool ReadOnly { get; set; }
+
+    [Parameter] public EventCallback<SettingsEdit> OnEdit { get; set; }
+
+    int selected;
+    bool confirmDelete;
+    bool showLoc;
+    string iconSearch = "";
+
+    // One search at a time: a prerequisite to add, an effect to add, or the modifier of the effect at pickerEffect.
+    Picker picker;
+    int pickerEffect = -1;
+    string pickerSearch = "";
+    ElementReference pickerInput;
+    bool focusPicker;
+
+    // A number input held text that isn't a valid value: when it's left, the inputs are recreated with the values in force.
+    bool staleInput;
+    int inputsVersion;
+
+    bool disposed;
+
+    // The issues of each tech, for the techs and catalog they were found for.
+    (IReadOnlyList<CustomTech> Techs, TechAddonCatalog Catalog, IReadOnlyList<IReadOnlyList<TechIssue>> Issues)? issuesFor;
+
+    // Tech icons of the catalog they were loaded from (null while loading or missing); each loads once, off the UI thread.
+    readonly Dictionary<string, string?> iconUris = new(StringComparer.OrdinalIgnoreCase);
+    TechAddonCatalog? iconsOf;
+    bool iconRenderQueued;
+
+    static string TechCount(int n) => n == 0 ? "No techs" : n == 1 ? "1 tech" : $"{n} techs";
+
+    static string NameOf(CustomTech tech) => tech.Name.Trim().Length > 0 ? tech.Name : tech.Key.Length > 0 ? tech.Key : "(no name)";
+
+    static string AreaClass(string area) => area switch { "physics" => "area-phy", "society" => "area-soc", "engineering" => "area-eng", _ => "" };
+
+    static string AreaShort(string area) => area switch { "physics" => "phy", "society" => "soc", "engineering" => "eng", _ => "" };
+
+    static bool Has(IReadOnlyList<string>? list, string key) => list?.Contains(key, StringComparer.OrdinalIgnoreCase) == true;
+
+    static string Int(int value) => value.ToString(CultureInfo.InvariantCulture);
+
+    static string Thousands(long value) => TechnologiesView.Thousands(value);
+
+    // A value for a number input: invariant, up to 4 decimals, never "-0".
+    static string Num(double value)
+    {
+        var rounded = Math.Round(value, 4);
+        return (rounded == 0 ? 0 : rounded).ToString("0.####", CultureInfo.InvariantCulture);
+    }
+
+    static string Messages(IReadOnlyList<TechIssue> issues) =>
+        string.Join((char)10, issues.Select(i => (i.Level == TechIssueLevel.Error ? "✖ " : "⚠ ") + i.Message));
+
+    // A modifier key typed into the search that the list doesn't have, offered as is (validation warns about it).
+    string? TypedKey()
+    {
+        var text = pickerSearch.Trim();
+        return text.Length > 0 && text.All(c => char.IsAsciiLetterOrDigit(c) || c == '_') && Catalog.FindModifier(text) is null ? text : null;
+    }
+
+    string ModifierSource() => Catalog.ModifiersFromLog
+        ? "modifiers from this PC's modifier list (modifiers.log)"
+        : "named modifiers (this PC has no modifiers.log yet: start the game once for the full list)";
+
+    IReadOnlyList<IReadOnlyList<TechIssue>> IssuesOf(IReadOnlyList<CustomTech> techs, TechAddonCatalog catalog)
+    {
+        if (issuesFor is { } last && ReferenceEquals(last.Techs, techs) && ReferenceEquals(last.Catalog, catalog)) return last.Issues;
+        var issues = techs.Select(t => TechValidator.Validate(t, techs, catalog)).ToList();
+        issuesFor = (techs, catalog, issues);
+        return issues;
+    }
+
+    RenderFragment Img(string icon, string css)
+    {
+        var uri = IconUri(icon);
+        if (uri is not null) return @<img class="@css" src="@uri" alt="" />;
+        return @<span class="@css ph"></span>;
+    }
+
+    RenderFragment EthicChip(string key)
+    {
+        var ethic = Catalog.FindEthic(key);
+        return @<span class="ec on sm" title="@key">
+            @if (ethic?.IconUri is { } uri)
+            {
+                <img src="@uri" alt="" />
+            }
+            @(ethic?.Name ?? key)
+        </span>;
+    }
+
+    RenderFragment ModifierDrop(int index, int effect)
+    {
+        var found = TechnologiesView.SearchModifiers(Catalog, pickerSearch);
+        var typed = TypedKey();
+        var total = Thousands(Catalog.Modifiers.Count);
+        return @<div class="drop">
+            @if (pickerSearch.Trim().Length == 0)
+            {
+                <div class="dnote">Type to search @total @ModifierSource()</div>
+            }
+            else
+            {
+                @foreach (var m in found.Items)
+                {
+                    var key = m.Key;
+                    <button class="ditem" @onclick="() => PickModifier(index, effect, key)">
+                        <span class="dn">@(m.Name ?? m.Key)</span>
+                        <span class="k">@((m.Name is null ? "no in-game name" : m.Key) + (m.Category is { } category ? " · " + category : ""))</span>
+                    </button>
+                }
+                @if (typed is not null)
+                {
+                    <button class="ditem" @onclick="() => PickModifier(index, effect, typed)">
+                        <span class="dn">Use <span class="mono">@typed</span></span>
+                        <span class="k">not in the list</span>
+                    </button>
+                }
+                <div class="dnote">@(found.More > 0 ? $"… {Thousands(found.More)} more · " : found.Total == 0 ? "No modifier matches · " : "")searching @total @ModifierSource()</div>
+            }
+        </div>;
+    }
+
+    // The URI of a tech icon when loaded; otherwise starts loading it and re-renders shortly after it arrives.
+    string? IconUri(string name)
+    {
+        var catalog = Catalog;
+        if (!ReferenceEquals(iconsOf, catalog))
+        {
+            iconUris.Clear();
+            iconsOf = catalog;
+        }
+        if (iconUris.TryGetValue(name, out var known)) return known;
+        if (!catalog.HasIcon(name)) return iconUris[name] = null;
+        var load = catalog.IconUriAsync(name);
+        if (load.IsCompletedSuccessfully) return iconUris[name] = load.Result;
+        iconUris[name] = null;
+        _ = IconLoadedAsync(catalog, name, load);
+        return null;
+    }
+
+    async Task IconLoadedAsync(TechAddonCatalog catalog, string name, Task<string?> load)
+    {
+        string? uri;
+        try { uri = await load; }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { return; }
+        if (uri is null) return;
+        await InvokeAsync(() =>
+        {
+            if (disposed || !ReferenceEquals(iconsOf, catalog)) return;
+            iconUris[name] = uri;
+            if (iconRenderQueued) return;
+            iconRenderQueued = true;
+            _ = RenderSoonAsync();
+        });
+    }
+
+    // Icons arrive one by one: one render shows the ones that arrived meanwhile.
+    async Task RenderSoonAsync()
+    {
+        await Task.Delay(50);
+        await InvokeAsync(() =>
+        {
+            iconRenderQueued = false;
+            if (!disposed) StateHasChanged();
+        });
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!focusPicker) return;
+        focusPicker = false;
+        try { await pickerInput.FocusAsync(); }
+        catch (Exception ex) when (ex is Microsoft.JSInterop.JSException or InvalidOperationException or TaskCanceledException) { }
+    }
+
+    Task Edit(Func<AddonSettings, AddonSettings> change, bool now) =>
+        ReadOnly ? Task.CompletedTask : OnEdit.InvokeAsync(new SettingsEdit(change, now));
+
+    Task EditTech(int index, Func<CustomTech, CustomTech> edit, bool now) => Edit(s => TechnologiesView.EditTech(s, index, edit), now);
+
+    void Select(int index)
+    {
+        if (index == selected) return;
+        selected = index;
+        confirmDelete = false;
+        iconSearch = "";
+        ClosePicker();
+    }
+
+    void CardKey(KeyboardEventArgs e, int index)
+    {
+        if (e.Key is "Enter" or " ") Select(index);
+    }
+
+    async Task NewTech()
+    {
+        if (ReadOnly) return;
+        var catalog = Catalog;
+        var count = TechnologiesView.Techs(Settings).Count;
+        await Edit(s => TechnologiesView.AddTech(s, TechnologiesView.NewTech(TechnologiesView.Techs(s), catalog)), now: true);
+        Select(count);
+        inputsVersion++;
+    }
+
+    async Task Delete(int index)
+    {
+        if (ReadOnly) return;
+        confirmDelete = false;
+        var count = TechnologiesView.Techs(Settings).Count;
+        await Edit(s => TechnologiesView.RemoveTech(s, index), now: true);
+        selected = Math.Max(0, Math.Min(index, count - 2));
+        ClosePicker();
+        inputsVersion++;
+    }
+
+    // Renaming also renames a generated key (see TechnologiesView.Rename).
+    Task SetName(int index, ChangeEventArgs e)
+    {
+        var name = e.Value?.ToString() ?? "";
+        var catalog = Catalog;
+        return Edit(s => TechnologiesView.EditTech(s, index,
+            t => TechnologiesView.Rename(t, name, TechnologiesView.Techs(s).Where((_, i) => i != index), catalog)), now: false);
+    }
+
+    Task SetKey(int index, ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString() ?? "";
+        return EditTech(index, t => t with { Key = key }, now: false);
+    }
+
+    Task SetDescription(int index, ChangeEventArgs e)
+    {
+        var description = e.Value?.ToString() ?? "";
+        return EditTech(index, t => t with { Description = description }, now: false);
+    }
+
+    Task SetIcon(int index, string icon) => EditTech(index, t => t with { Icon = icon }, now: true);
+
+    Task SetCategory(int index, ChangeEventArgs e)
+    {
+        if (e.Value?.ToString() is not { Length: > 0 } category) return Task.CompletedTask;
+        return EditTech(index, t => t with { Category = category }, now: true);
+    }
+
+    Task SetTier(int index, ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var tier)) return Task.CompletedTask;
+        return EditTech(index, t => t with { Tier = tier }, now: true);
+    }
+
+    // Whole numbers are saved as typed (validation reports values the game can't use); other text isn't saved.
+    Task SetNumber(int index, ChangeEventArgs e, Func<CustomTech, int, CustomTech> set)
+    {
+        if (!int.TryParse(e.Value?.ToString()?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            staleInput = true;
+            return Task.CompletedTask;
+        }
+        return EditTech(index, t => set(t, value), now: false);
+    }
+
+    Task SetModifierValue(int index, int effect, ChangeEventArgs e)
+    {
+        if (!double.TryParse(e.Value?.ToString()?.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value) || !double.IsFinite(value))
+        {
+            staleInput = true;
+            return Task.CompletedTask;
+        }
+        return EditTech(index, t => t.Modifiers is { } list && effect < list.Count
+            ? TechnologiesView.SetModifier(t, effect, list[effect] with { Value = value })
+            : t, now: false);
+    }
+
+    // A number input was left or Enter was pressed: if its text was rejected, show the value in force again.
+    void Commit()
+    {
+        if (!staleInput) return;
+        staleInput = false;
+        inputsVersion++;
+    }
+
+    void OpenPicker(Picker kind, int effect)
+    {
+        picker = kind;
+        pickerEffect = effect;
+        pickerSearch = "";
+        focusPicker = true;
+    }
+
+    void ClosePicker()
+    {
+        picker = Picker.None;
+        pickerEffect = -1;
+        pickerSearch = "";
+    }
+
+    // Picks a modifier for the effect at effect, or adds an effect with value 1 (effect -1).
+    Task PickModifier(int index, int effect, string key)
+    {
+        ClosePicker();
+        return EditTech(index, t => effect < 0
+            ? TechnologiesView.AddModifier(t, key)
+            : t.Modifiers is { } list && effect < list.Count ? TechnologiesView.SetModifier(t, effect, list[effect] with { Key = key }) : t, now: true);
+    }
+
+    Task AddPrerequisite(int index, string key)
+    {
+        ClosePicker();
+        return EditTech(index, t => TechnologiesView.AddPrerequisite(t, key), now: true);
+    }
+
+    // Enter picks the first match, Escape closes the search.
+    Task ModifierKey(KeyboardEventArgs e, int index, int effect)
+    {
+        if (e.Key == "Escape")
+        {
+            ClosePicker();
+            return Task.CompletedTask;
+        }
+        if (e.Key != "Enter") return Task.CompletedTask;
+        var first = TechnologiesView.SearchModifiers(Catalog, pickerSearch, max: 1).Items.FirstOrDefault()?.Key ?? TypedKey();
+        return first is null ? Task.CompletedTask : PickModifier(index, effect, first);
+    }
+
+    Task PrerequisiteKey(KeyboardEventArgs e, int index)
+    {
+        if (e.Key == "Escape")
+        {
+            ClosePicker();
+            return Task.CompletedTask;
+        }
+        if (e.Key != "Enter") return Task.CompletedTask;
+        var first = TechnologiesView.SearchTechs(Catalog, TechnologiesView.Techs(Settings), index, pickerSearch, max: 1).Items.FirstOrDefault();
+        return first is null ? Task.CompletedTask : AddPrerequisite(index, first.Key);
+    }
+
+    public void Dispose() => disposed = true;
+}

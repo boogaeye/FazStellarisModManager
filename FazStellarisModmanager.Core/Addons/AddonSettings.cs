@@ -14,8 +14,21 @@ public sealed record AddonSettings(bool Enabled = false, MarketplaceSettings? Ma
     /// builds it only then; values equal to the game's or techs with errors can still leave nothing to load (see <see cref="AddonOutput.HasChanges"/>).
     /// </summary>
     [JsonIgnore]
-    public bool MayChangeGame =>
-        Enabled && (Marketplace is { Enabled: true, ChangeCount: > 0 } || Technologies is { Enabled: true, Techs.Count: > 0 });
+    public bool MayChangeGame => ActiveAddons.Count > 0;
+
+    /// <summary>The names of the addons that may change the game (see <see cref="MayChangeGame"/>): "Marketplace", "Technologies"; none while addons are off.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> ActiveAddons
+    {
+        get
+        {
+            var names = new List<string>();
+            if (!Enabled) return names;
+            if (Marketplace is { Enabled: true, ChangeCount: > 0 }) names.Add("Marketplace");
+            if (Technologies is { Enabled: true, Techs.Count: > 0 }) names.Add("Technologies");
+            return names;
+        }
+    }
 
     /// <summary>A copy without the overrides that equal the game's current values (see <see cref="MarketplaceSettings.Normalize"/>); techs are kept as they are.</summary>
     public AddonSettings Normalize(MarketCatalog catalog) => Marketplace is null ? this : this with { Marketplace = Marketplace.Normalize(catalog) };
