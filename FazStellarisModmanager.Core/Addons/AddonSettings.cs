@@ -9,6 +9,14 @@ namespace FazStellarisModmanager.Core.Addons;
 /// </summary>
 public sealed record AddonSettings(bool Enabled = false, MarketplaceSettings? Marketplace = null, TechnologiesSettings? Technologies = null)
 {
+    /// <summary>
+    /// True when Faz Addons may have something to build: addons are on, and the Marketplace sets values or Technologies holds techs. Apply
+    /// builds it only then; values equal to the game's or techs with errors can still leave nothing to load (see <see cref="AddonOutput.HasChanges"/>).
+    /// </summary>
+    [JsonIgnore]
+    public bool MayChangeGame =>
+        Enabled && (Marketplace is { Enabled: true, ChangeCount: > 0 } || Technologies is { Enabled: true, Techs.Count: > 0 });
+
     /// <summary>A copy without the overrides that equal the game's current values (see <see cref="MarketplaceSettings.Normalize"/>); techs are kept as they are.</summary>
     public AddonSettings Normalize(MarketCatalog catalog) => Marketplace is null ? this : this with { Marketplace = Marketplace.Normalize(catalog) };
 }

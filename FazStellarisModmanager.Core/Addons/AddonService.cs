@@ -106,8 +106,9 @@ public sealed class AddonService
         }
     }
 
-    /// <summary>The files Apply would write with these settings for the list of <see cref="Catalog"/>; null before the first build.</summary>
-    public AddonOutput? Preview(AddonSettings settings) => _catalog is { } catalog ? AddonBuilder.Build(catalog, settings, _gameVersion) : null;
+    /// <summary>The files Apply would write with these settings (market changes and custom techs) for the list of <see cref="Catalog"/>; null before the first build.</summary>
+    public AddonOutput? Preview(AddonSettings settings) =>
+        _catalog is { } catalog ? AddonBuilder.Build(catalog, _techCatalog ?? TechAddonCatalog.Empty, settings, _gameVersion) : null;
 
     MarketCatalog? Cached(ModList list) => _catalog is { } catalog && _catalogStamp == Stamp(list) ? catalog : null;
 

@@ -1,3 +1,4 @@
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Descriptors;
 using FazStellarisModmanager.Core.Library;
 using FazStellarisModmanager.Core.Lists;
@@ -8,10 +9,12 @@ public static class TechSources
 {
     /// <summary>
     /// Base game first, then each mod of the list in load order. Mods whose descriptor or content is missing are skipped with a warning.
+    /// With <paramref name="includeAddon"/>, Faz Addons' folder (&lt;user dir&gt;/mod/faz_addons) comes last when it exists, as the game loads
+    /// it after every mod; lists never hold it themselves.
     /// Source names are unique (case-insensitive): later duplicates get " (2)", " (3)", ... appended.
     /// A missing <paramref name="gameDir"/> makes <see cref="ContentSource.FromPath"/> throw DirectoryNotFoundException; that is fatal and intended.
     /// </summary>
-    public static List<ContentSource> Build(string gameDir, string userDir, ModList list, ICollection<string> warnings)
+    public static List<ContentSource> Build(string gameDir, string userDir, ModList list, ICollection<string> warnings, bool includeAddon = false)
     {
         var sources = new List<ContentSource> { ContentSource.FromPath("Base game", gameDir, isBaseGame: true) };
         foreach (var entry in list.Mods)
@@ -32,6 +35,11 @@ public static class TechSources
             {
                 warnings.Add($"{entry.Name}: {ex.Message}");
             }
+        }
+        if (includeAddon && AddonMod.ContentFolder(userDir) is var addon && Directory.Exists(addon))
+        {
+            try { sources.Add(ContentSource.FromPath(UniqueName(AddonMod.Name, sources), addon)); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { warnings.Add($"{AddonMod.Name}: {ex.Message}"); }
         }
         return sources;
     }

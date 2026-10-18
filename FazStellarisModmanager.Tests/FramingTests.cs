@@ -89,6 +89,29 @@ public class FramingTests
     }
 
     [Fact]
+    public async Task Round_trips_the_hosts_custom_techs()
+    {
+        var snap = new MachineSnapshot("PC", "v4.5", "C:/game", DateTime.UtcNow, new ModSnapshot("base", "Stellaris", "", null, null, null, "", 0, []), [], []);
+        var list = new ModList("L", [], []);
+        var addons = new AddonSettings(true, Technologies: new TechnologiesSettings(Techs:
+        [
+            new CustomTech("tech_faz_imperial_patronage", "Imperial Patronage Doctrine", "Our administrators learn to keep more subjects content.",
+                "repeatable_diplomacy_tech", Ethics: ["ethic_authoritarian"], Prerequisites: ["tech_galactic_administration"],
+                Modifiers: [new TechModifier("divided_patrongage_max_subjects", 1), new TechModifier("country_unity_produces_mult", -0.125)]),
+            new CustomTech("tech_faz_lasers", "Lasers", "", "tech_lasers_1", Area: "physics", Category: "particles", Tier: 2,
+                Repeatable: false, Rare: true, Cost: 3000, CostPerLevel: 0, Weight: 50),
+        ]));
+
+        var welcome = (Welcome)(await RoundTrip(new Welcome("id", list, snap, addons)))!;
+        var target = (HostTargetUpdate)(await RoundTrip(new HostTargetUpdate(list, snap, addons)))!;
+
+        Assert.Equal(addons, welcome.Addons);
+        Assert.Equal(addons, target.Addons);
+        Assert.Equal(-0.125, welcome.Addons!.Technologies!.Techs![0].Modifiers![1].Value);
+        Assert.True(welcome.Addons.Technologies.Techs[1].Rare);
+    }
+
+    [Fact]
     public async Task Header_is_little_endian_length_of_a_gzip_body()
     {
         var ms = new MemoryStream();

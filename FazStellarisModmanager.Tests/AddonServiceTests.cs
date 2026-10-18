@@ -241,6 +241,23 @@ public class AddonServiceTests
     }
 
     [Fact]
+    public async Task Preview_includes_the_custom_techs()
+    {
+        var (fake, manager) = Create();
+        using var _cleanup = fake;
+        AddTechs(fake, log: false);
+        var addons = new AddonService(manager);
+        await addons.BuildCatalogAsync(LocalList());
+        var tech = new CustomTech("tech_faz_patronage", "Patronage", "", "tech_galactic_administration", Ethics: ["ethic_authoritarian"]);
+
+        var output = addons.Preview(new AddonSettings(Enabled: true, Technologies: new TechnologiesSettings(Techs: [tech])))!;
+
+        Assert.True(output.HasChanges);
+        Assert.Contains("has_ethic = ethic_fanatic_authoritarian", System.Text.Encoding.UTF8.GetString(output.Get(AddonBuilder.TechPath)!));
+        Assert.NotNull(output.Get(AddonBuilder.TechLocalisationPath));
+    }
+
+    [Fact]
     public async Task Outside_a_session_the_effective_settings_are_this_PCs_own()
     {
         var (fake, manager) = Create(saved: Sample());

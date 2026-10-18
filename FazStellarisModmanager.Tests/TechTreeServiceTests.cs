@@ -42,6 +42,52 @@ public class TechTreeServiceTests
         Assert.Null(tree.Progress);
     }
 
+    // Faz Addons as Apply leaves it: mod/faz_addons.mod and its folder with a custom tech; dlc_load.json loads it last when listed.
+    static void AddFazAddons(FakeInstall fake, bool listed)
+    {
+        var q = (char)34;
+        fake.Write("user/mod/faz_addons.mod", $"name={q}Faz Addons{q}{(char)10}path={q}mod/faz_addons{q}{(char)10}");
+        fake.Write("user/mod/faz_addons/common/technology/zzzzz_faz_addons_tech.txt", $"tech_faz_x = {{ area = society tier = 1 prerequisites = {{ {q}tech_a{q} }} }}{(char)10}");
+        fake.Write("user/dlc_load.json", listed
+            ? """{"disabled_dlcs":[],"enabled_mods":["mod/local.mod","mod/faz_addons.mod"]}"""
+            : """{"disabled_dlcs":[],"enabled_mods":["mod/local.mod"]}""");
+    }
+
+    [Fact]
+    public async Task The_current_game_tree_shows_Faz_Addons_techs_when_dlc_load_lists_it()
+    {
+        var (fake, _, tree) = Create();
+        using var _cleanup = fake;
+        AddFazAddons(fake, listed: true);
+
+        await tree.BuildAsync(tree.Choices()[0]);
+
+        var current = tree.Current!;
+        Assert.Equal(new[] { "Base game", "Local Mod", "Faz Addons" }, current.Sources.Select(s => s.Name));
+        Assert.Equal("Faz Addons", current.Database.Techs["tech_faz_x"].Source.SourceName);
+        Assert.Contains("tech_l", current.Database.Techs.Keys);
+    }
+
+    [Fact]
+    public async Task Faz_Addons_techs_are_left_out_when_dlc_load_does_not_list_it_and_from_saved_lists()
+    {
+        var (fake, manager, tree) = Create();
+        using var _cleanup = fake;
+        AddFazAddons(fake, listed: false);
+
+        await tree.BuildAsync(tree.Choices()[0]);
+
+        Assert.Equal(new[] { "Base game", "Local Mod" }, tree.Current!.Sources.Select(s => s.Name));
+        Assert.DoesNotContain("tech_faz_x", tree.Current.Database.Techs.Keys);
+
+        AddFazAddons(fake, listed: true);
+        manager.Lists.Save(new ModList("Saved", [new ModListEntry("local:local.mod", "Local Mod", "mod/local.mod", null)], []));
+        await tree.BuildAsync(new TechTreeChoice("Saved", "Saved"));
+
+        Assert.Equal(new[] { "Base game", "Local Mod" }, tree.Current!.Sources.Select(s => s.Name));
+        Assert.DoesNotContain("tech_faz_x", tree.Current.Database.Techs.Keys);
+    }
+
     [Fact]
     public async Task Saved_lists_are_offered_and_build_their_own_tree()
     {

@@ -322,6 +322,9 @@ public class ModManagerServiceTests
             new AddonSettings(Enabled: true, new MarketplaceSettings(Enabled: false, MaxBaseAmounts: 1000)),
             // Equal to the game's values: nothing changes.
             new AddonSettings(Enabled: true, new MarketplaceSettings(Resources: new Dictionary<string, ResourceOverride> { ["energy"] = new(OnMarket: true, MarketAmount: 100) })),
+            new AddonSettings(Enabled: false, Technologies: new TechnologiesSettings(Techs: [Patronage])),
+            new AddonSettings(Enabled: true, Technologies: new TechnologiesSettings(Enabled: false, Techs: [Patronage])),
+            new AddonSettings(Enabled: true, Technologies: new TechnologiesSettings()),
         })
         {
             using var fake = new FakeInstall();
@@ -333,6 +336,75 @@ public class ModManagerServiceTests
             Assert.Null(result.AddonWarning);
             Assert.Equal(new[] { "mod/local.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
         }
+    }
+
+    // Custom techs: the base game's tech, category and ethics, and the icon file they use (only its name counts).
+    static readonly CustomTech Patronage = new("tech_faz_patronage", "Patronage", "More subjects.", "tech_galactic_administration",
+        Ethics: ["ethic_authoritarian"], Prerequisites: ["tech_galactic_administration"], Modifiers: [new TechModifier("divided_patrongage_max_subjects", 1)]);
+
+    static AddonSettings Techs(params CustomTech[] techs) => new(Enabled: true, Technologies: new TechnologiesSettings(Techs: techs));
+
+    static void AddTechGame(FakeInstall fake)
+    {
+        const string game = "lib/steamapps/common/Stellaris/";
+        var lf = (char)10;
+        fake.Write(game + "common/technology/00_soc_tech.txt", $"tech_galactic_administration = {{ area = society tier = 3 category = {{ statecraft }} }}{lf}");
+        fake.Write(game + "common/technology/category/00_category.txt", $"statecraft = {{ }}{lf}");
+        fake.Write(game + "common/ethics/00_ethics.txt", $"ethic_authoritarian = {{ }}{lf}ethic_fanatic_authoritarian = {{ }}{lf}");
+        fake.Write(game + "gfx/interface/icons/technologies/tech_galactic_administration.dds", "not decoded");
+    }
+
+    [Fact]
+    public void Apply_builds_the_valid_custom_techs_loads_Faz_Addons_and_names_the_techs_left_out()
+    {
+        using var fake = new FakeInstall();
+        AddTechGame(fake);
+        var svc = WithAddons(fake, Techs(
+            new CustomTech("tech_faz_broken", "Broken", "", "nope"),
+            Patronage,
+            new CustomTech("bad key", "Second", "", "tech_galactic_administration")));
+
+        var result = svc.Apply(LocalList());
+
+        Assert.True(result.AddonsApplied);
+        Assert.Equal("Not added (fix on the Addons tab): Broken (Unknown icon 'nope'); Second (The key may only contain lower-case letters, digits and _).",
+            result.AddonWarning);
+        Assert.Equal(result.AddonWarning, result.Warning);
+        Assert.Equal(new[] { "mod/local.mod", "mod/faz_addons.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
+        var techs = File.ReadAllText(AddonFile(fake, AddonBuilder.TechPath));
+        Assert.StartsWith("tech_faz_patronage = {", techs);
+        Assert.Contains("has_ethic = ethic_fanatic_authoritarian", techs);
+        Assert.DoesNotContain("tech_faz_broken", techs);
+        Assert.Contains("tech_faz_patronage:0 " + (char)34 + "Patronage" + (char)34, File.ReadAllText(AddonFile(fake, AddonBuilder.TechLocalisationPath)));
+    }
+
+    [Fact]
+    public void Apply_with_only_broken_custom_techs_does_not_load_Faz_Addons_and_says_why()
+    {
+        using var fake = new FakeInstall();
+        AddTechGame(fake);
+        var svc = WithAddons(fake, Techs(Patronage with { Category = "nonsense" }));
+
+        var result = svc.Apply(LocalList());
+
+        Assert.False(result.AddonsApplied);
+        Assert.Equal("Not added (fix on the Addons tab): Patronage (Unknown category 'nonsense').", result.AddonWarning);
+        Assert.Equal(new[] { "mod/local.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
+    }
+
+    [Fact]
+    public void Apply_builds_market_changes_and_custom_techs_together()
+    {
+        using var fake = new FakeInstall();
+        AddTechGame(fake);
+        var svc = WithAddons(fake, NanitesOnMarket() with { Technologies = new TechnologiesSettings(Techs: [Patronage]) });
+
+        var result = svc.Apply(LocalList());
+
+        Assert.True(result.AddonsApplied);
+        Assert.Null(result.AddonWarning);
+        Assert.True(File.Exists(AddonFile(fake, FakeInstall.MarketFile)));
+        Assert.True(File.Exists(AddonFile(fake, AddonBuilder.TechPath)));
     }
 
     [Fact]

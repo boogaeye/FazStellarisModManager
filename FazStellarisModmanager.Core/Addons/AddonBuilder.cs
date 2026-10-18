@@ -6,9 +6,9 @@ using FazStellarisModmanager.Core.Descriptors;
 namespace FazStellarisModmanager.Core.Addons;
 
 /// <summary>
-/// Builds Faz Addons from the settings and the current game (<see cref="MarketCatalog"/>, which holds the winning files' bytes). Pure and
-/// deterministic: the same catalog and settings give the same bytes, whatever order the settings' maps enumerate in. Writes nothing; see
-/// <see cref="AddonMod.Write"/>.
+/// Builds Faz Addons from the settings and the current game (<see cref="MarketCatalog"/>, which holds the winning files' bytes, and
+/// <see cref="TechAddonCatalog"/>, which custom techs are checked against). Pure and deterministic: the same catalogs and settings give the
+/// same bytes, whatever order the settings' maps enumerate in. Writes nothing; see <see cref="AddonMod.Write"/>.
 /// </summary>
 public static class AddonBuilder
 {
@@ -17,6 +17,9 @@ public static class AddonBuilder
     public const string DefinesPath = "common/defines/zzzzz_faz_addons.txt";
     public const string MarketEventsPath = "events/faz_addons_market.txt";
     public const string MarketOnActionsPath = "common/on_actions/zzzzz_faz_addons.txt";
+    public const string TechPath = "common/technology/zzzzz_faz_addons_tech.txt";
+    public const string TechLocalisationPath = "localisation/english/faz_addons_l_english.yml";
+    const string LocalisationHeader = "l_english:";
 
     static readonly string Lf = ((char)10).ToString();
     static readonly string Tab = ((char)9).ToString();
@@ -30,12 +33,15 @@ public static class AddonBuilder
     static readonly byte[] Bom = [0xEF, 0xBB, 0xBF];
 
     /// <summary>
-    /// The mod's files. Settings are first normalized against <paramref name="catalog"/>, so values equal to the game's change nothing, and
-    /// overrides of resources the catalog doesn't have are ignored. Each winning common/strategic_resources file holding a changed resource is
-    /// output under its own path: its original bytes with only those values edited (BOM and line endings kept). Changed market rules and AI
-    /// lists go to <see cref="DefinesPath"/>. <paramref name="gameVersion"/> (e.g. "Cepheus v4.5.2") sets the descriptor's supported_version.
+    /// The mod's files. Marketplace settings are first normalized against <paramref name="catalog"/>, so values equal to the game's change
+    /// nothing, and overrides of resources the catalog doesn't have are ignored. Each winning common/strategic_resources file holding a changed
+    /// resource is output under its own path: its original bytes with only those values edited (BOM and line endings kept). Changed market
+    /// rules and AI lists go to <see cref="DefinesPath"/>. The custom techs without errors against <paramref name="techs"/> (see
+    /// <see cref="TechValidator.Buildable"/>) go to <see cref="TechPath"/> and <see cref="TechLocalisationPath"/>, in settings order;
+    /// <see cref="TechAddonCatalog.Empty"/> will do while Technologies is off. <paramref name="gameVersion"/> (e.g. "Cepheus v4.5.2") sets
+    /// the descriptor's supported_version.
     /// </summary>
-    public static AddonOutput Build(MarketCatalog catalog, AddonSettings settings, string? gameVersion)
+    public static AddonOutput Build(MarketCatalog catalog, TechAddonCatalog techs, AddonSettings settings, string? gameVersion)
     {
         var files = new List<(string Path, byte[] Bytes)>();
         if (settings.Enabled && settings.Marketplace is { Enabled: true } marketplace)
@@ -44,6 +50,12 @@ public static class AddonBuilder
             files.AddRange(ResourceFiles(catalog, market));
             if (DefinesFile(catalog, market) is { } defines) files.Add((DefinesPath, defines));
             files.AddRange(GalacticMarketFiles(catalog, market));
+        }
+        if (settings.Enabled && settings.Technologies is { Enabled: true, Techs: { Count: > 0 } custom }
+            && TechValidator.Buildable(custom, techs) is { Count: > 0 } buildable)
+        {
+            files.Add((TechPath, Encoding.UTF8.GetBytes(string.Join(Lf, buildable.Select(t => TechBlock(t, techs))))));
+            files.Add((TechLocalisationPath, [.. Bom, .. Encoding.UTF8.GetBytes(LocalisationHeader + Lf + string.Concat(buildable.Select(TechLocalisation)))]));
         }
         var hasChanges = files.Count > 0;
         files.Add((DescriptorPath, Encoding.UTF8.GetBytes(Descriptor(gameVersion))));
@@ -166,6 +178,57 @@ public static class AddonBuilder
         var onActions = "on_monthly_pulse = {" + Lf + T(1) + "events = {" + Lf + T(2) + "faz_addons.1" + Lf + T(1) + "}" + Lf + "}" + Lf;
         yield return (MarketOnActionsPath, Encoding.UTF8.GetBytes(onActions));
     }
+
+    /// <summary>
+    /// What Faz Addons writes for one custom tech, whether it has errors or not (the build leaves those out): its block of
+    /// <see cref="TechPath"/>, and its localisation (<see cref="TechLocalisationPath"/>'s text for that tech alone, without the BOM).
+    /// </summary>
+    public static (string Technology, string Localisation) TechText(CustomTech tech, TechAddonCatalog catalog) =>
+        (TechBlock(tech, catalog), LocalisationHeader + Lf + TechLocalisation(tech));
+
+    // One tech's block: the base game's repeatable layout, with the repeatable-only lines, the rare flag, the ethics (each regular ethic with
+    // its fanatic variant when the game has one) and the prerequisites only when they apply. Empty groups of lines are left out with their
+    // blank line.
+    static string TechBlock(CustomTech tech, TechAddonCatalog catalog)
+    {
+        string T(int n) => string.Concat(Enumerable.Repeat(Tab, n));
+
+        var basics = new List<string> { "area = " + tech.Area, "tier = " + Int(tech.Tier), "category = { " + tech.Category + " }", "cost = " + Int(tech.Cost) };
+        if (tech.Repeatable) basics.AddRange(["cost_per_level = " + Int(tech.CostPerLevel), "levels = -1"]);
+        basics.Add("icon = " + tech.Icon);
+        if (tech.Rare) basics.Add("is_rare = yes");
+        basics.Add("weight = " + Int(tech.Weight));
+
+        var conditions = new List<string>();
+        if (tech.Ethics is { Count: > 0 } ethics)
+        {
+            var keys = ethics.SelectMany(e => catalog.FindEthic(e) is { } info ? new[] { info.Key, info.FanaticKey } : [e]).OfType<string>();
+            conditions.Add("potential = {" + Lf + T(2) + "OR = {" + Lf + string.Concat(keys.Select(k => T(3) + "has_ethic = " + k + Lf)) + T(2) + "}" + Lf + T(1) + "}");
+        }
+        if (tech.Prerequisites is { Count: > 0 } prerequisites)
+            conditions.Add("prerequisites = {" + string.Concat(prerequisites.Select(p => " " + Quote + p + Quote)) + " }");
+
+        var weights = new List<string>();
+        if (tech.Repeatable) weights.Add("weight_modifier = { factor = 0.5 }");
+        weights.Add("ai_weight = { factor = 1 }");
+        if (tech.Repeatable) weights.AddRange(["weight_groups = { repeatable }", "mod_weight_if_group_picked = { repeatable = 0.01 }"]);
+
+        var effects = new List<string>();
+        if (tech.Modifiers is { Count: > 0 } modifiers)
+            effects.Add("modifier = {" + Lf + string.Concat(modifiers.Select(m => T(2) + m.Key + " = " + Number(m.Value) + Lf)) + T(1) + "}");
+
+        var groups = new[] { basics, conditions, weights, effects }.Where(g => g.Count > 0)
+            .Select(g => string.Concat(g.Select(line => Tab + line + Lf)));
+        return tech.Key + " = {" + Lf + string.Join(Lf, groups) + "}" + Lf;
+    }
+
+    static string TechLocalisation(CustomTech tech) =>
+        " " + tech.Key + ":0 " + Quote + LocText(tech.Name) + Quote + Lf
+        + " " + tech.Key + "_desc:0 " + Quote + LocText(tech.Description) + Quote + Lf;
+
+    // A localisation value is one line between quotes: line breaks become spaces (CRLF as one) and double quotes single ones.
+    static string LocText(string text) =>
+        text.Replace((char)13 + Lf, " ").Replace((char)13, ' ').Replace((char)10, ' ').Replace((char)34, (char)39);
 
     static string Block(string name, IEnumerable<string> lines) =>
         name + " = {" + Lf + string.Concat(lines.Select(line => Tab + line + Lf)) + "}" + Lf;
