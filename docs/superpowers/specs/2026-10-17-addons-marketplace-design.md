@@ -22,6 +22,7 @@ Approved mockup: `.superpowers/brainstorm/497-1792275941/content/addons-marketpl
   - `MARKET_MIN_FLUCTUATION_FROM_BASE_PRICE` (-80) and `MARKET_MAX_FLUCTUATION_FROM_BASE_PRICE` (400).
 - **`NAI.AI_ALLOWED_TO_BUY` / `AI_ALLOWED_TO_SELL`** are resource lists the AI may trade. The base game lists 11 resources, so mod resources are never AI-traded.
 - **Defines** override per key: a later definition of `NEconomy = { KEY = value }` wins.
+- **The Galactic Market keeps its own list of traded resources** in the save (`market.galactic_market_resources`). The game adds its own resources with `enable_on_market = <key>`: once when the market is founded (`action.104`) and then monthly (`action.116` on `on_monthly_pulse`). Resources the addon puts on the market only reach the Galactic Market through the same effect, so the addon adds `events/faz_addons_market.txt` (a hidden global event `faz_addons.1` that runs `enable_on_market` for each of them once the market is founded) and `common/on_actions/zzzzz_faz_addons.txt` (runs it `on_monthly_pulse`). The internal market needs nothing extra. Found while testing on the user's save, where dark energy and quasi-negative mass were missing from the Galactic Market.
 - **Not possible:** fallen empires hiding alloys from the trade screen is built into the game. There's no setting or file for it, so the addon doesn't offer it.
 
 ## Data model (`Core/Addons/`)
