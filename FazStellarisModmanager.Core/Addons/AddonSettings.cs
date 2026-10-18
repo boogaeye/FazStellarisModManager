@@ -45,7 +45,8 @@ public sealed record MarketplaceSettings(
     double? TradeFeeMin = null,          // NEconomy.MARKET_TRADE_FEE_MIN
     int? MinFluctuation = null,          // NEconomy.MARKET_MIN_FLUCTUATION_FROM_BASE_PRICE
     int? MaxFluctuation = null,          // NEconomy.MARKET_MAX_FLUCTUATION_FROM_BASE_PRICE
-    IReadOnlyDictionary<string, ResourceOverride>? Resources = null)
+    IReadOnlyDictionary<string, ResourceOverride>? Resources = null,
+    bool GalacticMarketNeedsStock = true) // resources put on the market reach the Galactic Market once a Community member has some in stock, as the game's own do
 {
     /// <summary>How many values are set: each market rule plus each field of each resource override.</summary>
     [JsonIgnore]
@@ -85,10 +86,10 @@ public sealed record MarketplaceSettings(
     public bool Equals(MarketplaceSettings? other) =>
         other is not null && Enabled == other.Enabled && MaxBaseAmounts == other.MaxBaseAmounts && TradeFeeBase == other.TradeFeeBase
         && TradeFeeMin == other.TradeFeeMin && MinFluctuation == other.MinFluctuation && MaxFluctuation == other.MaxFluctuation
-        && SameResources(Resources, other.Resources);
+        && SameResources(Resources, other.Resources) && GalacticMarketNeedsStock == other.GalacticMarketNeedsStock;
 
     public override int GetHashCode() =>
-        HashCode.Combine(Enabled, MaxBaseAmounts, TradeFeeBase, TradeFeeMin, MinFluctuation, MaxFluctuation, Resources?.Count ?? 0);
+        HashCode.Combine(Enabled, MaxBaseAmounts, TradeFeeBase, TradeFeeMin, MinFluctuation, MaxFluctuation, Resources?.Count ?? 0, GalacticMarketNeedsStock);
 
     static bool SameResources(IReadOnlyDictionary<string, ResourceOverride>? a, IReadOnlyDictionary<string, ResourceOverride>? b)
     {

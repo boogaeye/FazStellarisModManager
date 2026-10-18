@@ -117,6 +117,18 @@ public class AddonSettingsStoreTests
     }
 
     [Fact]
+    public void The_galactic_market_stock_rule_is_on_unless_saved_off()
+    {
+        using var tmp = new TempDir();
+        var old = tmp.Write("old.json", """{ "Enabled": true, "Marketplace": { "MaxBaseAmounts": 1000 } }""");
+        var off = tmp.Write("off.json", """{ "Enabled": true, "Marketplace": { "GalacticMarketNeedsStock": false } }""");
+
+        Assert.True(AddonSettingsStore.Load(old).Marketplace!.GalacticMarketNeedsStock);
+        Assert.False(AddonSettingsStore.Load(off).Marketplace!.GalacticMarketNeedsStock);
+        Assert.NotEqual(new MarketplaceSettings(), new MarketplaceSettings(GalacticMarketNeedsStock: false));
+    }
+
+    [Fact]
     public void Missing_tech_fields_take_the_defaults()
     {
         using var tmp = new TempDir();

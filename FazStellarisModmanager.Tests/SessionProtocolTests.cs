@@ -61,7 +61,7 @@ public class SessionProtocolTests
     }
 
     [Fact]
-    public void Protocol_is_version_5() => Assert.Equal(5, SessionProtocol.Version);
+    public void Protocol_is_version_6() => Assert.Equal(6, SessionProtocol.Version);
 
     [Theory]
     [InlineData(false, false, StreamMode.Off, false, false)]

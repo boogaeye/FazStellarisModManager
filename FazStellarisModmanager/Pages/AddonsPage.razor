@@ -197,6 +197,15 @@
                                 }
                             </div>
                         </div>
+                        @{ var stockRule = market?.GalacticMarketNeedsStock ?? true; }
+                        <div class="setline @(stockRule ? "" : "chg")">
+                            <button class="sw sm @(stockRule ? "on" : "") @(readOnly ? "ro" : "")" role="switch" aria-checked="@(stockRule ? "true" : "false")"
+                                    aria-label="Galactic Market stock rule" disabled="@readOnly" @onclick="ToggleStockRule"></button>
+                            <div>
+                                <b>Galactic Market: only add a resource once a Galactic Community member has some in stock</b>
+                                <div class="muted small">Like the game does for its own resources. Off: resources you put on the market reach the Galactic Market right away.</div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="card">
@@ -539,6 +548,8 @@
     void ToggleMarketplace() => Edit(s => MarketplaceView.EditMarket(s, m => m with { Enabled = !m.Enabled }), now: true);
 
     void ToggleTechnologies() => Edit(s => TechnologiesView.EditTechnologies(s, t => t with { Enabled = !t.Enabled }), now: true);
+
+    void ToggleStockRule() => Edit(s => MarketplaceView.EditMarket(s, m => m with { GalacticMarketNeedsStock = !m.GalacticMarketNeedsStock }), now: true);
 
     void Show(bool technologies) => this.technologies = technologies;
 

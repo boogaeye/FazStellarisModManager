@@ -578,6 +578,9 @@ button.evt-tog:hover:not(:disabled) { color: var(--accent); }
 .addons-page .card.loading { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--muted); text-align: center; padding: 2rem 1rem; }
 
 .addons-page .set { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+.addons-page .setline { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; padding: 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel2); }
+.addons-page .setline b { font-size: 12px; }
+.addons-page .setline.chg { border-color: #d6a531; }
 .addons-page .setc { display: flex; flex-direction: column; gap: 3px; background: #141a22; border: 1px solid var(--border); border-radius: 9px; padding: 9px; min-width: 0; }
 .addons-page .setc > b { font-size: 12px; }
 .addons-page .setrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 3px; }
