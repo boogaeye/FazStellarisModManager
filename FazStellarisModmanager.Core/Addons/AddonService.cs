@@ -7,9 +7,9 @@ using FazStellarisModmanager.Core.Technology;
 namespace FazStellarisModmanager.Core.Addons;
 
 /// <summary>
-/// UI facade for the Addons tab: this PC's addon settings (addons.json) and the market catalog of a mod list, built with names and icons
-/// off the UI thread (one build at a time). The catalog is cached for the list's mods (descriptors in order), the paths and a version that
-/// <see cref="InvalidateCatalog"/> bumps. <see cref="Changed"/> may fire on any thread.
+/// UI facade for the Addons tab: this PC's addon settings (addons.json) and the market and tech catalogs of a mod list, built together with
+/// names and icons off the UI thread (one build at a time). The catalogs are cached for the list's mods (descriptors in order), the paths and
+/// a version that <see cref="InvalidateCatalog"/> bumps. <see cref="Changed"/> may fire on any thread.
 /// </summary>
 public sealed class AddonService
 {
@@ -19,7 +19,9 @@ public sealed class AddonService
     readonly Lock _gate = new();
     volatile AddonSettings _settings;
     volatile MarketCatalog? _catalog;
+    volatile TechAddonCatalog? _techCatalog;
     volatile string? _catalogStamp;
+    IReadOnlyList<ContentSource>? _sources; // the tech catalog loads its icons from these; disposed when the next build replaces it
     volatile string? _gameVersion;
     volatile string? _progress;
     long _version;
@@ -37,6 +39,9 @@ public sealed class AddonService
 
     /// <summary>The last built catalog (with icons), or null before the first build.</summary>
     public MarketCatalog? Catalog => _catalog;
+
+    /// <summary>The tech catalog built with <see cref="Catalog"/> (names, this PC's modifier list, ethic icons, tech icons on request), or null before the first build.</summary>
+    public TechAddonCatalog? TechCatalog => _techCatalog;
 
     public bool IsBuilding => _build.CurrentCount == 0;
 
@@ -69,7 +74,8 @@ public sealed class AddonService
 
     /// <summary>
     /// The catalog of the game plus the list's mods in load order, with resource names and icons; the cached one when nothing changed.
-    /// Waits for a running build. On failure (e.g. no game folder: <see cref="InvalidOperationException"/>) the previous catalog stays.
+    /// <see cref="TechCatalog"/> is built with it. Waits for a running build. On failure (e.g. no game folder:
+    /// <see cref="InvalidOperationException"/>) the previous catalogs stay.
     /// </summary>
     public async Task<MarketCatalog> BuildCatalogAsync(ModList list, CancellationToken ct = default)
     {
@@ -82,10 +88,15 @@ public sealed class AddonService
             if (Cached(mods) is { } built) return built;
             Report("Reading resources…", force: true);
             var stamp = Stamp(mods); // taken first, so an invalidation during the build makes the next call read again
-            var (catalog, gameVersion) = await Task.Run(() => BuildCore(mods, ct), ct);
+            var (catalog, techs, sources, gameVersion) = await Task.Run(() => BuildCore(mods, ct), ct);
+            var old = _sources;
+            _sources = sources;
             _gameVersion = gameVersion;
+            _techCatalog = techs;
             _catalog = catalog;
             _catalogStamp = stamp;
+            if (old is not null)
+                foreach (var s in old) s.Dispose(); // the replaced tech catalog's icons not loaded yet come back null
             return catalog;
         }
         finally
@@ -109,7 +120,8 @@ public sealed class AddonService
         return string.Join("|", parts);
     }
 
-    (MarketCatalog Catalog, string? GameVersion) BuildCore(ModList list, CancellationToken ct)
+    // The sources stay open for the tech catalog's icons; on failure they are disposed here.
+    (MarketCatalog Catalog, TechAddonCatalog Techs, IReadOnlyList<ContentSource> Sources, string? GameVersion) BuildCore(ModList list, CancellationToken ct)
     {
         var paths = _manager.Resolve();
         var gameDir = paths.GameDir ?? throw new InvalidOperationException("Stellaris install not found. Set the game folder in Settings.");
@@ -119,14 +131,18 @@ public sealed class AddonService
         {
             ct.ThrowIfCancellationRequested();
             Report("Reading resource names…", force: false);
-            var catalog = MarketCatalog.Build(sources, Localisation.Load(sources, warnings), warnings, ct);
+            var loc = Localisation.Load(sources, warnings);
+            var catalog = MarketCatalog.Build(sources, loc, warnings, ct);
+            Report("Reading technologies…", force: false);
+            var techs = TechAddonCatalog.Build(sources, loc, TechAddonCatalog.ModifiersLogPath(paths.UserDir), warnings, ct);
             Report("Loading icons…", force: false);
             var sprites = SpriteIndex.Build(sources, warnings, ct);
-            return (catalog.LoadIcons(sources, sprites, _icons), GameVersion.Read(gameDir));
+            return (catalog.LoadIcons(sources, sprites, _icons), techs.LoadIcons(sources, _icons), sources, GameVersion.Read(gameDir));
         }
-        finally
+        catch
         {
             foreach (var s in sources) s.Dispose();
+            throw;
         }
     }
 

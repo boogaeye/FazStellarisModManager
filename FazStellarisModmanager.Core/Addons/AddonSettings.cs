@@ -3,12 +3,13 @@ using System.Text.Json.Serialization;
 namespace FazStellarisModmanager.Core.Addons;
 
 /// <summary>
-/// The addons built into the generated Faz Addons mod; off by default. In v1 the only addon is the <see cref="Marketplace"/> (null means its
-/// defaults: on, nothing changed). Throughout, a null value means "unchanged from the game".
+/// The addons built into the generated Faz Addons mod; off by default. The addons are the <see cref="Marketplace"/> (null means its
+/// defaults: on, nothing changed) and the custom <see cref="Technologies"/> (null means none). Throughout, a null value means "unchanged
+/// from the game".
 /// </summary>
-public sealed record AddonSettings(bool Enabled = false, MarketplaceSettings? Marketplace = null)
+public sealed record AddonSettings(bool Enabled = false, MarketplaceSettings? Marketplace = null, TechnologiesSettings? Technologies = null)
 {
-    /// <summary>A copy without the overrides that equal the game's current values (see <see cref="MarketplaceSettings.Normalize"/>).</summary>
+    /// <summary>A copy without the overrides that equal the game's current values (see <see cref="MarketplaceSettings.Normalize"/>); techs are kept as they are.</summary>
     public AddonSettings Normalize(MarketCatalog catalog) => Marketplace is null ? this : this with { Marketplace = Marketplace.Normalize(catalog) };
 }
 
@@ -111,5 +112,75 @@ public sealed record ResourceOverride(bool? OnMarket = null, int? MarketAmount =
                 _ => AiTrades,
             },
             resource.Max is null || resource.FixedMax || BaseStorage is not >= 0 || BaseStorage == resource.Max ? null : BaseStorage);
+    }
+}
+
+/// <summary>
+/// Custom technologies Faz Addons adds, in the order they are listed and built. Compares by value, including the <see cref="Techs"/>
+/// (an empty list equals null).
+/// </summary>
+public sealed record TechnologiesSettings(bool Enabled = true, IReadOnlyList<CustomTech>? Techs = null)
+{
+    public bool Equals(TechnologiesSettings? other) => other is not null && Enabled == other.Enabled && Items.Same(Techs, other.Techs);
+
+    public override int GetHashCode() => HashCode.Combine(Enabled, Techs?.Count ?? 0);
+}
+
+/// <summary>
+/// One custom technology; the defaults are the base game's repeatables'. <see cref="Ethics"/> are regular ethic keys (e.g.
+/// ethic_authoritarian, whose fanatic variant counts too) or ethic_gestalt_consciousness, any of which allows it; <see cref="Prerequisites"/>
+/// are tech keys; <see cref="Modifiers"/> apply per level on repeatables, and <see cref="CostPerLevel"/> only counts for them. Compares by
+/// value, including the lists (in order; an empty list equals null). <see cref="TechValidator"/> says whether it can be built.
+/// </summary>
+public sealed record CustomTech(
+    string Key, string Name, string Description, string Icon,
+    string Area = "society", string Category = "statecraft", int Tier = 5,
+    bool Repeatable = true, bool Rare = false,
+    int Cost = 50000, int CostPerLevel = 5000, int Weight = 15,
+    IReadOnlyList<string>? Ethics = null,
+    IReadOnlyList<string>? Prerequisites = null,
+    IReadOnlyList<TechModifier>? Modifiers = null)
+{
+    public bool Equals(CustomTech? other) =>
+        other is not null && Key == other.Key && Name == other.Name && Description == other.Description && Icon == other.Icon
+        && Area == other.Area && Category == other.Category && Tier == other.Tier && Repeatable == other.Repeatable && Rare == other.Rare
+        && Cost == other.Cost && CostPerLevel == other.CostPerLevel && Weight == other.Weight
+        && Items.Same(Ethics, other.Ethics) && Items.Same(Prerequisites, other.Prerequisites) && Items.Same(Modifiers, other.Modifiers);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Key);
+        hash.Add(Name);
+        hash.Add(Description);
+        hash.Add(Icon);
+        hash.Add(Area);
+        hash.Add(Category);
+        hash.Add(Tier);
+        hash.Add(Repeatable);
+        hash.Add(Rare);
+        hash.Add(Cost);
+        hash.Add(CostPerLevel);
+        hash.Add(Weight);
+        hash.Add(Ethics?.Count ?? 0);
+        hash.Add(Prerequisites?.Count ?? 0);
+        hash.Add(Modifiers?.Count ?? 0);
+        return hash.ToHashCode();
+    }
+}
+
+/// <summary>One effect of a custom tech: modifier key and value (per level on repeatables).</summary>
+public sealed record TechModifier(string Key, double Value);
+
+// Value equality for the settings' lists: the same items in the same order, an empty list being the same as none.
+file static class Items
+{
+    public static bool Same<T>(IReadOnlyList<T>? a, IReadOnlyList<T>? b)
+    {
+        if ((a?.Count ?? 0) != (b?.Count ?? 0)) return false;
+        if (a is null || b is null) return true;
+        for (var i = 0; i < a.Count; i++)
+            if (!EqualityComparer<T>.Default.Equals(a[i], b[i])) return false;
+        return true;
     }
 }

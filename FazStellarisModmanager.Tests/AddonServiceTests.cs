@@ -28,6 +28,27 @@ public class AddonServiceTests
 
     static ModList LocalList() => new("L", [new("local:local.mod", "Local Mod", "mod/local.mod", null)], []);
 
+    // A tech, a category, an ethic with its fanatic variant, their icons and names; with the game's modifiers.log when asked.
+    static void AddTechs(FakeInstall fake, bool log)
+    {
+        const string game = "lib/steamapps/common/Stellaris/";
+        fake.Write(game + "common/technology/00_soc_tech.txt", "tech_galactic_administration = { area = society tier = 3 category = { statecraft } }" + Lf);
+        fake.Write(game + "common/technology/category/00_category.txt", "statecraft = { }" + Lf);
+        fake.Write(game + "common/ethics/00_ethics.txt", "ethic_authoritarian = { }" + Lf + "ethic_fanatic_authoritarian = { }" + Lf);
+        fake.Write(game + "localisation/english/t_l_english.yml", "l_english:" + Lf
+            + " tech_galactic_administration:0 " + (char)34 + "Galactic Administration" + (char)34 + Lf
+            + " mod_divided_patrongage_max_subjects:0 " + (char)34 + "Subjects Exempt" + (char)34 + Lf);
+        foreach (var icon in new[] { "ethics/ethic_authoritarian.dds", "technologies/tech_galactic_administration.dds" })
+        {
+            var file = Path.Combine(fake.GameDir, "gfx", "interface", "icons", icon);
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllBytes(file, DdsBuilder.Bgra32(1, 1, (7, 7, 7, 255)));
+        }
+        if (log)
+            fake.Write("user/logs/script_documentation/modifiers.log", "Printing Modifier Definitions:" + Lf
+                + "- divided_patrongage_max_subjects, Category: Countries" + Lf);
+    }
+
     static AddonSettings Sample() => new(Enabled: true, new MarketplaceSettings(MaxBaseAmounts: 1000,
         Resources: new Dictionary<string, ResourceOverride> { ["nanites"] = new(OnMarket: true) }));
 
@@ -112,20 +133,67 @@ public class AddonServiceTests
     {
         var (fake, manager) = Create();
         using var _cleanup = fake;
+        AddTechs(fake, log: false);
         var addons = new AddonService(manager);
         var first = await addons.BuildCatalogAsync(LocalList());
+        var firstTechs = addons.TechCatalog;
         fake.Write("user/mod/local/common/strategic_resources/zz_local.txt", "local_res = { category = basic }" + Lf);
+        fake.Write("user/mod/local/common/technology/zz_local_tech.txt", "tech_local = { area = physics }" + Lf);
 
         var again = await addons.BuildCatalogAsync(LocalList());
+        var againTechs = addons.TechCatalog;
         var vanilla = await addons.BuildCatalogAsync(new ModList("Vanilla", [], []));
         addons.InvalidateCatalog();
         var rebuilt = await addons.BuildCatalogAsync(LocalList());
 
         Assert.Same(first, again);
+        Assert.Same(firstTechs, againTechs);
         Assert.Null(first.Find("local_res"));
+        Assert.Null(firstTechs!.FindTech("tech_local"));
         Assert.Equal(new[] { "energy", "nanites" }, vanilla.Resources.Select(r => r.Key));
         Assert.NotNull(rebuilt.Find("local_res"));
         Assert.Same(rebuilt, addons.Catalog);
+        Assert.NotNull(addons.TechCatalog!.FindTech("tech_local"));
+        Assert.StartsWith("data:image/png;base64,", await addons.TechCatalog.IconUriAsync("tech_galactic_administration"));
+    }
+
+    [Fact]
+    public async Task Builds_the_tech_catalog_with_names_this_PCs_modifiers_and_icons()
+    {
+        var (fake, manager) = Create();
+        using var _cleanup = fake;
+        AddTechs(fake, log: true);
+        var addons = new AddonService(manager);
+
+        Assert.Null(addons.TechCatalog);
+        await addons.BuildCatalogAsync(LocalList());
+        var techs = addons.TechCatalog!;
+
+        Assert.Equal("Galactic Administration", techs.FindTech("tech_galactic_administration")!.Name);
+        Assert.Equal(["statecraft"], techs.Categories.Select(c => c.Key));
+        Assert.True(techs.ModifiersFromLog);
+        var modifier = Assert.Single(techs.Modifiers);
+        Assert.Equal(("divided_patrongage_max_subjects", "Countries", "Subjects Exempt"), (modifier.Key, modifier.Category, modifier.Name));
+        var ethic = Assert.Single(techs.Ethics);
+        Assert.Equal(("ethic_authoritarian", "ethic_fanatic_authoritarian"), (ethic.Key, ethic.FanaticKey));
+        Assert.StartsWith("data:image/png;base64,", ethic.IconUri);
+        Assert.Equal(["tech_galactic_administration"], techs.Icons);
+        Assert.StartsWith("data:image/png;base64,", await techs.IconUriAsync("tech_galactic_administration"));
+    }
+
+    [Fact]
+    public async Task Without_the_modifiers_log_the_tech_catalog_lists_the_localised_modifiers()
+    {
+        var (fake, manager) = Create();
+        using var _cleanup = fake;
+        AddTechs(fake, log: false);
+        var addons = new AddonService(manager);
+
+        await addons.BuildCatalogAsync(LocalList());
+
+        Assert.False(addons.TechCatalog!.ModifiersFromLog);
+        var modifier = Assert.Single(addons.TechCatalog.Modifiers);
+        Assert.Equal(("divided_patrongage_max_subjects", null, "Subjects Exempt"), (modifier.Key, modifier.Category, modifier.Name));
     }
 
     [Fact]
@@ -151,6 +219,7 @@ public class AddonServiceTests
 
         Assert.Contains("Settings", ex.Message);
         Assert.Null(addons.Catalog);
+        Assert.Null(addons.TechCatalog);
         Assert.False(addons.IsBuilding);
         Assert.Null(addons.Progress);
     }

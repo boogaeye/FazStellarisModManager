@@ -5,7 +5,7 @@ using FazStellarisModmanager.Core.Technology;
 namespace FazStellarisModmanager.Tests.TestUtil;
 
 /// <summary>
-/// Synthetic game content for the market catalog and the addon builder: a base game folder plus mod folders (in the order added),
+/// Synthetic game content for the market and tech catalogs and the addon builder: a base game folder plus mod folders (in the order added),
 /// each opened as a <see cref="ContentSource"/>. Text is written exactly as given (no BOM) unless written as bytes.
 /// </summary>
 public sealed class MarketFixture : IDisposable
@@ -50,6 +50,14 @@ public sealed class MarketFixture : IDisposable
     public List<string> Warnings { get; } = [];
 
     public MarketCatalog Catalog(Localisation? loc = null) => MarketCatalog.Build(Sources, loc, Warnings);
+
+    /// <summary>The tech catalog; <paramref name="modifiersLog"/> is written to a modifiers.log outside the sources first, when given.</summary>
+    public TechAddonCatalog TechCatalog(Localisation? loc = null, string? modifiersLog = null)
+    {
+        string? log = null;
+        if (modifiersLog is not null) File.WriteAllText(log = Path.Combine(_tmp.Path, "modifiers.log"), modifiersLog);
+        return TechAddonCatalog.Build(Sources, loc, log, Warnings);
+    }
 
     public string TempPath => _tmp.Path;
 

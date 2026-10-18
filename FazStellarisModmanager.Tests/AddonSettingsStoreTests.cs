@@ -86,6 +86,116 @@ public class AddonSettingsStoreTests
         Assert.Equal(new MarketplaceSettings(Resources: new Dictionary<string, ResourceOverride>()), new MarketplaceSettings());
     }
 
+    static CustomTech PatronageTech() => new("tech_faz_patronage", "Patronage", "More subjects.", "tech_galactic_administration",
+        Ethics: ["ethic_authoritarian"], Prerequisites: ["tech_galactic_administration"],
+        Modifiers: [new TechModifier("divided_patrongage_max_subjects", 1), new TechModifier("country_unity_produces_mult", 0.05)]);
+
+    static AddonSettings WithTechs() => new(Enabled: true, Technologies: new TechnologiesSettings(Techs:
+    [
+        PatronageTech(),
+        new CustomTech("tech_faz_rare", "Rare", "", "tech_rare", Area: "physics", Category: "particles", Tier: 2, Repeatable: false, Rare: true,
+            Cost: 1200, CostPerLevel: 0, Weight: 3),
+    ]));
+
+    [Fact]
+    public void Custom_techs_round_trip()
+    {
+        using var tmp = new TempDir();
+        var file = Path.Combine(tmp.Path, "addons.json");
+
+        AddonSettingsStore.Save(file, WithTechs());
+        var back = AddonSettingsStore.Load(file);
+
+        Assert.Equal(WithTechs(), back);
+        var techs = back.Technologies!.Techs!;
+        Assert.True(back.Technologies.Enabled);
+        Assert.Equal(["ethic_authoritarian"], techs[0].Ethics!);
+        Assert.Equal(0.05, techs[0].Modifiers![1].Value);
+        Assert.Equal(("physics", 2, false, true, 1200), (techs[1].Area, techs[1].Tier, techs[1].Repeatable, techs[1].Rare, techs[1].Cost));
+        Assert.Null(techs[1].Ethics);
+        Assert.Null(back.Marketplace);
+    }
+
+    [Fact]
+    public void Missing_tech_fields_take_the_defaults()
+    {
+        using var tmp = new TempDir();
+        var file = tmp.Write("addons.json", """{ "Technologies": { "Techs": [ { "Key": "tech_faz_x", "Name": "X", "Description": "", "Icon": "tech_x" } ] } }""");
+
+        var s = AddonSettingsStore.Load(file);
+
+        Assert.True(s.Technologies!.Enabled);
+        Assert.Equal(new CustomTech("tech_faz_x", "X", "", "tech_x"), Assert.Single(s.Technologies.Techs!));
+        Assert.Equal(("society", "statecraft", 5, true, 50000, 5000, 15), (s.Technologies.Techs![0].Area, s.Technologies.Techs[0].Category,
+            s.Technologies.Techs[0].Tier, s.Technologies.Techs[0].Repeatable, s.Technologies.Techs[0].Cost, s.Technologies.Techs[0].CostPerLevel,
+            s.Technologies.Techs[0].Weight));
+    }
+
+    [Fact]
+    public void Null_techs_and_null_list_items_are_dropped_on_load()
+    {
+        using var tmp = new TempDir();
+        var file = tmp.Write("addons.json", """
+            { "Enabled": true, "Technologies": { "Techs": [ null, {
+                "Key": "tech_faz_x", "Name": null, "Description": null, "Icon": "tech_x", "Area": null, "Category": null,
+                "Ethics": [ null, "ethic_militarist" ], "Prerequisites": [ null ], "Modifiers": [ null, { "Key": null, "Value": 2 }, { "Key": "a", "Value": 1 } ] }, null ] } }
+            """);
+
+        var tech = Assert.Single(AddonSettingsStore.Load(file).Technologies!.Techs!);
+
+        Assert.Equal(("tech_faz_x", "", "", "", ""), (tech.Key, tech.Name, tech.Description, tech.Area, tech.Category));
+        Assert.Equal(["ethic_militarist"], tech.Ethics!);
+        Assert.Null(tech.Prerequisites);
+        Assert.Equal([new TechModifier("", 2), new TechModifier("a", 1)], tech.Modifiers!);
+    }
+
+    [Fact]
+    public void An_empty_tech_list_loads_as_none()
+    {
+        using var tmp = new TempDir();
+        var file = tmp.Write("addons.json", """{ "Technologies": { "Enabled": false, "Techs": [ null ] } }""");
+
+        var t = AddonSettingsStore.Load(file).Technologies!;
+
+        Assert.False(t.Enabled);
+        Assert.Null(t.Techs);
+    }
+
+    [Fact]
+    public void Techs_compare_by_value_including_their_lists()
+    {
+        var copy = WithTechs() with
+        {
+            Technologies = new TechnologiesSettings(Techs: WithTechs().Technologies!.Techs!.Select(t => t with
+            {
+                Ethics = t.Ethics?.ToList(), Prerequisites = t.Prerequisites?.ToArray(), Modifiers = t.Modifiers?.ToList(),
+            }).ToList()),
+        };
+        var tech = PatronageTech();
+
+        Assert.Equal(WithTechs(), copy);
+        Assert.Equal(WithTechs().GetHashCode(), copy.GetHashCode());
+        Assert.Equal(tech.GetHashCode(), (tech with { Ethics = ["ethic_authoritarian"] }).GetHashCode());
+        Assert.NotEqual(tech, tech with { Modifiers = [.. tech.Modifiers!.Reverse()] });
+        Assert.NotEqual(tech, tech with { Modifiers = [new TechModifier("divided_patrongage_max_subjects", 2), tech.Modifiers![1]] });
+        Assert.NotEqual(tech, tech with { Prerequisites = null });
+        Assert.NotEqual(tech, tech with { Cost = 1 });
+        Assert.Equal(tech with { Ethics = [] }, tech with { Ethics = null });
+        Assert.Equal(new TechnologiesSettings(Techs: []), new TechnologiesSettings());
+        Assert.NotEqual(WithTechs(), WithTechs() with { Technologies = WithTechs().Technologies! with { Enabled = false } });
+    }
+
+    [Fact]
+    public void Normalize_keeps_the_techs()
+    {
+        using var game = Game();
+
+        var n = WithTechs().Normalize(game.Catalog());
+
+        Assert.Equal(WithTechs(), n);
+        Assert.Equal(WithTechs().Technologies, (WithTechs() with { Marketplace = new MarketplaceSettings(MaxBaseAmounts: 200) }).Normalize(game.Catalog()).Technologies);
+    }
+
     static MarketFixture Game() => new MarketFixture()
         .Base("common/strategic_resources/00_strategic_resources.txt", """
             energy = { tradable = yes category = basic market_amount = 100 market_price = 100 max = 25000 }
