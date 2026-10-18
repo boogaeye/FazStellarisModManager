@@ -1,0 +1,634 @@
+@page "/addons"
+@implements IDisposable
+@using System.Globalization
+@inject AddonService Addons
+@inject ModManagerService Manager
+@inject EditedModList State
+@inject SessionService Session
+
+@{
+    var readOnly = ReadOnly;
+    var settings = readOnly ? HostSettings : Mine;
+    var market = settings.Marketplace;
+    var catalog = Addons.Catalog;
+    var rows = catalog is null ? [] : MarketplaceView.Rows(catalog, market);
+    var changed = catalog is null ? null : market?.Normalize(catalog);
+    var changeCount = (changed ?? market)?.ChangeCount ?? 0;
+    var marketOn = market?.Enabled ?? true;
+    var maxBase = catalog is null ? null : MarketplaceView.MaxBaseAmounts(catalog, market);
+    var hostName = Session.HostName ?? Session.HostAddress ?? "the host";
+}
+<div class="addons-page">
+    <div class="head">
+        <button class="sw @(settings.Enabled ? "on" : "") @(readOnly ? "ro" : "")" role="switch" aria-checked="@(settings.Enabled ? "true" : "false")"
+                aria-label="Addons" title="@(readOnly ? "The host's setting" : settings.Enabled ? "Turn addons off" : "Turn addons on")"
+                disabled="@readOnly" @onclick="ToggleAddons"></button>
+        <div class="head-main">
+            <div class="head-title">@(Title(readOnly, settings))</div>
+            <div class="muted small">
+                @if (catalog is null && Reading)
+                {
+                    @(Addons.Progress ?? "Reading resources…")
+                }
+                else
+                {
+                    <span>Built as <b>@AddonMod.Name</b> · loads after every mod@(preview is { } p ? $" · {p.Files.Count} files" : "")@(StatusTail(settings))</span>
+                }
+            </div>
+        </div>
+        @if (readOnly)
+        {
+            @switch (AddonMod.MatchesHost(Session.MyDiff))
+            {
+                case true:
+                    <span class="chip ok">✔ Matches the host</span>
+                    break;
+                case false:
+                    <span class="chip warn" title="Click Match host on the Session tab to rebuild Faz Addons from the host's settings">Needs Match host</span>
+                    break;
+            }
+        }
+        else if (upToDate is { } current)
+        {
+            <span class="chip @(current ? "ok" : "warn")" title="@(current ? "The game loads these addons as shown" : "Apply to load these addons in the game")">@(current ? "✔ Up to date" : "Needs Apply")</span>
+        }
+        <button @onclick="OpenPreview" disabled="@(catalog is null)" title="The files Apply writes to mod/faz_addons">Preview files</button>
+        @if (!readOnly)
+        {
+            <button class="primary" @onclick="Apply" disabled="@(busy || !State.Loaded)" title="Apply the Mods tab's list with these addons">Apply</button>
+        }
+    </div>
+
+    @if (readOnly)
+    {
+        <div class="banner">🔒 You're connected to <b>@hostName</b>. These are the host's addons: highlighted values are what they changed. Leave the session to edit your own.</div>
+    }
+    @if (status is not null)
+    {
+        <p class="status @(error ? "error" : "")">@status</p>
+    }
+    @if (catalog is not null && Reading)
+    {
+        <p class="status">@(Addons.Progress ?? "Reading resources…")</p>
+    }
+
+    @if (catalog is null)
+    {
+        <div class="card loading">
+            @if (Reading)
+            {
+                <span>@(Addons.Progress ?? "Reading resources…")</span>
+            }
+            else
+            {
+                <p>The game's resources couldn't be read.</p>
+                <button @onclick="BuildCatalogAsync">Try again</button>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="grid">
+            <div class="side">
+                <div class="muted small side-cap">Addons</div>
+                <div class="arow sel">
+                    <span class="aico">⚖</span>
+                    <div class="grow">
+                        Marketplace
+                        <div class="muted small">@(changeCount == 0 ? "No changes" : changeCount == 1 ? "1 change" : $"{changeCount} changes")</div>
+                    </div>
+                    <button class="sw sm @(marketOn ? "on" : "") @(readOnly ? "ro" : "")" role="switch" aria-checked="@(marketOn ? "true" : "false")"
+                            aria-label="Marketplace" disabled="@readOnly" @onclick="ToggleMarketplace"></button>
+                </div>
+                <div class="arow soon">
+                    <span class="aico">＋</span>
+                    <div class="small">More addons later</div>
+                </div>
+            </div>
+
+            <div class="main">
+                <div class="card">
+                    <h3>Market rules</h3>
+                    <div class="muted small">Game settings for the whole market</div>
+                    <div class="set">
+                        <div class="setc">
+                            <b>Max per trade</b>
+                            <div class="muted small">bundles per single trade (game: @(catalog.MaxBaseAmounts?.ToString(CultureInfo.InvariantCulture) ?? "?"))</div>
+                            <div class="setrow">
+                                <input type="range" min="@SliderMin" max="@SliderMax" step="50" value="@(Math.Clamp(maxBase ?? SliderMin, SliderMin, SliderMax))"
+                                       aria-label="Max per trade" disabled="@readOnly" @oninput="SetMaxBase" />
+                                <span><input @key="inputsVersion" class="num @(changed?.MaxBaseAmounts is not null ? "chg" : "")" type="number" min="1" value="@maxBase"
+                                             aria-label="Max per trade in bundles" disabled="@readOnly" @oninput="SetMaxBase" @onchange="Commit" /></span>
+                            </div>
+                            <div class="prev @(changed?.MaxBaseAmounts is not null ? "chgtxt" : "")">
+                                @if (maxBase is { } max)
+                                {
+                                    var trade = MarketplaceView.TradePreview(rows, max);
+                                    <span>@(max.ToString(CultureInfo.InvariantCulture)) bundles@(trade.Count > 0 ? " → " : "")</span>
+                                    @for (var i = 0; i < trade.Count; i++)
+                                    {
+                                        <span>@((i > 0 ? " · " : "") + trade[i].Label + " ")</span><b>@(trade[i].Amount.ToString("N0", CultureInfo.InvariantCulture))</b>
+                                    }
+                                }
+                                else
+                                {
+                                    <span>The game doesn't define it.</span>
+                                }
+                            </div>
+                        </div>
+                        <div class="setc">
+                            <b>Trade fee</b>
+                            <div class="muted small">game: base @(Pct(catalog.TradeFeeBase)) · minimum @(Pct(catalog.TradeFeeMin))</div>
+                            <div class="setrow">
+                                <label>Base <input @key="inputsVersion" class="num @(changed?.TradeFeeBase is not null ? "chg" : "")" type="number" min="0" max="100" step="any"
+                                                   value="@(MarketplaceView.Percent(market?.TradeFeeBase ?? catalog.TradeFeeBase))" disabled="@readOnly"
+                                                   @oninput="e => SetFee(e, minimum: false)" @onchange="Commit" /> %</label>
+                                <label>Minimum <input @key="inputsVersion" class="num @(changed?.TradeFeeMin is not null ? "chg" : "")" type="number" min="0" max="100" step="any"
+                                                      value="@(MarketplaceView.Percent(market?.TradeFeeMin ?? catalog.TradeFeeMin))" disabled="@readOnly"
+                                                      @oninput="e => SetFee(e, minimum: true)" @onchange="Commit" /> %</label>
+                            </div>
+                            @if (changed?.TradeFeeBase is not null || changed?.TradeFeeMin is not null)
+                            {
+                                <div class="prev chgtxt">base @(Pct(market?.TradeFeeBase ?? catalog.TradeFeeBase)) · minimum @(Pct(market?.TradeFeeMin ?? catalog.TradeFeeMin))</div>
+                            }
+                            else
+                            {
+                                <div class="prev">unchanged</div>
+                            }
+                        </div>
+                        <div class="setc">
+                            <b>Price swing</b>
+                            <div class="muted small">how far prices move (game: @(Signed(catalog.MinFluctuation)) … @(Signed(catalog.MaxFluctuation)))</div>
+                            <div class="setrow">
+                                <label>Min <input @key="inputsVersion" class="num @(changed?.MinFluctuation is not null ? "chg" : "")" type="number" min="-100" max="0"
+                                                  value="@(market?.MinFluctuation ?? catalog.MinFluctuation)" disabled="@readOnly"
+                                                  @oninput="e => SetSwing(e, minimum: true)" @onchange="Commit" /> %</label>
+                                <label>Max <input @key="inputsVersion" class="num @(changed?.MaxFluctuation is not null ? "chg" : "")" type="number" min="0"
+                                                  value="@(market?.MaxFluctuation ?? catalog.MaxFluctuation)" disabled="@readOnly"
+                                                  @oninput="e => SetSwing(e, minimum: false)" @onchange="Commit" /> %</label>
+                            </div>
+                            @if (changed?.MinFluctuation is not null || changed?.MaxFluctuation is not null)
+                            {
+                                <div class="prev chgtxt">@(Signed(market?.MinFluctuation ?? catalog.MinFluctuation)) … @(Signed(market?.MaxFluctuation ?? catalog.MaxFluctuation))</div>
+                            }
+                            else
+                            {
+                                <div class="prev">unchanged</div>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Resources</h3>
+                    <div class="filters">
+                        @foreach (var (chip, label) in Chips)
+                        {
+                            <button class="chip @(filter == chip ? "on" : "")" @onclick="() => filter = chip">@label @(MarketplaceView.Count(rows, chip, showHidden))</button>
+                        }
+                        <button class="chip @(showHidden ? "on" : "")" @onclick="() => showHidden = !showHidden"
+                                title="Internal resources the game never shows">Show hidden (@(rows.Count(r => r.Resource.Hidden)))</button>
+                        <span class="spacer"></span>
+                        <input class="in search" placeholder="Search resources…" @bind="search" @bind:event="oninput" />
+                    </div>
+                    <div class="table-wrap">
+                        <table class="res">
+                            <thead>
+                                <tr>
+                                    <th>Resource</th>
+                                    <th>From</th>
+                                    <th title="Can be bought and sold on the market">Market</th>
+                                    <th title="tradable: can be offered in trade deals with other empires">Trade deals</th>
+                                    <th title="NAI.AI_ALLOWED_TO_BUY / _SELL: AI empires may trade it">AI trades</th>
+                                    <th class="r">Bundle</th>
+                                    <th class="r">Base price</th>
+                                    <th class="r">Max per trade</th>
+                                    <th class="r" title="The resource's base storage (max). Buildings, techs and other modifiers still add on top.">Base storage</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @{ var groups = MarketplaceView.Group(rows, filter, showHidden, search); }
+                                @foreach (var g in groups)
+                                {
+                                    <tr class="cat"><td colspan="10">@g.Name</td></tr>
+                                    @foreach (var row in g.Rows)
+                                    {
+                                        var r = row.Resource;
+                                        <tr class="@(row.OnMarket ? "" : "off")">
+                                            <td class="resname">
+                                                @if (r.IconUri is { } icon)
+                                                {
+                                                    <img class="ri" src="@icon" alt="" />
+                                                }
+                                                else
+                                                {
+                                                    <span class="ri ph">?</span>
+                                                }
+                                                <span class="rn">@r.Name</span> <span class="key">@r.Key</span>
+                                                @if (row.Added)
+                                                {
+                                                    <span class="tag t-new">added</span>
+                                                }
+                                                @if (r.Gated)
+                                                {
+                                                    <span class="tag t-gate" title="Has a tradable_in_market rule: some empires (e.g. gestalts) can't trade it">rule</span>
+                                                }
+                                                @if (r.Hidden)
+                                                {
+                                                    <span class="tag t-hid" title="Internal resource (visibility_prerequisite always = no). Not recommended for the market or AI trading.">hidden</span>
+                                                }
+                                            </td>
+                                            <td class="from" title="@(string.Join(", ", r.Files))">@r.SourceName</td>
+                                            <td>
+                                                <button class="sw sm @(row.OnMarket ? "on" : "") @(row.MarketChanged ? "chg" : "") @(readOnly ? "ro" : "")" role="switch"
+                                                        aria-checked="@(row.OnMarket ? "true" : "false")" aria-label="@($"{r.Name} on the market")"
+                                                        disabled="@readOnly" @onclick="() => ToggleMarket(row)"></button>
+                                            </td>
+                                            <td>
+                                                <button class="sw sm @(row.Tradable ? "on" : "") @(row.TradableChanged ? "chg" : "") @(readOnly ? "ro" : "")" role="switch"
+                                                        aria-checked="@(row.Tradable ? "true" : "false")" aria-label="@($"{r.Name} in trade deals")"
+                                                        disabled="@readOnly" @onclick="() => ToggleTradable(row)"></button>
+                                            </td>
+                                            <td>
+                                                <button class="sw sm @(row.AiTrades ? "on" : "") @(row.AiTradesChanged ? "chg" : "") @(readOnly ? "ro" : "")" role="switch"
+                                                        aria-checked="@(row.AiTrades ? "true" : "false")" aria-label="@($"AI trades {r.Name}")"
+                                                        disabled="@readOnly" @onclick="() => ToggleAiTrades(row)"></button>
+                                            </td>
+                                            <td class="r">
+                                                <input @key="inputsVersion" class="num @(row.BundleChanged ? "chg" : "")" type="number" min="1" value="@row.Bundle" placeholder="—"
+                                                       aria-label="@($"{r.Name} bundle")" disabled="@(readOnly || !row.OnMarket)"
+                                                       @oninput="e => SetBundle(row, e)" @onchange="Commit" />
+                                            </td>
+                                            <td class="r">
+                                                <input @key="inputsVersion" class="num @(row.PriceChanged ? "chg" : "")" type="number" min="1" value="@row.Price" placeholder="—"
+                                                       aria-label="@($"{r.Name} base price")" disabled="@(readOnly || !row.OnMarket)"
+                                                       @oninput="e => SetPrice(row, e)" @onchange="Commit" />
+                                            </td>
+                                            <td class="r cap">
+                                                @if (row.MaxPerTrade(maxBase) is { } cap)
+                                                {
+                                                    <b>@(cap.ToString("N0", CultureInfo.InvariantCulture))</b>
+                                                }
+                                                else
+                                                {
+                                                    <span class="muted">—</span>
+                                                }
+                                            </td>
+                                            <td class="r">
+                                                @if (r.Max is null)
+                                                {
+                                                    <span class="muted" title="This resource has no base storage (max)">—</span>
+                                                }
+                                                else
+                                                {
+                                                    <input @key="inputsVersion" class="num wide @(row.BaseStorageChanged ? "chg" : "")" type="number" min="0" value="@row.BaseStorage"
+                                                           aria-label="@($"{r.Name} base storage")" disabled="@(readOnly || r.FixedMax)"
+                                                           title="@(r.FixedMax ? "fixed_max_amount = yes: this storage can't be changed" : null)"
+                                                           @oninput="e => SetStorage(row, e)" @onchange="Commit" />
+                                                }
+                                            </td>
+                                            <td class="r">
+                                                @if (!readOnly && row.HasOverride)
+                                                {
+                                                    <button class="reset" title="Back to the game's values" @onclick="() => Reset(row)">↺</button>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                                @if (groups.Count == 0)
+                                {
+                                    <tr><td colspan="10" class="muted">No resources match.</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="note">
+                        Base storage is the resource's starting capacity; silos, techs and other modifiers still add on top (it is not fixed at that value).
+                        Switching a resource onto the market suggests a bundle by category (basic 100, advanced 25, strategic 10, rare 5) and price @(MarketCatalog.SuggestedPrice).
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@if (previewing && preview is { } files)
+{
+    <AddonFilesDialog Output="files" OnClose="() => previewing = false" />
+}
+
+@code {
+    const int SliderMin = 50;
+    const int SliderMax = 5000;
+    static readonly AddonSettings Off = new();
+    static readonly (ResourceFilter Filter, string Label)[] Chips =
+        [(ResourceFilter.All, "All"), (ResourceFilter.OnMarket, "On market"), (ResourceFilter.OffMarket, "Off market"), (ResourceFilter.Changed, "Changed")];
+
+    string? status;
+    bool error;
+    bool busy;
+    bool confirmEmpty;
+    bool disposed;
+    bool loading; // the list or the catalog is being read for this page
+    bool previewing;
+
+    ResourceFilter filter = ResourceFilter.All;
+    bool showHidden;
+    string search = "";
+
+    // Edits not saved yet: number inputs save 300 ms after the last keystroke, switches at once.
+    AddonSettings? pending;
+    CancellationTokenSource? saveDelay;
+    // A number input held text that isn't a valid value: when it's left, the inputs are recreated with the values in force.
+    bool staleInput;
+    int inputsVersion;
+
+    // The build of the shown settings (null before the catalog), whether the game loads it (null when unknown or a player), and what they were made from.
+    AddonOutput? preview;
+    bool? upToDate;
+    (AddonSettings Settings, MarketCatalog? Catalog)? computedFor;
+
+    bool ReadOnly => Session.Role == SessionRole.Client;
+
+    bool Reading => loading || Addons.IsBuilding;
+
+    // This PC's settings with the unsaved edits.
+    AddonSettings Mine => pending ?? Addons.Settings;
+
+    // What a player is shown: the host's settings (none while the host has addons off).
+    AddonSettings HostSettings => Session.HostAddons ?? Off;
+
+    static string Title(bool readOnly, AddonSettings settings) => readOnly
+        ? settings.Enabled ? "The host's addons are on" : "The host has addons off"
+        : settings.Enabled ? "Addons are on" : "Addons are off";
+
+    string StatusTail(AddonSettings settings) =>
+        !settings.Enabled ? " · off, so Apply doesn't load it"
+        : preview is { HasChanges: false } ? " · no changes yet, so Apply doesn't load it"
+        : " · rebuilt on Apply and when you join a host";
+
+    static string Pct(double? fraction) => fraction is null ? "?" : MarketplaceView.Percent(fraction) + "%";
+
+    static string Signed(int? value) => value switch
+    {
+        null => "?",
+        < 0 => "−" + (-value.Value).ToString(CultureInfo.InvariantCulture) + "%",
+        > 0 => "+" + value.Value.ToString(CultureInfo.InvariantCulture) + "%",
+        _ => "0%",
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Addons.Changed += OnAddonsChanged;
+        Session.Changed += OnSessionChanged;
+        Recompute();
+        await BuildCatalogAsync();
+    }
+
+    // The catalog of the Mods tab's list (cached by the service while the list is the same).
+    async Task BuildCatalogAsync()
+    {
+        if (error) (status, error) = (null, false);
+        loading = true;
+        try
+        {
+            if (!State.Loaded)
+            {
+                if (Manager.Library.Count == 0) await Manager.RefreshLibraryAsync();
+                State.Set(Manager.ImportCurrent("Current"));
+            }
+            await Addons.BuildCatalogAsync(State.ToModList());
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException
+                                   or System.Text.Json.JsonException or InvalidDataException)
+        {
+            (status, error) = (ex.Message, true);
+        }
+        finally
+        {
+            loading = false;
+        }
+        if (!disposed) Recompute();
+    }
+
+    void OnAddonsChanged() => _ = InvokeAsync(() =>
+    {
+        if (disposed) return;
+        Recompute();
+        StateHasChanged();
+    });
+
+    void OnSessionChanged() => _ = InvokeAsync(() =>
+    {
+        if (disposed) return;
+        if (ReadOnly) Flush(); // edits typed just before joining are this PC's own
+        Recompute();
+        StateHasChanged();
+    });
+
+    // The preview and the chip, when the settings shown or the catalog changed (or after Apply).
+    void Recompute(bool force = false)
+    {
+        var settings = ReadOnly ? HostSettings : Addons.Settings;
+        var catalog = Addons.Catalog;
+        if (!force && computedFor is { } last && ReferenceEquals(last.Settings, settings) && ReferenceEquals(last.Catalog, catalog)) return;
+        computedFor = (settings, catalog);
+        upToDate = null;
+        try
+        {
+            preview = Addons.Preview(settings);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            preview = null;
+            (status, error) = ("Faz Addons can't be built: " + ex.Message, true);
+            return;
+        }
+        if (preview is null || ReadOnly) return;
+        try
+        {
+            var userDir = Manager.Resolve().UserDir;
+            upToDate = AddonMod.IsApplied(userDir, preview, DlcLoadFile.Read(userDir).EnabledMods);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or InvalidOperationException) { }
+    }
+
+    void Edit(Func<AddonSettings, AddonSettings> edit, bool now)
+    {
+        if (ReadOnly) return;
+        pending = edit(Mine);
+        saveDelay?.Cancel();
+        saveDelay?.Dispose();
+        saveDelay = null;
+        if (now)
+        {
+            Flush();
+            return;
+        }
+        var run = saveDelay = new CancellationTokenSource();
+        _ = SaveLaterAsync(run.Token);
+    }
+
+    async Task SaveLaterAsync(CancellationToken ct)
+    {
+        try { await Task.Delay(300, ct); }
+        catch (OperationCanceledException) { return; }
+        await InvokeAsync(() =>
+        {
+            if (ct.IsCancellationRequested || disposed) return;
+            Flush();
+            StateHasChanged();
+        });
+    }
+
+    // Saves the unsaved edits now (the service drops values equal to the game's).
+    void Flush()
+    {
+        saveDelay?.Cancel();
+        saveDelay?.Dispose();
+        saveDelay = null;
+        if (pending is not { } settings) return;
+        pending = null;
+        try
+        {
+            Addons.Save(settings);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            (status, error) = ("The addon settings couldn't be saved: " + ex.Message, true);
+        }
+    }
+
+    // A number input was left or Enter was pressed: if its text was rejected, show the value in force again.
+    void Commit()
+    {
+        if (!staleInput) return;
+        staleInput = false;
+        inputsVersion++;
+    }
+
+    static int? Int(ChangeEventArgs e) =>
+        int.TryParse(e.Value?.ToString()?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
+
+    void ToggleAddons() => Edit(s => s with { Enabled = !s.Enabled }, now: true);
+
+    void ToggleMarketplace() => Edit(s => MarketplaceView.EditMarket(s, m => m with { Enabled = !m.Enabled }), now: true);
+
+    void SetMaxBase(ChangeEventArgs e)
+    {
+        if (Int(e) is not (> 0 and var max)) { staleInput = true; return; }
+        Edit(s => MarketplaceView.EditMarket(s, m => m with { MaxBaseAmounts = max }), now: false);
+    }
+
+    void SetFee(ChangeEventArgs e, bool minimum)
+    {
+        if (MarketplaceView.FractionFromPercent(e.Value?.ToString()) is not { } fee) { staleInput = true; return; }
+        Edit(s => MarketplaceView.EditMarket(s, m => minimum ? m with { TradeFeeMin = fee } : m with { TradeFeeBase = fee }), now: false);
+    }
+
+    void SetSwing(ChangeEventArgs e, bool minimum)
+    {
+        var value = Int(e);
+        if (value is null || (minimum ? value is < -100 or > 0 : value < 0)) { staleInput = true; return; }
+        Edit(s => MarketplaceView.EditMarket(s, m => minimum ? m with { MinFluctuation = value } : m with { MaxFluctuation = value }), now: false);
+    }
+
+    void ToggleMarket(ResourceRow row) => Edit(s => MarketplaceView.EditResource(s, row.Key, o => o with { OnMarket = !row.OnMarket }), now: true);
+
+    void ToggleTradable(ResourceRow row) => Edit(s => MarketplaceView.EditResource(s, row.Key, o => o with { Tradable = !row.Tradable }), now: true);
+
+    void ToggleAiTrades(ResourceRow row) => Edit(s => MarketplaceView.EditResource(s, row.Key, o => o with { AiTrades = !row.AiTrades }), now: true);
+
+    void SetBundle(ResourceRow row, ChangeEventArgs e)
+    {
+        if (Int(e) is not (> 0 and var bundle)) { staleInput = true; return; }
+        Edit(s => MarketplaceView.EditResource(s, row.Key, o => o with { MarketAmount = bundle }), now: false);
+    }
+
+    void SetPrice(ResourceRow row, ChangeEventArgs e)
+    {
+        if (Int(e) is not (> 0 and var price)) { staleInput = true; return; }
+        Edit(s => MarketplaceView.EditResource(s, row.Key, o => o with { MarketPrice = price }), now: false);
+    }
+
+    void SetStorage(ResourceRow row, ChangeEventArgs e)
+    {
+        if (Int(e) is not (>= 0 and var storage)) { staleInput = true; return; }
+        Edit(s => MarketplaceView.EditResource(s, row.Key, o => o with { BaseStorage = storage }), now: false);
+    }
+
+    void Reset(ResourceRow row)
+    {
+        Edit(s => MarketplaceView.ResetResource(s, row.Key), now: true);
+        inputsVersion++;
+    }
+
+    void OpenPreview()
+    {
+        Flush();
+        Recompute();
+        previewing = preview is not null;
+    }
+
+    // As Apply on the Mods tab, with the list edited there; in a session, the host then rescans so players get the new settings.
+    async Task Apply()
+    {
+        if (busy || ReadOnly) return;
+        Flush();
+        var list = State.ToModList();
+        if (list.Mods.Count == 0 && !confirmEmpty)
+        {
+            confirmEmpty = true;
+            (status, error) = ("Click Apply again to write an empty mod list.", false);
+            return;
+        }
+        confirmEmpty = false;
+        busy = true;
+        try
+        {
+            try
+            {
+                var result = Manager.Apply(list);
+                var message = $"Applied {list.Mods.Count} mods" + (result.AddonsApplied ? " with Faz Addons" : "") + " to dlc_load.json"
+                    + (result.BackupPath is null ? "." : $" (backup: {Path.GetFileName(result.BackupPath)}).")
+                    + (result.LauncherPlaysetSet ? " Set as the active Paradox launcher playset." : "");
+                (status, error) = result.Warning is { } warning ? (message + " " + warning, true) : (message, false);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException
+                                       or System.Text.Json.JsonException or System.ComponentModel.Win32Exception or InvalidDataException)
+            {
+                (status, error) = (ex.Message, true);
+                return;
+            }
+            Recompute(force: true);
+            if (Session.Role == SessionRole.None || Session.IsBusy) return;
+
+            var (shown, wasError) = (status, error);
+            status = shown + " Rescanning for the session…";
+            StateHasChanged();
+            try
+            {
+                await Session.RescanAsync();
+                (status, error) = (shown, wasError);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                (status, error) = ($"{shown} Rescanning for the session failed: {ex.Message}", true);
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        Addons.Changed -= OnAddonsChanged;
+        Session.Changed -= OnSessionChanged;
+        Flush();
+    }
+}

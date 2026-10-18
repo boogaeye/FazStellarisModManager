@@ -6,6 +6,7 @@
 @inject ModFileCache FileCache
 @inject EditedModList State
 @inject SessionService Session
+@inject AddonService Addons
 
 @{
     var workshopIds = WorkshopIdsInList();
@@ -122,6 +123,13 @@
                     <p class="muted">Usually means this mod has little effect here. Move it below those mods, or remove it.</p>
                 </li>
             }
+        }
+        @* Faz Addons isn't a mod of the list: Apply appends it after every mod while the addon settings change the game. *@
+        @if (Manager.EffectiveAddons() is { Enabled: true, Marketplace: { Enabled: true, ChangeCount: > 0 } })
+        {
+            <li class="addonrow" title="Generated from the Addons tab. Apply loads it after every mod.">
+                <span>🔒</span><b>@AddonMod.Name</b><span class="muted small">· generated · Marketplace</span><span class="spacer"></span><span class="lock">always last</span>
+            </li>
         }
     </ol>
 </div>
@@ -246,6 +254,7 @@
             await Manager.RefreshLibraryAsync();
             Icons.Refresh();
             FileCache.Clear();
+            Addons.InvalidateCatalog();
             LibraryChanged();
             return $"Found {Manager.Library.Count} installed mods." + ErrorSuffix();
         });
@@ -389,6 +398,7 @@
             await Manager.RefreshLibraryAsync();
             Icons.Refresh();
             FileCache.Clear();
+            Addons.InvalidateCatalog();
             LibraryChanged();
             return summary + ErrorSuffix();
         });
@@ -520,9 +530,10 @@
         }
         confirmEmpty = false;
         var result = Manager.Apply(Build());
-        var message = $"Applied {current.Count} mods to dlc_load.json" + (result.BackupPath is null ? "." : $" (backup: {Path.GetFileName(result.BackupPath)}).")
+        var message = $"Applied {current.Count} mods" + (result.AddonsApplied ? " with Faz Addons" : "") + " to dlc_load.json"
+            + (result.BackupPath is null ? "." : $" (backup: {Path.GetFileName(result.BackupPath)}).")
             + (result.LauncherPlaysetSet ? " Set as the active Paradox launcher playset." : "");
-        if (result.LauncherWarning is { } warning)
+        if (result.Warning is { } warning)
         {
             (status, error) = (message + " " + warning, true);
             return null;
@@ -554,12 +565,13 @@
             (status, error) = ($"Applied, but launch failed: {ex.Message}", true);
             return null;
         }
-        if (result.LauncherWarning is { } warning)
+        var applied = result.AddonsApplied ? "Applied with Faz Addons and launched Stellaris." : "Applied and launched Stellaris.";
+        if (result.Warning is { } warning)
         {
-            (status, error) = ("Applied and launched Stellaris." + steamWarning + " " + warning, true);
+            (status, error) = (applied + steamWarning + " " + warning, true);
             return null;
         }
-        return "Applied and launched Stellaris." + steamWarning;
+        return applied + steamWarning;
     }
 
     async Task RunAsync(Func<Task<string?>> action)

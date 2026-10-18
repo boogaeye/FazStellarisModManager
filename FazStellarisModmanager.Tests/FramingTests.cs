@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text;
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Lists;
 using FazStellarisModmanager.Core.Session;
 using FazStellarisModmanager.Core.Snapshots;
@@ -62,12 +63,29 @@ public class FramingTests
             new ModSnapshot("base", "Stellaris", "", null, null, null, "", 0, files), [], [], ["w"]);
         var list = new ModList("L", [new ModListEntry("ugc:1", "A", "mod/ugc_1.mod", "1")], []);
 
-        var back = (Welcome)(await RoundTrip(new Welcome("id", list, snap)))!;
+        var back = (Welcome)(await RoundTrip(new Welcome("id", list, snap, null)))!;
 
         Assert.Equal(50_000, back.HostSnapshot.Base.Files.Count);
         Assert.Equal(files[123], back.HostSnapshot.Base.Files[123]);
         Assert.Equal("ugc:1", back.HostList.Mods.Single().Key);
         Assert.Equal(new[] { "w" }, back.HostSnapshot.Warnings);
+        Assert.Null(back.Addons);
+    }
+
+    [Fact]
+    public async Task Round_trips_the_hosts_addon_settings()
+    {
+        var snap = new MachineSnapshot("PC", "v4.4", "C:/game", DateTime.UtcNow, new ModSnapshot("base", "Stellaris", "", null, null, null, "", 0, []), [], []);
+        var list = new ModList("L", [], []);
+        var addons = new AddonSettings(true, new MarketplaceSettings(MaxBaseAmounts: 1000, TradeFeeBase: 0.25, MinFluctuation: -50,
+            Resources: new Dictionary<string, ResourceOverride> { ["nanites"] = new(OnMarket: true, MarketPrice: 40, AiTrades: true), ["energy"] = new(BaseStorage: 30000) }));
+
+        var welcome = (Welcome)(await RoundTrip(new Welcome("id", list, snap, addons)))!;
+        var target = (HostTargetUpdate)(await RoundTrip(new HostTargetUpdate(list, snap, addons)))!;
+
+        Assert.Equal(addons, welcome.Addons);
+        Assert.Equal(addons, target.Addons);
+        Assert.Null(((HostTargetUpdate)(await RoundTrip(new HostTargetUpdate(list, snap, null)))!).Addons);
     }
 
     [Fact]

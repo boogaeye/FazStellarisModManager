@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Snapshots;
 
 namespace FazStellarisModmanager.Core.Session;
@@ -24,12 +25,15 @@ public sealed class SessionClient : IAsyncDisposable
         _tcp = tcp;
         _stream = tcp.GetStream();
         PlayerId = welcome.PlayerId;
-        Target = new HostTargetUpdate(welcome.HostList, welcome.HostSnapshot);
+        Target = Cleaned(new HostTargetUpdate(welcome.HostList, welcome.HostSnapshot, welcome.Addons));
     }
 
     public string PlayerId { get; }
 
-    /// <summary>The host's current list and snapshot (replaced as a whole on every update).</summary>
+    /// <summary>
+    /// The host's current list, snapshot and addon settings (replaced as a whole on every update). Addons is null when the host has
+    /// addons off.
+    /// </summary>
     public HostTargetUpdate Target { get; private set; }
 
     public IReadOnlyList<PlayerInfo> Roster { get; private set; } = [];
@@ -143,7 +147,7 @@ public sealed class SessionClient : IAsyncDisposable
                         Roster = r.Players;
                         break;
                     case HostTargetUpdate t:
-                        Target = t;
+                        Target = Cleaned(t);
                         break;
                     case LiveUpdate l:
                         Live = l;
@@ -181,6 +185,9 @@ public sealed class SessionClient : IAsyncDisposable
             catch (Exception) { }
         }
     }
+
+    // The host is untrusted: its addon settings get the cleaning a hand-edited addons.json gets (no null or blank resource entries).
+    static HostTargetUpdate Cleaned(HostTargetUpdate t) => t.Addons is { } addons ? t with { Addons = AddonSettingsStore.Clean(addons) } : t;
 
     public async ValueTask DisposeAsync()
     {

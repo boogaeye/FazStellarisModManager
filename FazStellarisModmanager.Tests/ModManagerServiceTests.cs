@@ -1,4 +1,5 @@
 using FazStellarisModmanager.Core;
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Game;
 using FazStellarisModmanager.Core.Library;
 using FazStellarisModmanager.Core.Lists;
@@ -240,6 +241,158 @@ public class ModManagerServiceTests
 
         Assert.Contains("Paradox launcher", ex.Message);
         Assert.Equal(before, File.ReadAllBytes(copy));
+    }
+
+    // Faz Addons: nanites (rare, off the market in the base game) goes on the market.
+    static AddonSettings NanitesOnMarket(bool enabled = true) => new(enabled, new MarketplaceSettings(
+        Resources: new Dictionary<string, ResourceOverride> { ["nanites"] = new(OnMarket: true) }));
+
+    static ModManagerService WithAddons(FakeInstall fake, AddonSettings? settings)
+    {
+        fake.AddMarket();
+        var svc = Create(fake);
+        svc.EffectiveAddons = () => settings;
+        svc.RefreshLibrary();
+        return svc;
+    }
+
+    static string AddonFile(FakeInstall fake, string rel) => Path.Combine(fake.UserDir, "mod", "faz_addons", rel);
+
+    [Fact]
+    public void Apply_with_addons_on_builds_Faz_Addons_and_loads_it_last()
+    {
+        using var fake = new FakeInstall();
+        var svc = WithAddons(fake, NanitesOnMarket());
+        var db = Path.Combine(fake.UserDir, LauncherPlaysetFile.FileName);
+        LauncherDb.Create(db);
+        LauncherDb.AddMod(db, "m1", "mod/local.mod");
+        var list = new ModList("L", [new("ugc:111", "Workshop One", "mod/ugc_111.mod", "111"), new("local:local.mod", "Local Mod", "mod/local.mod", null)], []);
+
+        var result = svc.Apply(list);
+
+        Assert.True(result.AddonsApplied);
+        Assert.Null(result.AddonWarning);
+        Assert.Null(result.LauncherWarning);
+        Assert.Equal(new[] { "mod/ugc_111.mod", "mod/local.mod", "mod/faz_addons.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
+        Assert.Equal(new object?[] { "mod/ugc_111.mod", "mod/local.mod", "mod/faz_addons.mod" },
+            LauncherDb.Query(db, "select m.gameRegistryId from playsets_mods p join mods m on m.id = p.modId order by p.position").Select(r => r[0]));
+        var resources = File.ReadAllText(AddonFile(fake, FakeInstall.MarketFile));
+        Assert.Contains("nanites = {" + (char)10 + (char)9 + "market_amount = 5" + (char)10 + (char)9 + "market_price = 100", resources);
+        var descriptor = File.ReadAllText(Path.Combine(fake.UserDir, "mod", "faz_addons.mod"));
+        Assert.Contains("name=" + (char)34 + "Faz Addons" + (char)34, descriptor);
+        Assert.Contains("supported_version=" + (char)34 + "v4.5.*" + (char)34, descriptor);
+        Assert.Contains("path=" + (char)34 + "mod/faz_addons" + (char)34, descriptor);
+    }
+
+    [Fact]
+    public void Apply_builds_Faz_Addons_from_the_lists_mods()
+    {
+        using var fake = new FakeInstall();
+        var svc = WithAddons(fake, NanitesOnMarket());
+        // The local mod ships its own copy of the file, which replaces the base game's.
+        fake.Write("user/mod/local/" + FakeInstall.MarketFile, "nanites = { category = rare market_price = 40 }" + (char)10 + "local_res = { category = basic }" + (char)10);
+
+        svc.Apply(LocalList());
+
+        Assert.Equal("nanites = { market_amount = 5 category = rare market_price = 40 }" + (char)10 + "local_res = { category = basic }" + (char)10,
+            File.ReadAllText(AddonFile(fake, FakeInstall.MarketFile)).Replace((char)10 + "" + (char)9, " "));
+    }
+
+    [Fact]
+    public void Apply_without_effective_addon_settings_does_not_load_Faz_Addons()
+    {
+        using var fake = new FakeInstall();
+        var svc = WithAddons(fake, null);
+
+        var result = svc.Apply(LocalList());
+
+        Assert.False(result.AddonsApplied);
+        Assert.Null(result.AddonWarning);
+        Assert.Equal(new[] { "mod/local.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
+        Assert.False(Directory.Exists(Path.Combine(fake.UserDir, "mod", "faz_addons")));
+    }
+
+    [Fact]
+    public void Apply_with_addons_off_or_unchanged_does_not_load_Faz_Addons()
+    {
+        foreach (var settings in new[]
+        {
+            NanitesOnMarket(enabled: false),
+            new AddonSettings(Enabled: true),
+            new AddonSettings(Enabled: true, new MarketplaceSettings(Enabled: false, MaxBaseAmounts: 1000)),
+            // Equal to the game's values: nothing changes.
+            new AddonSettings(Enabled: true, new MarketplaceSettings(Resources: new Dictionary<string, ResourceOverride> { ["energy"] = new(OnMarket: true, MarketAmount: 100) })),
+        })
+        {
+            using var fake = new FakeInstall();
+            var svc = WithAddons(fake, settings);
+
+            var result = svc.Apply(LocalList());
+
+            Assert.False(result.AddonsApplied);
+            Assert.Null(result.AddonWarning);
+            Assert.Equal(new[] { "mod/local.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
+        }
+    }
+
+    [Fact]
+    public void Apply_never_loads_Faz_Addons_from_the_list_itself()
+    {
+        using var fake = new FakeInstall();
+        var svc = WithAddons(fake, null);
+        var list = new ModList("L", [new("local:faz_addons.mod", "Faz Addons", "mod/faz_addons.mod", null), new("local:local.mod", "Local Mod", "mod/local.mod", null),
+            new("local:faz_addons.mod", "Faz Addons", "mod" + (char)92 + "FAZ_ADDONS.mod", null)], []);
+
+        svc.Apply(list);
+
+        Assert.Equal(new[] { "mod/local.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
+    }
+
+    [Fact]
+    public void Apply_without_a_game_folder_warns_and_applies_the_list_without_Faz_Addons()
+    {
+        using var fake = new FakeInstall();
+        fake.AddMarket();
+        var paths = new AppPaths(fake.DataDir);
+        SettingsStore.Save(paths.Settings, new AppSettings(UserDir: fake.UserDir));
+        var svc = new ModManagerService(paths, _ => null) { IsLauncherRunning = () => false, EffectiveAddons = () => NanitesOnMarket() };
+
+        var result = svc.Apply(LocalList());
+
+        Assert.False(result.AddonsApplied);
+        Assert.Contains("Faz Addons", result.AddonWarning);
+        Assert.Contains("Settings", result.AddonWarning);
+        Assert.Equal(new[] { "mod/local.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
+    }
+
+    [Fact]
+    public void Apply_warns_and_skips_Faz_Addons_when_its_files_cannot_be_written()
+    {
+        using var fake = new FakeInstall();
+        var svc = WithAddons(fake, NanitesOnMarket());
+        var locked = fake.Write("user/mod/faz_addons/README.txt", "old");
+        using var hold = new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var result = svc.Apply(LocalList());
+
+        Assert.False(result.AddonsApplied);
+        Assert.Contains("Faz Addons", result.AddonWarning);
+        Assert.Equal(new[] { "mod/local.mod" }, DlcLoadFile.Read(fake.UserDir).EnabledMods);
+    }
+
+    [Fact]
+    public void The_library_and_ImportCurrent_leave_out_Faz_Addons()
+    {
+        using var fake = new FakeInstall();
+        var svc = WithAddons(fake, NanitesOnMarket());
+        svc.Apply(LocalList());
+
+        var lib = svc.RefreshLibrary();
+        var imported = svc.ImportCurrent("Current");
+
+        Assert.True(File.Exists(Path.Combine(fake.UserDir, "mod", "faz_addons.mod")));
+        Assert.Equal(new[] { "local:local.mod", "ugc:111" }, lib.Select(m => m.Key));
+        Assert.Equal(new[] { "mod/local.mod" }, imported.Mods.Select(m => m.DescriptorRel));
     }
 
     [Fact]

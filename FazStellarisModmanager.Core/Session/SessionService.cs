@@ -1,3 +1,4 @@
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Hashing;
 using FazStellarisModmanager.Core.Lists;
@@ -16,8 +17,10 @@ public enum SessionRole { None, Host, Client }
 /// <param name="live">The shared full save reader (also the pages' local live data); leased while hosting streams the live game.</param>
 /// <param name="readTechs">Reads a save for technology-only streaming; defaults to <see cref="SaveReader.ReadTechs"/>.</param>
 /// <param name="saveGamesDir">Where technology-only streaming looks for saves; defaults to <see cref="ModManagerService.SaveGamesDir"/>.</param>
+/// <param name="hostAddons">This PC's addon settings, which hosting sends to the players (only while they are enabled); none when null.</param>
 public sealed class SessionService(ModManagerService manager, IWorkshopService? workshop = null, LiveGameService? live = null,
-    Func<string, GameSnapshot>? readTechs = null, Func<string?>? saveGamesDir = null) : IAsyncDisposable, IHostLiveSource
+    Func<string, GameSnapshot>? readTechs = null, Func<string?>? saveGamesDir = null, Func<AddonSettings?>? hostAddons = null)
+    : IAsyncDisposable, IHostLiveSource
 {
     readonly IWorkshopService? _workshop = workshop;
     readonly Func<string, GameSnapshot> _readTechs = readTechs ?? SaveReader.ReadTechs;
@@ -78,8 +81,14 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
     /// <summary>The dlc_load.json backup written by the last Match host (null if none was needed or written).</summary>
     public string? LastBackupPath => _lastBackupPath;
 
-    /// <summary>A Paradox launcher playset problem from the last Match host (null if none).</summary>
+    /// <summary>A Paradox launcher playset (or Faz Addons) problem from the last Match host (null if none).</summary>
     public string? LastLauncherWarning => _lastLauncherWarning;
+
+    /// <summary>
+    /// Client only: the host's addon settings from its current target, which Apply builds Faz Addons from while connected (null when the host
+    /// has addons off, or not a client).
+    /// </summary>
+    public AddonSettings? HostAddons => _client?.Target.Addons;
 
     /// <summary>How many duplicate-named mods the last Match host renamed so Stellaris loads them (0 if none).</summary>
     public int LastDupeRenames => _lastDupeRenames;
@@ -112,7 +121,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         await manager.RefreshLibraryAsync();
         var list = manager.ImportCurrent("Host list");
         var snapshot = await ScanAsync(ct);
-        var host = new SessionHost(PlayerName, list, snapshot, StreamModes.For(manager.Settings));
+        var host = new SessionHost(PlayerName, list, snapshot, StreamModes.For(manager.Settings), AddonsToSend());
         host.RosterChanged += RaiseChanged;
         host.LiveSent += RaiseChanged;
         try { host.Start(port); }
@@ -198,7 +207,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         }
     }, ct);
 
-    /// <summary>Rescans this machine. As host, pushes the new list to everyone; as client, sends the new snapshot.</summary>
+    /// <summary>Rescans this machine. As host, pushes the new list and the current addon settings to everyone; as client, sends the new snapshot.</summary>
     public Task RescanAsync(CancellationToken ct = default) => Exclusive(async ct =>
     {
         _lastPlan = null;
@@ -212,7 +221,7 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             hostList = manager.ImportCurrent("Host list");
         }
         var snapshot = await ScanAsync(ct);
-        if (_host is { } host && hostList is not null) await host.UpdateHostAsync(hostList, snapshot);
+        if (_host is { } host && hostList is not null) await host.UpdateHostAsync(hostList, snapshot, AddonsToSend());
         else if (_client is { } client)
         {
             RecomputeDiff();
@@ -242,10 +251,11 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
             if (!client.IsConnected || !ReferenceEquals(_client, client)) throw new InvalidOperationException("The host has disconnected.");
             // Stellaris skips every mod whose name another mod/*.mod shares: rename the unused copies first (this rescans the library).
             var dupes = manager.ResolveDupesWithDefaults(plan.ToApply);
+            // Faz Addons is not in the plan: Apply builds it from the effective settings, which are the host's (HostAddons) for a player.
             var result = manager.Apply(plan.ToApply);
             _lastBackupPath = result.BackupPath;
             _lastDupeRenames = dupes.Renamed.Count;
-            _lastLauncherWarning = string.Join(" ", new[] { dupes.LauncherWarning, result.LauncherWarning }.OfType<string>()) is { Length: > 0 } w ? w : null;
+            _lastLauncherWarning = string.Join(" ", new[] { dupes.LauncherWarning, result.Warning }.OfType<string>()) is { Length: > 0 } w ? w : null;
             applied = true;
             _lastPlan = plan;
             var snapshot = await ScanAsync(ct);
@@ -343,6 +353,9 @@ public sealed class SessionService(ModManagerService manager, IWorkshopService? 
         SaveSettings(s => s with { RecentHosts = RecentHosts.Remove(s.RecentHosts, address) });
         RaiseChanged();
     }
+
+    // What the players build Faz Addons from: this PC's settings while they are on, else nothing (addons off).
+    AddonSettings? AddonsToSend() => hostAddons?.Invoke() is { Enabled: true } settings ? settings : null;
 
     // Remembered inputs are a convenience: failing to write them must never fail the session.
     void SaveSettings(Func<AppSettings, AppSettings> change)

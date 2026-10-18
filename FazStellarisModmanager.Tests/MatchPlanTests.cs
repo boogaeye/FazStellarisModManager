@@ -69,6 +69,33 @@ public class MatchPlanTests
     }
 
     [Fact]
+    public void Faz_Addons_is_left_to_Apply_and_never_needs_attention()
+    {
+        // The host list never holds Faz Addons (it is dropped from dlc_load.json), but a host's list is untrusted.
+        var host = new ModList("Host list",
+        [
+            new("local:a.mod", "A", "mod/a.mod", null),
+            new("local:b.mod", "B", "mod/b.mod", null),
+            new("local:FAZ_ADDONS.mod", "Faz Addons", "mod/faz_addons.mod", null),
+        ], []);
+        var library = new[] { Installed("local:a.mod", "mod/a.mod", "A"), Installed("local:b.mod", "mod/b.mod", "B") };
+        var missing = new UnitDiff("local:faz_addons.mod", "Faz Addons", null, UnitStatus.Missing, 3, null, false, null, null, null);
+        var differs = Changed("local:faz_addons.mod");
+        // A host mod the diff paired with my Faz Addons (by name): mine is no copy of it, so B is used from my library as usual.
+        var pairedWithMine = Changed("local:b.mod") with { MineKey = "local:faz_addons.mod", Match = MatchKind.Name };
+
+        foreach (var diff in new[] { Diff(missing), Diff(differs), Diff(pairedWithMine, missing) })
+        {
+            var plan = MatchPlan.Create(host, diff, library, TestSnapshots.Machine("M"));
+
+            Assert.True(plan.IsComplete);
+            Assert.Empty(plan.NeedsManualInstall);
+            Assert.Empty(plan.DiffersLocally);
+            Assert.Equal(new[] { "mod/a.mod", "mod/b.mod" }, plan.ToApply.Mods.Select(m => m.DescriptorRel));
+        }
+    }
+
+    [Fact]
     public void Repeated_host_keys_are_applied_once()
     {
         var host = new ModList("Host list", [new("ugc:1", "One", "mod/ugc_1.mod", "1"), new("UGC:1", "One again", "mod/ugc_1.mod", "1")], []);

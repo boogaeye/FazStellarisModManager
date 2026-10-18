@@ -4,6 +4,7 @@ using System.IO;
 using System.Net.Http;
 using System.Threading;
 using FazStellarisModmanager.Core;
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Conflicts;
 using FazStellarisModmanager.Core.Library;
 using FazStellarisModmanager.Core.Events;
@@ -43,8 +44,11 @@ public static class AppServices
             return new ModManagerService(paths)
             {
                 LaunchBlockedReason = () => workshop.IsActive ? "Wait for the Workshop downloads to finish before launching Stellaris." : null,
+                // Resolved on each Apply, once all singletons exist: both services take this one, so constructor injection would be a cycle.
+                EffectiveAddons = () => sp.GetRequiredService<AddonService>().EffectiveFor(sp.GetRequiredService<SessionService>()),
             };
         });
+        services.AddSingleton(sp => new AddonService(sp.GetRequiredService<ModManagerService>()));
         services.AddSingleton(sp => new DiploEnricher(sp.GetRequiredService<ModManagerService>()));
         services.AddSingleton(sp =>
         {
@@ -53,7 +57,13 @@ public static class AppServices
             return new LiveGameService(manager.SaveGamesDir, enrich: enricher.Enrich);
         });
         services.AddSingleton(new LiveViewerStore(paths.LiveGame));
-        services.AddSingleton(sp => new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>(), sp.GetRequiredService<LiveGameService>()));
+        services.AddSingleton(sp =>
+        {
+            var addons = sp.GetRequiredService<AddonService>();
+            // Hosting sends this PC's saved addon settings (SessionService sends none while they are off).
+            return new SessionService(sp.GetRequiredService<ModManagerService>(), sp.GetRequiredService<IWorkshopService>(), sp.GetRequiredService<LiveGameService>(),
+                hostAddons: () => addons.Settings);
+        });
         services.AddSingleton(new PublicAddressLookup());
         services.AddSingleton(sp => new LiveFeed(
             sp.GetRequiredService<LiveGameService>(),

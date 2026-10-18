@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using FazStellarisModmanager.Core;
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Game;
 using FazStellarisModmanager.Core.Lists;
@@ -17,16 +18,18 @@ public class SessionServiceTests
     sealed class Rig : IAsyncDisposable
     {
         public FakeInstall Fake { get; } = new();
+        public ModManagerService Manager { get; }
         public SessionService Session { get; }
 
         public Rig(string playerName, string enabledModsJson, Func<FakeInstall, IWorkshopService>? workshop = null,
-            LiveGameService? live = null, Func<string, GameSnapshot>? readTechs = null, string? saveGamesDir = null)
+            LiveGameService? live = null, Func<string, GameSnapshot>? readTechs = null, string? saveGamesDir = null,
+            Func<AddonSettings?>? hostAddons = null)
         {
             var paths = new AppPaths(Fake.DataDir);
             SettingsStore.Save(paths.Settings, new AppSettings(UserDir: Fake.UserDir, PlayerName: playerName));
             Fake.Write("user/dlc_load.json", "{\"disabled_dlcs\":[],\"enabled_mods\":" + enabledModsJson + "}");
-            Session = new SessionService(new ModManagerService(paths, _ => Fake.GameDir) { IsLauncherRunning = () => false }, workshop?.Invoke(Fake),
-                live, readTechs, saveGamesDir is null ? null : () => saveGamesDir);
+            Manager = new ModManagerService(paths, _ => Fake.GameDir) { IsLauncherRunning = () => false };
+            Session = new SessionService(Manager, workshop?.Invoke(Fake), live, readTechs, saveGamesDir is null ? null : () => saveGamesDir, hostAddons);
         }
 
         /// <summary>The settings file as saved on disk.</summary>
@@ -146,6 +149,90 @@ public class SessionServiceTests
         Assert.Equal(SessionRole.None, host.Session.Role);
         await Wait.Until(() => client.Session.Role == SessionRole.None, "client notices host stopped");
         Assert.Contains("Host closed", client.Session.LastDisconnectReason);
+    }
+
+    // Faz Addons: nanites (rare, off the market in the base game, see FakeInstall.AddMarket) goes on the market.
+    static readonly AddonSettings NanitesOnMarket = new(true, new MarketplaceSettings(
+        Resources: new Dictionary<string, ResourceOverride> { ["nanites"] = new(OnMarket: true) }));
+
+    static AddonSettings WithMaxBase(int value) => NanitesOnMarket with { Marketplace = NanitesOnMarket.Marketplace! with { MaxBaseAmounts = value } };
+
+    [Fact]
+    public async Task Players_get_the_hosts_addon_settings_and_a_host_rescan_sends_the_current_ones()
+    {
+        var settings = NanitesOnMarket;
+        await using var host = new Rig("Hosty", "[\"mod/local.mod\"]", hostAddons: () => settings);
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]");
+        await host.Session.HostAsync(0);
+
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+
+        Assert.Equal(NanitesOnMarket, client.Session.HostAddons);
+        Assert.Null(host.Session.HostAddons); // only a player has a host
+
+        settings = NanitesOnMarket with { Enabled = false };
+        await host.Session.RescanAsync();
+        await Wait.Until(() => client.Session.HostAddons is null, "addons off: nothing is sent");
+
+        settings = WithMaxBase(1000);
+        await host.Session.RescanAsync();
+        await Wait.Until(() => client.Session.HostAddons is not null, "the host's current settings");
+        Assert.Equal(WithMaxBase(1000), client.Session.HostAddons);
+    }
+
+    [Fact]
+    public async Task Leaving_or_losing_the_host_clears_its_addon_settings()
+    {
+        await using var host = new Rig("Hosty", "[]", hostAddons: () => NanitesOnMarket);
+        await using var client = new Rig("Cli", "[]");
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+        Assert.NotNull(client.Session.HostAddons);
+
+        await client.Session.LeaveAsync();
+        Assert.Null(client.Session.HostAddons);
+
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+        Assert.NotNull(client.Session.HostAddons);
+        await host.Session.LeaveAsync();
+        await Wait.Until(() => client.Session.Role == SessionRole.None, "client notices host stopped");
+        Assert.Null(client.Session.HostAddons);
+    }
+
+    [Theory]
+    [InlineData(false)] // I have no Faz Addons: the unit is missing
+    [InlineData(true)]  // mine was built from other settings: the unit differs
+    public async Task Match_host_rebuilds_Faz_Addons_from_the_hosts_settings(bool staleAddon)
+    {
+        await using var host = new Rig("Hosty", "[\"mod/local.mod\"]", hostAddons: () => NanitesOnMarket);
+        await using var client = new Rig("Cli", "[\"mod/local.mod\"]");
+        host.Fake.AddMarket();
+        client.Fake.AddMarket();
+        // The host applied its addons before hosting, so its snapshot holds Faz Addons.
+        host.Manager.EffectiveAddons = () => NanitesOnMarket;
+        host.Manager.RefreshLibrary();
+        Assert.True(host.Manager.Apply(host.Manager.ImportCurrent("Mine")).AddonsApplied);
+        if (staleAddon)
+        {
+            client.Manager.EffectiveAddons = () => WithMaxBase(1000);
+            client.Manager.RefreshLibrary();
+            Assert.True(client.Manager.Apply(client.Manager.ImportCurrent("Mine")).AddonsApplied);
+        }
+        // As the app wires it: while I'm a player, Apply builds from the host's settings.
+        client.Manager.EffectiveAddons = () => client.Session.HostAddons;
+        await host.Session.HostAsync(0);
+        await client.Session.JoinAsync("127.0.0.1", host.Session.HostPort!.Value);
+        Assert.Equal(staleAddon ? UnitStatus.ContentMismatch : UnitStatus.Missing,
+            client.Session.MyDiff!.Mods.Single(m => m.Key == "local:faz_addons.mod").Status);
+
+        var plan = await client.Session.MatchHostAsync();
+
+        Assert.True(plan.IsComplete);
+        Assert.DoesNotContain("Faz Addons", client.Session.LastLauncherWarning ?? "");
+        Assert.Equal(["mod/local.mod", "mod/faz_addons.mod"], DlcLoadFile.Read(client.Fake.UserDir).EnabledMods);
+        Assert.Equal(UnitStatus.Ok, client.Session.MyDiff!.Mods.Single(m => m.Key == "local:faz_addons.mod").Status);
+        Assert.True(client.Session.MyDiff.IsMatch);
+        await Wait.Until(() => host.Session.Players.Any(p => p.Name == "Cli" && p.Status == PlayerStatus.Ready), "host sees ready");
     }
 
     [Fact]

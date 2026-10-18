@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Session;
 using FazStellarisModmanager.Core.Snapshots;
@@ -70,6 +71,62 @@ public class SessionHostClientTests
 
         await Wait.Until(() => alice.Target.HostList.Mods.Count == 2, "new host target");
         await Wait.Until(() => alice.Roster.Any(p => p.Name == "Alice" && p.Status == PlayerStatus.Mismatch), "re-diffed as mismatch");
+    }
+
+    static readonly AddonSettings NanitesOnMarket = new(true, new MarketplaceSettings(
+        Resources: new Dictionary<string, ResourceOverride> { ["nanites"] = new(OnMarket: true) }));
+
+    [Fact]
+    public async Task Clients_get_the_hosts_addon_settings_with_every_target()
+    {
+        await using var host = new SessionHost("Hosty", List("ugc:1"), Machine("H", "ugc:1"), addons: NanitesOnMarket);
+        host.Start(0, IPAddress.Loopback);
+        await using var alice = await Connect(host.Port, "Alice");
+
+        Assert.Equal(NanitesOnMarket, alice.Target.Addons);
+
+        var more = NanitesOnMarket with { Marketplace = NanitesOnMarket.Marketplace! with { MaxBaseAmounts = 2000 } };
+        await host.UpdateHostAsync(List("ugc:1"), Machine("H", "ugc:1"), more);
+        await Wait.Until(() => alice.Target.Addons?.Marketplace?.MaxBaseAmounts == 2000, "the new addon settings");
+        Assert.Equal(more, alice.Target.Addons);
+
+        await host.UpdateHostAsync(List("ugc:1"), Machine("H", "ugc:1"));
+        await Wait.Until(() => alice.Target.Addons is null, "the host turned addons off");
+    }
+
+    [Fact]
+    public async Task A_hosts_addon_settings_are_cleaned_of_null_and_blank_entries()
+    {
+        // Hosts are untrusted: a hand-made Welcome whose resource overrides hold a null and a blank key.
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var dirty = new AddonSettings(true, new MarketplaceSettings(Resources: new Dictionary<string, ResourceOverride>
+            {
+                ["nanites"] = new(OnMarket: true),
+                ["zro"] = null!,
+                [" "] = new(Tradable: true),
+            }));
+            var serve = Task.Run(async () =>
+            {
+                using var tcp = await listener.AcceptTcpClientAsync();
+                var stream = tcp.GetStream();
+                Assert.IsType<Hello>(await Framing.ReadAsync(stream));
+                await Framing.WriteAsync(stream, new Welcome("p1", List("ugc:1"), Machine("H", "ugc:1"), dirty));
+                await Framing.ReadAsync(stream); // until the client leaves
+            });
+
+            await using (var alice = await SessionClient.ConnectAsync("127.0.0.1", port, "Alice"))
+            {
+                var resources = alice.Target.Addons!.Marketplace!.Resources!;
+                Assert.Equal(["nanites"], resources.Keys);
+                Assert.Equal(new ResourceOverride(OnMarket: true), resources["NANITES"]);
+            }
+            await serve.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally { listener.Stop(); }
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Library;
 using FazStellarisModmanager.Core.Lists;
@@ -33,6 +34,8 @@ public sealed record MatchPlan(
     /// others a manual one. Content mismatches need a Workshop update when my mod is the Workshop item, a switch to the
     /// Workshop item when only the host's mod is, otherwise local attention. DLCs the host has and this PC lacks are
     /// reported in NeedsDlc.
+    /// Faz Addons is left out on both sides (the host list entry and every diff unit whose Key or MineKey it is): Apply builds it from
+    /// the effective addon settings, the host's for a player, so it never needs an install or local attention.
     /// <paramref name="hostList"/> and <paramref name="diff"/> must come from the same host target.
     /// </summary>
     public static MatchPlan Create(ModList hostList, DiffResult diff, IReadOnlyList<InstalledMod> library, MachineSnapshot mine)
@@ -40,11 +43,16 @@ public sealed record MatchPlan(
         var byKey = new Dictionary<string, InstalledMod>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in library) byKey.TryAdd(m.Key, m);
 
+        var mods = diff.Mods.Where(u => !AddonMod.IsAddonKey(u.Key) && !AddonMod.IsAddonKey(u.MineKey)).ToList();
+
         // My partner for each host mod: first the pairing the diff made (enabled mods, using files too), then a pairing
         // against my whole library (installed but not enabled) by key, Workshop id or name.
-        var hostEntries = hostList.Mods.DistinctBy(e => e.Key, StringComparer.OrdinalIgnoreCase).ToList();
+        var hostEntries = hostList.Mods
+            .Where(e => !AddonMod.IsAddonKey(e.Key) && !AddonMod.IsAddon(e.DescriptorRel))
+            .DistinctBy(e => e.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var partner = new Dictionary<string, InstalledMod>(StringComparer.OrdinalIgnoreCase);
-        foreach (var u in diff.Mods)
+        foreach (var u in mods)
             if (u.Status is (UnitStatus.Ok or UnitStatus.ContentMismatch) && u.MineKey is { } mineKey && byKey.TryGetValue(mineKey, out var paired))
                 partner.TryAdd(u.Key, paired);
         var taken = new HashSet<string>(partner.Values.Select(i => i.Key), StringComparer.OrdinalIgnoreCase);
@@ -92,11 +100,11 @@ public sealed record MatchPlan(
 
         // A replaced copy's differences no longer apply; the mod used instead was not scanned, the rescan will tell.
         // Mine is the Workshop item: Steam can update it. Only the host's is: switch my local copy to the item. Else local.
-        var changed = diff.Mods.Where(u => u.Status == UnitStatus.ContentMismatch && !replaced.Contains(u.Key)).ToList();
+        var changed = mods.Where(u => u.Status == UnitStatus.ContentMismatch && !replaced.Contains(u.Key)).ToList();
         var updates = changed.Where(u => ModKeys.WorkshopId(u.MineKey ?? u.Key) is not null).ToList();
         var mineLocal = changed.Where(u => ModKeys.WorkshopId(u.MineKey ?? u.Key) is null).ToList();
         // Replaced pairs (matching or not) whose host mod is the Workshop item: my installed item is used instead of my copy.
-        var switched = diff.Mods
+        var switched = mods
             .Where(u => u.Status is (UnitStatus.Ok or UnitStatus.ContentMismatch) && replaced.Contains(u.Key) && ModKeys.WorkshopId(u.Key) is not null)
             .ToList();
         return new MatchPlan(

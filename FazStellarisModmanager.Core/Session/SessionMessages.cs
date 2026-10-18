@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using FazStellarisModmanager.Core.Addons;
 using FazStellarisModmanager.Core.Diff;
 using FazStellarisModmanager.Core.Lists;
 using FazStellarisModmanager.Core.Snapshots;
@@ -23,8 +24,11 @@ public abstract record SessionMessage;
 /// <summary>Client to host, first message.</summary>
 public sealed record Hello(int ProtocolVersion, string AppVersion, string PlayerName) : SessionMessage;
 
-/// <summary>Host to client after a valid Hello: the client's id plus the host's list and snapshot (the target to match).</summary>
-public sealed record Welcome(string PlayerId, ModList HostList, MachineSnapshot HostSnapshot) : SessionMessage;
+/// <summary>
+/// Host to client after a valid Hello: the client's id plus the host's list, snapshot and addon settings (the target to match).
+/// Addons: the settings the host builds Faz Addons from, null when the host has addons off.
+/// </summary>
+public sealed record Welcome(string PlayerId, ModList HostList, MachineSnapshot HostSnapshot, AddonSettings? Addons) : SessionMessage;
 
 /// <summary>Host to client instead of Welcome; the connection is closed afterwards.</summary>
 public sealed record Reject(string Reason) : SessionMessage;
@@ -32,8 +36,8 @@ public sealed record Reject(string Reason) : SessionMessage;
 /// <summary>Client to host: my current setup.</summary>
 public sealed record SnapshotUpdate(MachineSnapshot Snapshot) : SessionMessage;
 
-/// <summary>Host to clients: the host rescanned or changed its list.</summary>
-public sealed record HostTargetUpdate(ModList HostList, MachineSnapshot HostSnapshot) : SessionMessage;
+/// <summary>Host to clients: the host rescanned or changed its list. Addons as in <see cref="Welcome"/>.</summary>
+public sealed record HostTargetUpdate(ModList HostList, MachineSnapshot HostSnapshot, AddonSettings? Addons) : SessionMessage;
 
 /// <summary>Client to host: I'm busy (e.g. matching the host); a SnapshotUpdate follows.</summary>
 public sealed record ClientBusy(string Activity) : SessionMessage;

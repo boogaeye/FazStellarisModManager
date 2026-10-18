@@ -15,4 +15,5 @@ public sealed class AppPaths(string root)
     public string ModIcons => Path.Combine(Root, "mod-icons");
     public string Research => Path.Combine(Root, "research");
     public string LiveGame => Path.Combine(Root, "live-game.json");
+    public string Addons => Path.Combine(Root, "addons.json");
 }

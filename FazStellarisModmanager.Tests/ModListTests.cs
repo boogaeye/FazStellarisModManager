@@ -24,6 +24,17 @@ public class ModListTests
     }
 
     [Fact]
+    public void FromDlcLoad_drops_Faz_Addons()
+    {
+        var load = new DlcLoad(["mod/ugc_5.mod", "mod/faz_addons.mod", "mod" + (char)92 + "Faz_Addons.mod"], []);
+        var library = new[] { Installed("mod/ugc_5.mod", "Five"), Installed("mod/faz_addons.mod", "Faz Addons") };
+
+        var list = ModList.FromDlcLoad("Current", load, library);
+
+        Assert.Equal(new[] { "ugc:5" }, list.Mods.Select(m => m.Key));
+    }
+
+    [Fact]
     public void ToDlcLoad_preserves_order()
     {
         var list = new ModList("L", [new("ugc:2", "B", "mod/ugc_2.mod", "2"), new("ugc:1", "A", "mod/ugc_1.mod", "1")], []);

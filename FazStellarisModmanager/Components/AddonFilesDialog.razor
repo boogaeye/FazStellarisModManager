@@ -1,0 +1,80 @@
+@using System.Globalization
+@using System.Text
+
+<div class="modal-backdrop" @onmousedown="() => downOnBackdrop = true" @onclick="BackdropClick">
+    <div class="modal addon-files-modal" tabindex="-1" @ref="dialog" @onclick:stopPropagation @onmousedown:stopPropagation @onmousedown="() => downOnBackdrop = false" @onkeydown="Key">
+        <div class="modal-head">
+            <h2>Faz Addons files</h2>
+            <button class="small" title="Close" @onclick="Close">✕</button>
+        </div>
+        <p class="muted small">
+            What Apply writes into your Stellaris user folder@(Output.HasChanges ? "." : ". Nothing changes the game yet, so Apply doesn't load it.")
+            Nothing is written until you Apply.
+        </p>
+        <div class="addon-files">
+            @foreach (var file in files)
+            {
+                <section class="addon-file">
+                    <h3>@file.Path <span class="muted">@file.Size</span></h3>
+                    @if (file.Text.Length == 0)
+                    {
+                        <p class="muted small">(empty)</p>
+                    }
+                    else
+                    {
+                        <pre>@file.Text</pre>
+                    }
+                </section>
+            }
+        </div>
+        <div class="modal-actions">
+            <button @onclick="Close">Close</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    bool downOnBackdrop;
+
+    async Task BackdropClick()
+    {
+        if (downOnBackdrop) await Close();
+        downOnBackdrop = false;
+    }
+
+    /// <summary>The build to show (see <see cref="AddonService.Preview"/>).</summary>
+    [Parameter, EditorRequired] public AddonOutput Output { get; set; } = default!;
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    ElementReference dialog;
+    AddonOutput? shownFor;
+    List<(string Path, string Size, string Text)> files = [];
+
+    // The descriptor in the mod folder first, then the content files under mod/faz_addons, as UTF-8 text.
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(shownFor, Output)) return;
+        shownFor = Output;
+        files = [Entry(AddonMod.DescriptorRel, AddonMod.Descriptor(Output))];
+        files.AddRange(Output.Files.Select(f => Entry(AddonMod.ContentRel + "/" + f.Path, f.Bytes)));
+    }
+
+    static (string Path, string Size, string Text) Entry(string path, byte[] bytes)
+    {
+        var text = Encoding.UTF8.GetString(bytes);
+        if (text.Length > 0 && text[0] == (char)0xFEFF) text = text[1..];
+        var size = bytes.Length < 1024
+            ? bytes.Length.ToString(CultureInfo.InvariantCulture) + " B"
+            : (bytes.Length / 1024.0).ToString("0.#", CultureInfo.InvariantCulture) + " KB";
+        return (path, size, text);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await dialog.FocusAsync(); // so Escape closes it
+    }
+
+    Task Close() => OnClose.InvokeAsync();
+
+    Task Key(KeyboardEventArgs e) => e.Key == "Escape" ? Close() : Task.CompletedTask;
+}
